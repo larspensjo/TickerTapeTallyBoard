@@ -331,6 +331,25 @@ Tasks:
 - Document cost-basis rules for buys and sells at a high level.
 - Document that v1 ignores cash/deposit/withdrawal ledger flows and tracks securities transactions only.
 
+Currency-gain attribution guardrail (forward-compatibility, even though the
+breakdown itself is post-v1):
+
+- Store native value and FX rate as separate fields; never persist only the
+  SEK-converted value. A transaction keeps native `price` + `currency` plus a
+  separate trade-date `fx_rate_to_base`; `prices` keeps native `close`, and
+  `fx_rates` keeps dated rates. Convert at the read/valuation boundary, not at
+  write time, so the currency component of return stays recoverable later.
+- Do not import Sharesight's pre-computed `Cost base per share (SEK)` as the
+  primary cost basis. Import the native price plus the export's `Exchange Rate`
+  and derive SEK; importing the SEK column directly bakes in FX and discards the
+  native/FX split.
+- FX must be backfilled historically (back to the earliest trade date), not just
+  the latest day, so a past valuation date can be converted at its own rate.
+- Brokerage is paid in SEK while trades are USD/EUR. A SEK fee has no currency
+  component, so it must not be run through the trade FX. Decide deliberately
+  whether this needs a separate fees currency rather than letting one `currency`
+  column force a choice.
+
 Verification:
 
 - A worked example from the CSV shows native trade value, brokerage, FX conversion, and SEK value.
