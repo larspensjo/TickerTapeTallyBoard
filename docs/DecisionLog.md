@@ -58,3 +58,8 @@ Consequences: If the invariant confirms delta semantics, the ledger stores the s
 Decision: Unofficial Yahoo Finance data is acceptable for v1 if the Phase 0 provider spike supports it. The spike should compare candidate providers using one USD asset, `MSFT`, and one EUR asset, `ASML`.
 Context: v1 only needs end-of-day data for the complete current export, not realtime market data.
 Consequences: Phase 0 can include Yahoo as a serious candidate while still documenting symbol mappings, limitations, and fallback options.
+
+## 2026-06-13: Backend Logging Stack
+Decision: Backend runtime logging uses the local `engine_logging` facade backed by `log` and `simplelog`.
+Context: The skeleton needs simple terminal logging plus an append-only `engine.log` without introducing structured tracing requirements before the API and job model exist. Keeping calls behind `engine_logging` preserves a migration path if later work needs spans, request IDs, or richer sinks.
+Consequences: Backend code should log through `engine_logging` rather than calling logging libraries directly. Revisit the backing library before adding structured request, import job, provider, or database operation telemetry.

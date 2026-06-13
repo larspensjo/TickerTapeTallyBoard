@@ -1,9 +1,9 @@
 # Repo Instructions
 
 ## Workflow
-- Build with `cargo build`.
-- When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt`.
-- For changes under `crates/qsf_browser_server/ui/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
+- Build with `cargo build` from `backend/`.
+- When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt` from `backend/`.
+- For changes under `frontend/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
 - When implementing changes, document them in EngineeringDiary.md. But first look up Instructions how to use in the beginning of the document.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 
@@ -12,7 +12,6 @@
 - When implementing a plan, surface its open questions or ambiguities before silently resolving them.
 - When adding a feature behind a config flag or threshold, the default values must exercise the new code path.
 - When creating a plan, make it clear how to verify each step. Point out where external human testing is recommended.
-- When creatign a plan, check with docs\ProjectFrame\ProjectWorkflow.md what documents should be updated, and include that in the plan.
 
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.
@@ -27,7 +26,7 @@
 - `use super::*;` is acceptable for tests, but using explicit imports is preferable otherwise.
 
 ## Logging
-- Use `engine_logging` for runtime logging.
+- Use `engine_logging` for backend logging.
 - Include enough context in error logs to identify the failing job, URL, or operation.
 
 ## Decisions

@@ -19,6 +19,7 @@ frontend/dist/
 
 # Local runtime logs
 .local/
+engine.log
 
 # Private portfolio exports and local import fixtures
 docs/AllTradesReport*.csv

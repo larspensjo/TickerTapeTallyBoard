@@ -71,3 +71,16 @@ Observed:
 Open question:
 - None.
 Refs: `scripts/start.ps1`.
+
+## 2026-06-13 - Backend engine logging
+Adapted the engine logging pattern from the related project into the backend so runtime runs write to `engine.log`.
+What changed:
+- Added a backend-local `engine_logging` module with `engine_*` logging macros and a production initializer using `log` and `simplelog`.
+- Initialized logging during backend startup and logged the listening address.
+- Ignored generated `engine.log` files.
+Observed:
+- `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+- A backend smoke run returned `HTTP 200` from `http://127.0.0.1:8080/` and wrote the startup line to `backend/engine.log`.
+Open question:
+- None.
+Refs: `backend/src/engine_logging.rs`, `backend/src/main.rs`, `backend/Cargo.toml`, `.gitignore`.
