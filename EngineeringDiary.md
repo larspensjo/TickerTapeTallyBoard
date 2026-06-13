@@ -84,3 +84,19 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/engine_logging.rs`, `backend/src/main.rs`, `backend/Cargo.toml`, `.gitignore`.
+
+## 2026-06-13 - Backend API skeleton
+Expanded the backend into a thin runnable API host with local-development defaults and initial JSON endpoints.
+What changed:
+- Added `app` and `config` modules so `main.rs` only initializes logging, loads configuration, and starts the server.
+- Added `GET /api/health` with version/build metadata and a temporary Sharesight schema-preview endpoint for importer spike visibility.
+- Split API endpoint handlers, CORS setup, and tests into submodules so `api/mod.rs` remains a thin route assembler.
+- Added local-dev CORS support and graceful Ctrl+C shutdown handling.
+- Added config parsing tests for host/port validation and env-var precedence.
+Observed:
+- `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+- `cargo test` passed from `backend/`.
+- A smoke request to `http://127.0.0.1:8080/api/health` returned `status: ok`, version `0.1.0`, and debug build metadata.
+Open question:
+- None.
+Refs: `backend/src/app.rs`, `backend/src/config.rs`, `backend/src/api/`, `backend/src/main.rs`, `backend/Cargo.toml`.
