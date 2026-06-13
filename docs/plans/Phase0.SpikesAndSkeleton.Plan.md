@@ -65,10 +65,14 @@ Phase 0 should review and extend these documents as implementation work reveals 
 
 ## Remaining External Input
 
-Only one external value is still needed during Phase 0 implementation.
+No external input is currently blocking the Sharesight import spike.
+
+Resolved during implementation:
 
 1. **Which current Sharesight position should be used to verify the split row?**
-   The spike needs the current Sharesight position for the instrument with the split, `NOW`, to validate quantity-delta semantics.
+   Lars reran the spike with the current Sharesight position for the split
+   holding. The provided position matched the summed export quantity, confirming
+   quantity-delta semantics.
 
 ## Standing Assumptions
 
@@ -254,7 +258,7 @@ Questions the spike must answer:
 - Does `Cost base per share (SEK)` being `0,00` mean unavailable for all rows, or is this export configuration omitting it?
 - Can `Market + Code` uniquely identify all instruments in the report?
 - Are there rows with blank comments, duplicate rows, or same-day same-instrument partial fills that should remain separate ledger entries?
-- Does the `NOW` split position invariant confirm quantity-delta semantics?
+- Does the `NOW` split position invariant confirm quantity-delta semantics? Yes.
 
 Verification:
 

@@ -12,5 +12,8 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 tower-http = { version = "0.6", features = ["cors"] }
 
 [dev-dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+csv = "1"
+rust_decimal = { version = "1", default-features = false }
 serde_json = "1"
 tower = { version = "0.5", features = ["util"] }

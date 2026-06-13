@@ -128,3 +128,50 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/index.html`, `frontend/src/App.tsx`, `frontend/src/main.tsx`, `frontend/src/styles.css`, `frontend/package.json`, `frontend/package-lock.json`.
+
+## 2026-06-13 - Sharesight import spike
+Added a throwaway Rust example command that parses the private Sharesight All Trades CSV and records sanitized aggregate findings.
+What changed:
+- Added `backend/examples/sharesight_import_spike.rs` for header discovery, metadata parsing, decimal/date normalization, aggregate validation, FX/value model comparison, and optional split-position invariant checking.
+- Added a sanitized spike note with importer findings and kept row-level/private values out of versioned docs.
+- Recorded durable Sharesight CSV import conventions in the decision log.
+Observed:
+- The spike parsed all 189 rows with counts matching the planning observation: 105 buys, 83 sells, and 1 split.
+- All brokerage currencies were SEK, all `Cost base per share (SEK)` values were zero, `Market + Code` had no identity conflicts, and there were no duplicate full rows.
+- The closest FX/value model was native gross divided by the exported exchange rate plus brokerage, implying the export rate is instrument currency per SEK and should be inverted for canonical SEK-per-instrument storage.
+Open question:
+- The split row derives a clean 5/1 delta-semantics ratio, but the current Sharesight position is still needed to confirm the invariant.
+Refs: `backend/examples/sharesight_import_spike.rs`, `docs/spikes/SharesightImportSpike.md`, `docs/DecisionLog.md`; implements: Sharesight CSV Import Conventions.
+
+## 2026-06-13 - Sharesight spike usage
+Documented how to run the Sharesight import spike from the README.
+What changed:
+- Added the default spike command and the optional split-position invariant command.
+Observed:
+- No code changed.
+Open question:
+- None.
+Refs: `README.md`.
+
+## 2026-06-13 - Sharesight spike dependency and interpretation cleanup
+Moved spike-only parser crates out of backend runtime dependencies and made the brokerage-inclusion finding provisional.
+What changed:
+- Moved `chrono`, `csv`, and `rust_decimal` to backend dev-dependencies because only the spike example uses them.
+- Disabled default features for `rust_decimal`.
+- Updated the Sharesight import convention and spike note so `Value` brokerage inclusion requires manual buy/sell reconciliation before Phase 1 import math depends on it.
+Observed:
+- The FX direction conclusion remains unchanged: the export rate is instrument currency per SEK and should be inverted for canonical storage.
+Open question:
+- Does `Value` include brokerage for both buys and sells? Reconcile one buy and one sell manually against the raw export or Sharesight UI.
+Refs: `backend/Cargo.toml`, `docs/DecisionLog.md`, `docs/spikes/SharesightImportSpike.md`.
+
+## 2026-06-13 - Sharesight split invariant confirmed
+Recorded the result of rerunning the Sharesight import spike with the current Sharesight position for the split holding.
+What changed:
+- Updated the sanitized spike note to state that the provided current position matched the summed export quantity.
+- Recorded that Sharesight split quantities use delta semantics for this export.
+Observed:
+- The split row derives a clean 5/1 ratio under delta semantics.
+Open question:
+- None for split semantics.
+Refs: `docs/spikes/SharesightImportSpike.md`, `docs/DecisionLog.md`; implements: Sharesight Split Quantity Delta Confirmed.
