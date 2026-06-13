@@ -187,3 +187,16 @@ Observed:
 Open question:
 - Before using Twelve Data as a live fallback, verify representative time-series calls with a real free key.
 Refs: `docs/spikes/PriceProviderSpike.md`, `docs/DecisionLog.md`; implements: Primary Market Data Sources.
+
+## 2026-06-13 - Currency and FX rules
+Documented the Phase 0 base-currency and FX interpretation rules for the SEK-based ISK portfolio.
+What changed:
+- Added a dedicated currency/FX design note covering canonical FX storage, Sharesight import interpretation, brokerage handling, display rounding, and cost-basis scope.
+- Recorded durable decisions for base-currency/FX handling and ISK tax scope.
+- Marked the Phase 0 currency/FX planning increment complete.
+Observed:
+- Buy-side Sharesight `Value` is the SEK account debit and includes brokerage, but remains an audit/source field rather than a primary ledger input.
+- Frankfurter FX requests should be pinned to ECB rates when supported.
+Open question:
+- None for currency/FX rules.
+Refs: `docs/CurrencyAndFxRules.md`, `docs/DecisionLog.md`, `docs/plans/Phase0.SpikesAndSkeleton.Plan.md`; implements: Base Currency And FX Rules, ISK Tax Scope.

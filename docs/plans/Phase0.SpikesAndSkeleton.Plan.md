@@ -319,21 +319,28 @@ Human testing recommended:
 
 - Lars should approve paid-provider use if the best option requires a subscription or API key.
 
-### 0.7 Base Currency And FX Rules
+### 0.7 Base Currency And FX Rules (COMPLETE)
 
 **Goal:** Remove ambiguity from multi-currency math before Phase 1 schema and Phase 3 valuation.
 
 Tasks:
 
-- Record SEK as the confirmed base currency.
-- Decide how to store exchange rates:
-  - recommended canonical storage: quote currency to base currency rate, e.g. `USD -> SEK`.
-- Interpret Sharesight `Exchange Rate` using sample row math.
-- Decide whether imported transaction `fx_rate_to_base` should use Sharesight's value directly or an inverted/derived value.
-- Decide how to model brokerage paid in SEK when the instrument is USD/EUR.
-- Decide rounding rules for display and persisted decimals.
-- Document cost-basis rules for buys and sells at a high level.
-- Document that v1 ignores cash/deposit/withdrawal ledger flows and tracks securities transactions only.
+- [x] Record SEK as the confirmed base currency.
+- [x] Decide how to store exchange rates:
+  - canonical storage: quote currency to base currency rate, e.g. `USD -> SEK`.
+- [x] Interpret Sharesight `Exchange Rate` using sample row math.
+- [x] Decide whether imported transaction `fx_rate_to_base` should use Sharesight's value directly or an inverted/derived value.
+- [x] Decide how to model brokerage paid in SEK when the instrument is USD/EUR.
+- [x] Decide rounding rules for display and persisted decimals.
+- [x] Document cost-basis rules for buys and sells at a high level.
+- [x] Document that v1 ignores cash/deposit/withdrawal ledger flows and tracks securities transactions only.
+
+Outcome:
+
+- Detailed rules are documented in `docs/CurrencyAndFxRules.md`.
+- Durable commitments are recorded in `docs/DecisionLog.md`.
+- v1 pins Frankfurter FX requests to `providers=ECB` when supported for the needed date and pair.
+- Because the tracked holdings are in a Swedish ISK account, v1 does not model capital-gains tax or dividend tax.
 
 Currency-gain attribution guardrail (forward-compatibility, even though the
 breakdown itself is post-v1):
@@ -356,13 +363,13 @@ breakdown itself is post-v1):
 
 Verification:
 
-- A worked example from the CSV shows native trade value, brokerage, FX conversion, and SEK value.
-- Rules are documented in `docs/DecisionLog.md` or a dedicated design note.
-- The rules can be translated into unit tests in Phase 1.
+- [x] A worked example from the CSV shows native trade value, brokerage, FX conversion, and SEK value.
+- [x] Rules are documented in `docs/DecisionLog.md` and a dedicated design note.
+- [x] The rules can be translated into unit tests in Phase 1.
 
 Human testing recommended:
 
-- Lars should confirm the worked example matches how Sharesight and the broker present the trade.
+- Lars confirmed buy-side `Value` is the SEK account debit and includes brokerage.
 
 ### 0.8 Static Serving And Dev Workflow
 
@@ -453,7 +460,7 @@ Human testing recommended:
 - [ ] Design import-format wording reconciled with the import spike result.
 - [x] At least two price providers tested.
 - [x] Primary price provider chosen and recorded.
-- [ ] Base currency and FX rules documented with one worked CSV example.
+- [x] Base currency and FX rules documented with one worked CSV example.
 - [ ] README contains local dev and check commands.
 - [ ] Phase 0 diary entry written.
 - [ ] Phase 1 risks and prerequisites documented.

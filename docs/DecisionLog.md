@@ -7,10 +7,7 @@ project has agreed to do going forward.
 ### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
 - Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
-  A bug fix earns a decision-log entry only when it produces a durable rule, and the
-  rule itself is the entry, not the fix.
 - Reversals of prior decisions get their own entry referencing the original.
-- A plan in itself, or change thereof, is not a decision until it is committed to.
 - Keep entries concise and reference concrete artifacts.
 - New entries go to the end of the file.
 
@@ -21,7 +18,8 @@ project has agreed to do going forward.
 - Safety and scope boundaries
 - Experiment outcomes promoted into accepted design
 - Reusable rules derived from incidents
-- The decisions are typically updated during planning, not during implementation (unless something unexpected happened).
+- The decisions are sometimes updated during planning, not during implementation (unless something unexpected happened).
+- Creating a plan isn't decision point if it was already obviously part of the project.
 
 ### How to use the decision log during development
 - Do not modify older entries if they were commited.
@@ -83,3 +81,13 @@ Consequences: Phase 1 import should normalize native price/currency, the inverte
 Decision: Use the unofficial Yahoo Finance chart endpoint as the v1 primary equity EOD/history provider and Frankfurter v2 as the v1 FX provider for SEK conversion. Store provider-specific equity symbols separately from instrument identity; the Phase 0 representative mappings are Yahoo `MSFT` for NASDAQ Microsoft and Yahoo `ASML.AS` for Euronext Amsterdam ASML. Keep Twelve Data as the first keyed fallback candidate, and keep manual price CSV import as the fallback if free live equity APIs become unreliable or unacceptable. Missing prices are represented explicitly with a reason, never as zero.
 Context: The Phase 0 price provider spike tested no-key/free-friendly candidates for `MSFT`, `ASML`, USD/SEK, and EUR/SEK. Yahoo returned daily equity candles for both representative instruments without a key. Frankfurter returned current and historical SEK FX rows without a key. Stooq was blocked by browser verification, Alpha Vantage required a real key and has a tight documented free daily limit, and Twelve Data required a real key for time-series calls but confirmed ASML on Euronext/XAMS through symbol search.
 Consequences: Phase 1/3 provider code should hide Yahoo-specific response shapes behind a provider boundary, use recorded fixtures for deterministic tests, store symbol mappings per provider, and keep missing-data states visible to valuation and UI code. Re-check terms and usage limits before any hosted or distributed deployment.
+
+## 2026-06-13: Base Currency And FX Rules
+Decision: v1 uses SEK as base currency and stores FX canonically as SEK per one unit of the quote/instrument currency, for example `USD -> SEK`. Sharesight's exported `Exchange Rate` is interpreted as instrument currency per SEK and is inverted on import. Sharesight `Value` is retained as a source/audit field rather than a primary ledger input; for buys it represents the SEK cash debit and includes SEK brokerage. Brokerage is stored as its own SEK-denominated fee and is not converted through trade FX. Frankfurter FX requests should pin `providers=ECB` when supported for the needed date and pair.
+Context: The Phase 0 import spike established the Sharesight FX direction, and Lars confirmed the buy-side account cash interpretation. The Phase 0 market-data spike chose Frankfurter as the FX provider.
+Consequences: Phase 1 schema should keep native price/currency, trade-date `fx_rate_to_base`, brokerage amount/currency, and source value separate. Valuation converts at read time using historical FX. Missing FX is an explicit missing-data state, not zero. See `docs/CurrencyAndFxRules.md`.
+
+## 2026-06-13: ISK Tax Scope
+Decision: v1 assumes the tracked stocks and ETFs are held in a Swedish ISK account and does not calculate capital-gains tax or dividend tax. Cost basis is kept for portfolio analytics, reconciliation, and performance explanation only.
+Context: The portfolio's tax wrapper means realized gains and dividends do not need per-transaction tax calculations in the application.
+Consequences: Phase 1 and v1 valuation should avoid tax-reporting claims and should not add tax lots, tax events, or dividend withholding logic unless the account scope changes later.
