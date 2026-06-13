@@ -13,6 +13,10 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
 # Private portfolio exports and local import fixtures
 docs/AllTradesReport*.csv
 docs/fixtures/private/

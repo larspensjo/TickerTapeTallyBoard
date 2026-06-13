@@ -1,0 +1,25 @@
+{
+  "name": "ticker-tape-tally-board-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit && biome check src index.html vite.config.ts biome.json package.json tsconfig.json",
+    "fmt": "biome format --write src index.html vite.config.ts biome.json package.json tsconfig.json"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^5.9.0",
+    "vite": "^8.0.16"
+  }
+}

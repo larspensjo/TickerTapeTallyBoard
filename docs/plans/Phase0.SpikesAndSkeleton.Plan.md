@@ -81,39 +81,15 @@ Only one external value is still needed during Phase 0 implementation.
 
 Phase 0 is split into small increments. Each increment should be independently reviewable and should leave the repo in a buildable or documentation-improved state.
 
-### 0.1 Documentation Review
+### 0.1 Documentation Review (COMPLETE)
 
 **Goal:** Make sure the bootstrapped project-management docs are useful before implementation decisions accumulate.
-
-Tasks:
-
-- Review `docs/DecisionLog.md` and confirm the decision entry format is sufficient.
-- Review `EngineeringDiary.md` and confirm the diary entry format is sufficient.
-- Review `Agents.md` for template leftovers before scaffolding code:
-  - replace the old `crates/qsf_browser_server/ui/` frontend path with the
-    chosen `frontend/` workflow;
-  - decide whether runtime logging standardizes on `tracing` or another
-    available crate, then update the logging instruction;
-  - ensure any referenced workflow document exists and stays limited to
-    document-routing guidance.
-- Record that Phase 0 was started from `Design.HighLevel.md` and the 2026-06-12 Sharesight export.
-- Document that private exports are excluded from git. Keep raw exports in local ignored paths only, and record only sanitized summaries in versioned docs.
-
-Verification:
-
-- Open each new doc and confirm the "How to use" section is at the top.
-- Confirm `Agents.md` no longer points at unrelated project paths or unavailable logging crates.
-- Confirm the diary has a Phase 0 entry.
-
-Human testing recommended:
-
-- Lars should confirm the diary/decision-log format is useful before many entries accumulate.
 
 ### 0.2 Repo Skeleton Decision
 
 **Goal:** Choose and document the project layout before scaffolding code.
 
-Recommended layout:
+Layout:
 
 ```text
 backend/
@@ -155,10 +131,6 @@ Verification:
 - `cargo fmt --check` succeeds from `backend/` after initial scaffolding.
 - `npm install` and `npm run check` succeed from `frontend/`.
 - `npm run fmt -- --check` or the configured formatter check succeeds from `frontend/` if available.
-
-Human testing recommended:
-
-- Lars should confirm the folder layout before Phase 1 schema/API work starts.
 
 ### 0.3 Backend Skeleton
 

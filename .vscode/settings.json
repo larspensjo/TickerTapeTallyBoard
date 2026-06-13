@@ -1,0 +1,44 @@
+{
+  "workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#6d28d9",
+    "titleBar.activeForeground": "#f5f3ff",
+    "titleBar.inactiveBackground": "#3b1f63",
+    "titleBar.inactiveForeground": "#ddd6fe"
+  },
+  "window.title": "${folderName} — ${activeEditorShort} — ${rootPath}",
+  "rust-analyzer.linkedProjects": [
+    "backend/Cargo.toml"
+  ],
+  "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": [
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "editor.formatOnSave": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/dist": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/dist": true
+  },
+  "files.readonlyInclude": {
+    "**/.cargo/registry/src/**/*.rs": true,
+    "**/.cargo/git/checkouts/**/*.rs": true,
+    "**/lib/rustlib/src/rust/library/**/*.rs": true
+  },
+  "coverage-gutters.coverageFileNames": [
+    "lcov.info"
+  ],
+  "coverage-gutters.watch": true
+}

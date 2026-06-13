@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug backend",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/target/debug/ticker-tape-tally-board-backend.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "preLaunchTask": "Backend build"
+    }
+  ]
+}
