@@ -12,6 +12,7 @@
 ## Planning & Documentation
 - When creating a plan, make it clear how to verify each step. Point out where external human testing is recommended. Save them to the `docs/plans/` folder unless explicitly told otherwise. Check with the docs\DecisionLog.md.
 - When implementing a plan, surface its open questions or ambiguities before silently resolving them.
+- Plans are ephemeral documents, and archived when implemented. Never refer to plans or phases from repository documents.
 
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.

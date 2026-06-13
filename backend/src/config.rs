@@ -3,18 +3,22 @@ use std::{
     error::Error,
     fmt,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
 };
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
 const HOST_ENV: &str = "TTTB_HOST";
 const PORT_ENV: &str = "TTTB_PORT";
 const HOSTING_PORT_ENV: &str = "PORT";
+const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub static_assets_dir: PathBuf,
 }
 
 impl AppConfig {
@@ -33,11 +37,23 @@ impl AppConfig {
                 .unwrap_or(DEFAULT_PORT),
         };
 
-        Ok(Self { host, port })
+        let static_assets_dir = read_optional(STATIC_ASSETS_DIR_ENV)?
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_STATIC_ASSETS_DIR));
+
+        Ok(Self {
+            host,
+            port,
+            static_assets_dir,
+        })
     }
 
     pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
+    }
+
+    pub fn static_assets_dir(&self) -> &Path {
+        &self.static_assets_dir
     }
 }
 
@@ -46,6 +62,7 @@ impl Default for AppConfig {
         Self {
             host: DEFAULT_HOST,
             port: DEFAULT_PORT,
+            static_assets_dir: PathBuf::from(DEFAULT_STATIC_ASSETS_DIR),
         }
     }
 }
@@ -127,6 +144,10 @@ mod tests {
         assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.port, 8080);
         assert_eq!(config.socket_addr().to_string(), "127.0.0.1:8080");
+        assert_eq!(
+            config.static_assets_dir,
+            PathBuf::from(DEFAULT_STATIC_ASSETS_DIR)
+        );
     }
 
     #[test]
@@ -135,6 +156,7 @@ mod tests {
             (HOST_ENV, None),
             (PORT_ENV, Some("9090")),
             (HOSTING_PORT_ENV, Some("3000")),
+            (STATIC_ASSETS_DIR_ENV, None),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
@@ -149,6 +171,7 @@ mod tests {
             (HOST_ENV, Some("0.0.0.0")),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, Some("3000")),
+            (STATIC_ASSETS_DIR_ENV, None),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
@@ -158,6 +181,20 @@ mod tests {
             "0.0.0.0".parse::<IpAddr>().expect("valid test IP")
         );
         assert_eq!(config.port, 3000);
+    }
+
+    #[test]
+    fn from_env_uses_static_assets_dir_override() {
+        let _guard = TestEnv::new(&[
+            (HOST_ENV, None),
+            (PORT_ENV, None),
+            (HOSTING_PORT_ENV, None),
+            (STATIC_ASSETS_DIR_ENV, Some("C:/tttb/static")),
+        ]);
+
+        let config = AppConfig::from_env().expect("config should load");
+
+        assert_eq!(config.static_assets_dir, PathBuf::from("C:/tttb/static"));
     }
 
     #[test]

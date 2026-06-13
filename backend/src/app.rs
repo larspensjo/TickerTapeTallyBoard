@@ -2,12 +2,26 @@ use crate::config::AppConfig;
 
 pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let address = config.socket_addr();
+    let router = if config.static_assets_dir().is_dir() {
+        crate::engine_info!(
+            "serving frontend assets from {}",
+            config.static_assets_dir().display()
+        );
+        crate::api::router_with_static_assets(config.static_assets_dir())
+    } else {
+        crate::engine_warn!(
+            "frontend assets not found at {}; serving backend routes only",
+            config.static_assets_dir().display()
+        );
+        crate::api::router()
+    };
+
     let listener = tokio::net::TcpListener::bind(address).await?;
     let local_address = listener.local_addr()?;
 
     crate::engine_info!("backend listening on {local_address}");
 
-    axum::serve(listener, crate::api::router())
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

@@ -200,3 +200,27 @@ Observed:
 Open question:
 - None for currency/FX rules.
 Refs: `docs/CurrencyAndFxRules.md`, `docs/DecisionLog.md`, `docs/plans/Phase0.SpikesAndSkeleton.Plan.md`; implements: Base Currency And FX Rules, ISK Tax Scope.
+
+## 2026-06-13 - Static serving and local workflow
+Made the local development and production-style serving paths concrete.
+What changed:
+- Added backend disk static serving for built Vite assets, with SPA index fallback and `/api` routes kept separate.
+- Added `TTTB_STATIC_DIR` for overriding the built frontend directory.
+- Documented Windows setup, development, check, and static-serving commands in the README.
+Observed:
+- Backend router tests cover root static serving, frontend route fallback, and API route precedence.
+Open question:
+- None.
+Refs: `backend/src/api/mod.rs`, `backend/src/app.rs`, `backend/src/config.rs`, `backend/Cargo.toml`, `README.md`, `docs/DecisionLog.md`; implements: Static Frontend Serving.
+
+## 2026-06-13 - Static root file serving
+Fixed static serving so root-level files from the built frontend directory are served before the SPA fallback.
+What changed:
+- Served the full built frontend directory through `ServeDir` instead of only `/assets`.
+- Added regression tests proving `/manifest.json` and `/assets/app.css` return static files rather than `index.html`.
+- Added a test fixture cleanup guard so temp directories are removed on assertion failures.
+Observed:
+- `ServeDir::fallback` preserves the SPA fallback status, while `not_found_service` forces a 404.
+Open question:
+- None.
+Refs: `backend/src/api/mod.rs`.

@@ -388,10 +388,6 @@ Verification:
 - Backend and frontend can be run simultaneously.
 - `README.md` lists exact commands for build, checks, and dev servers.
 
-Human testing recommended:
-
-- Lars should follow the README once from a clean terminal to catch missing prerequisites.
-
 ### 0.9 CI Or Local Check Script
 
 **Goal:** Make the expected checks repeatable.

@@ -91,3 +91,8 @@ Consequences: Phase 1 schema should keep native price/currency, trade-date `fx_r
 Decision: v1 assumes the tracked stocks and ETFs are held in a Swedish ISK account and does not calculate capital-gains tax or dividend tax. Cost basis is kept for portfolio analytics, reconciliation, and performance explanation only.
 Context: The portfolio's tax wrapper means realized gains and dividends do not need per-transaction tax calculations in the application.
 Consequences: Phase 1 and v1 valuation should avoid tax-reporting claims and should not add tax lots, tax events, or dividend withholding logic unless the account scope changes later.
+
+## 2026-06-13: Static Frontend Serving
+Decision: The backend serves built frontend assets from disk for the initial production-style path, using `../frontend/dist` by default and `TTTB_STATIC_DIR` as an override. Embedded frontend assets are deferred until packaging needs justify them.
+Context: The app needs concrete local development and future serving behavior without adding packaging complexity. Vite already handles development serving and proxies `/api` to the backend.
+Consequences: Local development continues to run Vite and the backend as separate processes. A production-style smoke run builds the frontend first, then runs the backend from `backend/`; API routes remain under `/api`, while frontend routes are served by the built SPA fallback when the static directory exists.

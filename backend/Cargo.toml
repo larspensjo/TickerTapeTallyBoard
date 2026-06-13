@@ -1,6 +1,6 @@
 [package]
 name = "ticker-tape-tally-board-backend"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
@@ -8,8 +8,14 @@ axum = "0.8"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 simplelog = "0.12"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tokio = { version = "1", features = [
+    "fs",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "signal",
+] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 [dev-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
