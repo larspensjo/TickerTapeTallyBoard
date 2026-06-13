@@ -6,6 +6,7 @@
 - For changes under `frontend/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
 - When implementing changes, document them in EngineeringDiary.md. But first look up Instructions how to use in the beginning of the document.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
+- The UI displays two version values: frontend from `frontend/package.json` and backend from `backend/Cargo.toml` via `/api/health`. Bump these versions as needed.
 
 ## Planning & Documentation
 - When creating or saving plan documents, always save them to the `docs/plans/` folder unless explicitly told otherwise.

@@ -100,3 +100,15 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/app.rs`, `backend/src/config.rs`, `backend/src/api/`, `backend/src/main.rs`, `backend/Cargo.toml`.
+
+## 2026-06-13 - Frontend version footer
+Added a footer that exposes the frontend package version and backend API version.
+What changed:
+- Read the frontend package version from `package.json`.
+- Added a Vite `/api` development proxy and a footer that reads the backend Cargo version from `/api/health`.
+Observed:
+- `npm run check`, `npm run fmt`, `scripts/start.ps1 -SkipInstall -BuildOnly`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed.
+- A Vite dev-server request to `/api/health` returned backend version `0.1.0`; the served app imports frontend version `0.1.0` from `package.json`.
+Open question:
+- None.
+Refs: `frontend/vite.config.ts`, `frontend/src/App.tsx`, `frontend/src/styles.css`; implements: Displayed Application Versions.

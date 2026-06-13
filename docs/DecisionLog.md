@@ -63,3 +63,8 @@ Consequences: Phase 0 can include Yahoo as a serious candidate while still docum
 Decision: Backend runtime logging uses the local `engine_logging` facade backed by `log` and `simplelog`.
 Context: The skeleton needs simple terminal logging plus an append-only `engine.log` without introducing structured tracing requirements before the API and job model exist. Keeping calls behind `engine_logging` preserves a migration path if later work needs spans, request IDs, or richer sinks.
 Consequences: Backend code should log through `engine_logging` rather than calling logging libraries directly. Revisit the backing library before adding structured request, import job, provider, or database operation telemetry.
+
+## 2026-06-13: Displayed Application Versions
+Decision: The frontend displays its `package.json` version and the backend displays its Cargo package version from `GET /api/health` as separate version values.
+Context: The application has independent frontend and backend build artifacts, and a single hardcoded UI version would hide skew during local development and deployment.
+Consequences: Release work should keep the two manifest versions aligned when shipping one product release, while the UI remains able to expose mismatches during development or partial deployment.

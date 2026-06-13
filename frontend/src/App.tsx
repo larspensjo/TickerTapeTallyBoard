@@ -1,4 +1,72 @@
+import { useEffect, useReducer } from "react";
+import packageJson from "../package.json";
+
+const frontendVersion = packageJson.version;
+
+type BackendVersionState =
+  | { kind: "loading" }
+  | { kind: "available"; version: string }
+  | { kind: "unavailable" };
+
+type BackendVersionAction =
+  | { type: "backendVersionLoaded"; version: string }
+  | { type: "backendVersionFailed" };
+
+interface HealthResponse {
+  version: string;
+}
+
+function backendVersionReducer(
+  _state: BackendVersionState,
+  action: BackendVersionAction,
+): BackendVersionState {
+  switch (action.type) {
+    case "backendVersionLoaded":
+      return { kind: "available", version: action.version };
+    case "backendVersionFailed":
+      return { kind: "unavailable" };
+  }
+}
+
 export function App() {
+  const [backendVersion, dispatchBackendVersion] = useReducer(
+    backendVersionReducer,
+    { kind: "loading" },
+  );
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    async function loadBackendVersion() {
+      try {
+        const response = await fetch("/api/health");
+
+        if (!response.ok) {
+          throw new Error(`Health request failed: ${response.status}`);
+        }
+
+        const health = (await response.json()) as HealthResponse;
+
+        if (isCurrent) {
+          dispatchBackendVersion({
+            type: "backendVersionLoaded",
+            version: health.version,
+          });
+        }
+      } catch {
+        if (isCurrent) {
+          dispatchBackendVersion({ type: "backendVersionFailed" });
+        }
+      }
+    }
+
+    void loadBackendVersion();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
   return (
     <main className="app-shell">
       <section className="workspace">
@@ -33,6 +101,17 @@ export function App() {
             <li>Sharesight import spike</li>
           </ul>
         </section>
+
+        <footer className="app-footer">
+          <span>Frontend {frontendVersion}</span>
+          <span aria-hidden="true">/</span>
+          <span>
+            Backend{" "}
+            {backendVersion.kind === "available"
+              ? backendVersion.version
+              : backendVersion.kind}
+          </span>
+        </footer>
       </section>
     </main>
   );
