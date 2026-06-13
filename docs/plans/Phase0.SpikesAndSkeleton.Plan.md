@@ -132,7 +132,7 @@ Verification:
 - `npm install` and `npm run check` succeed from `frontend/`.
 - `npm run fmt -- --check` or the configured formatter check succeeds from `frontend/` if available.
 
-### 0.3 Backend Skeleton
+### 0.3 Backend Skeleton (COMPLETE)
 
 **Goal:** Establish a thin, runnable Rust backend that can host API routes and eventually static frontend assets.
 
@@ -165,6 +165,7 @@ Human testing recommended:
 Tasks:
 
 - Create Vite + React + TypeScript app.
+- Implement approved dark theme foundation from docs/VisualDesign.DarkTheme.md.
 - Configure the dev server proxy so `/api` reaches the Rust backend.
 - Add TanStack Query.
 - Configure TypeScript checking and the chosen frontend formatter/linter. Use
