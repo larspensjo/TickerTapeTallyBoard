@@ -273,7 +273,7 @@ Human testing recommended:
 - Lars should compare spike totals and sample rows against Sharesight's UI/export view.
 - Lars should provide Sharesight's current `NOW` position for the split invariant check, or run the comparison in Sharesight during the spike review.
 
-### 0.6 Price Provider Spike
+### 0.6 Price Provider Spike (COMPLETE)
 
 **Goal:** Pick a primary EOD price provider and identify fallback/provider-trait requirements.
 
@@ -451,8 +451,8 @@ Human testing recommended:
 - [ ] Sharesight CSV spike parses all current rows.
 - [ ] Sharesight import findings documented.
 - [ ] Design import-format wording reconciled with the import spike result.
-- [ ] At least two price providers tested.
-- [ ] Primary price provider chosen and recorded.
+- [x] At least two price providers tested.
+- [x] Primary price provider chosen and recorded.
 - [ ] Base currency and FX rules documented with one worked CSV example.
 - [ ] README contains local dev and check commands.
 - [ ] Phase 0 diary entry written.

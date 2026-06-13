@@ -175,3 +175,15 @@ Observed:
 Open question:
 - None for split semantics.
 Refs: `docs/spikes/SharesightImportSpike.md`, `docs/DecisionLog.md`; implements: Sharesight Split Quantity Delta Confirmed.
+
+## 2026-06-13 - Price provider spike
+Compared free-friendly equity and FX provider candidates for the representative USD and EUR instruments.
+What changed:
+- Added a sanitized spike note with tested request URLs, observed response shapes, provider-symbol mappings, missing-price handling guidance, and fallback strategy.
+- Recorded the v1 market-data source decision.
+Observed:
+- Yahoo returned daily candles for `MSFT` and `ASML.AS` without a key, and Frankfurter v2 returned current and historical USD/SEK and EUR/SEK rates without a key.
+- Twelve Data confirmed `ASML` on Euronext/XAMS through symbol search but requires a real key for time series; Stooq was blocked by browser verification; Alpha Vantage's free tier requires a key and has a tight documented daily call limit.
+Open question:
+- Before using Twelve Data as a live fallback, verify representative time-series calls with a real free key.
+Refs: `docs/spikes/PriceProviderSpike.md`, `docs/DecisionLog.md`; implements: Primary Market Data Sources.
