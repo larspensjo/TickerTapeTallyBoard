@@ -1,8 +1,8 @@
 # Phase 0 Plan: Spikes & Skeleton
 
-**Status:** Draft  
-**Created:** 2026-06-12  
-**Source design:** [docs/Design.HighLevel.md](../Design.HighLevel.md)  
+**Status:** Draft
+**Created:** 2026-06-12
+**Source design:** [docs/Design.HighLevel.md](../Design.HighLevel.md)
 **Primary private fixture:** `docs/AllTradesReport_2026-06-12.csv` exists locally for Phase 0, but must remain git-ignored because it contains private portfolio data.
 
 ## Purpose
@@ -67,7 +67,7 @@ Phase 0 should review and extend these documents as implementation work reveals 
 
 Only one external value is still needed during Phase 0 implementation.
 
-1. **Which current Sharesight position should be used to verify the split row?**  
+1. **Which current Sharesight position should be used to verify the split row?**
    The spike needs the current Sharesight position for the instrument with the split, `NOW`, to validate quantity-delta semantics.
 
 ## Standing Assumptions
@@ -85,7 +85,7 @@ Phase 0 is split into small increments. Each increment should be independently r
 
 **Goal:** Make sure the bootstrapped project-management docs are useful before implementation decisions accumulate.
 
-### 0.2 Repo Skeleton Decision
+### 0.2 Repo Skeleton Decision (COMPLETE)
 
 **Goal:** Choose and document the project layout before scaffolding code.
 

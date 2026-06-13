@@ -57,3 +57,17 @@ Observed:
 Open question:
 - None.
 Refs: `.vscode/launch.json`, `.vscode/settings.json`, `.vscode/tasks.json`.
+
+## 2026-06-13 - Local start script
+Added a PowerShell startup script for building and running the local backend and frontend together.
+What changed:
+- Added `scripts/start.ps1` to install frontend dependencies, build backend/frontend artifacts, and start both dev processes.
+- Added options for `-SkipInstall`, `-SkipBuild`, `-BuildOnly`, and `-FrontendPort`.
+- Runs the built backend executable directly and stops backend/frontend process trees during cleanup.
+Observed:
+- `scripts/start.ps1 -SkipInstall -BuildOnly` built the backend and frontend successfully.
+- A live smoke test kept the script running and returned responses from `http://127.0.0.1:8080/` and `http://127.0.0.1:5173/`.
+- `cargo clippy --all-targets -- -D warnings`, `cargo fmt`, and `npm run check` passed.
+Open question:
+- None.
+Refs: `scripts/start.ps1`.

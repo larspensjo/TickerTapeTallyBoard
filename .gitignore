@@ -17,6 +17,9 @@ target
 frontend/node_modules/
 frontend/dist/
 
+# Local runtime logs
+.local/
+
 # Private portfolio exports and local import fixtures
 docs/AllTradesReport*.csv
 docs/fixtures/private/
