@@ -112,3 +112,19 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/vite.config.ts`, `frontend/src/App.tsx`, `frontend/src/styles.css`; implements: Displayed Application Versions.
+
+## 2026-06-13 - Frontend app shell
+Replaced the placeholder frontend with a compact dark portfolio board shell and applied review fixes that make the shell controls and typography more complete.
+What changed:
+- Added TanStack Query for `/api/health` server state and kept board-view selection in a reducer.
+- Added a dark theme foundation using the approved CSS tokens, an app bar, totals band, holdings and transactions tables, and an API health panel.
+- Added Lucide icons for app-bar actions, wired the Refresh action to refetch `/api/health`, and show a spinning refresh icon while a health request is in flight.
+- Added accessible pressed state for the board view toggle and stable ids for mock transaction rows.
+- Bundled Inter and JetBrains Mono through local font packages and added base body typography plus consistent focus rings for app navigation.
+- Bumped the frontend package version to `0.2.1`.
+Observed:
+- `npm run check`, `npm run fmt`, `npm run build`, `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed.
+- A headless Chrome smoke test rendered the app through Vite with `API ok`, frontend version `0.2.1`, Inter and JetBrains Mono active, the Holdings toggle marked `aria-pressed="true"`, and no browser exceptions or console errors.
+Open question:
+- None.
+Refs: `frontend/index.html`, `frontend/src/App.tsx`, `frontend/src/main.tsx`, `frontend/src/styles.css`, `frontend/package.json`, `frontend/package-lock.json`.

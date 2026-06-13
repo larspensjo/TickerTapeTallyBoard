@@ -1,6 +1,6 @@
 {
   "name": "ticker-tape-tally-board-frontend",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,10 @@
     "fmt": "biome format --write src index.html vite.config.ts biome.json package.json tsconfig.json"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@tanstack/react-query": "^5.101.0",
+    "lucide-react": "^1.18.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
