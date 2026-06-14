@@ -272,3 +272,16 @@ Observed:
 Open question:
 - None.
 Refs: `backend/migrations/0001_create_ledger_core.sql`, `backend/src/app.rs`, `backend/src/db/pool.rs`, `.gitignore`.
+
+## 2026-06-14 - Pure ledger domain
+Added the pure domain ledger layer for transaction validation and weighted-average position derivation.
+What changed:
+- Introduced `backend/src/domain/transaction.rs` with transaction-kind mapping, stateless field validation, and ledger-state error types.
+- Introduced `backend/src/domain/position.rs` with pure position folding, split handling, and missing-FX contamination tracking for base cost basis.
+- Re-exported the domain surface from `backend/src/domain/mod.rs` and added regression tests for sign handling, validation, weighted-average math, split-as-delta, and recovery after closing a contaminated position.
+- Applied review polish by strengthening the repeating-decimal average-base test, removing redundant item-level dead-code allows, making validation panic-free, and adding a debug-only sorted-input guard for position derivation.
+Observed:
+- `cargo test domain`, `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/domain/mod.rs`, `backend/src/domain/transaction.rs`, `backend/src/domain/position.rs`; implements: Pure Domain Ledger.
