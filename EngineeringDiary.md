@@ -285,3 +285,16 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/domain/mod.rs`, `backend/src/domain/transaction.rs`, `backend/src/domain/position.rs`; implements: Pure Domain Ledger.
+
+## 2026-06-14 - Transaction and instrument CRUD API
+Added the manual ledger write/read API over SQLite repositories, with stateful ledger validation before each transaction write.
+What changed:
+- Added instrument and transaction repositories, PascalCase API DTOs, and a shared JSON error response shape.
+- Added `GET/POST /api/instruments`, `GET/POST /api/transactions`, and `PUT/DELETE /api/transactions/{id}`.
+- Enforced signed stored quantities, upsert-like instrument creation, Buy/Sell currency matching, Dividend rejection, and write-time ledger derivability.
+- Applied review fixes so create-time ledger errors do not expose a fake transaction id, Buy/Sell currency casing is normalized to the instrument, and successful deletes verify a row was removed.
+Observed:
+- API integration tests cover duplicate instrument creation, transaction round trips, oversell rejection, split/dividend validation, full replacement, cross-instrument move validation, guarded and successful delete, unknown instruments, instrument validation, currency normalization, and currency mismatch.
+Open question:
+- None.
+Refs: `backend/src/db/`, `backend/src/api/`, `backend/Cargo.toml`; implements: Ledger-Write Validity Invariant, Instrument Identity.

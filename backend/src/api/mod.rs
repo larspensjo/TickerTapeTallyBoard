@@ -1,13 +1,16 @@
 mod cors;
+mod error;
 mod health;
+mod instruments;
 mod root;
 mod sharesight;
+mod transactions;
 
 use axum::{
     extract::State,
     http::StatusCode,
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, put},
     Router,
 };
 use std::{path::Path, sync::Arc};
@@ -39,10 +42,24 @@ pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: App
 }
 
 fn api_router() -> Router<AppState> {
-    Router::new().route("/health", get(health::handler)).route(
-        "/import/sharesight/schema-preview",
-        get(sharesight::handler),
-    )
+    Router::new()
+        .route("/health", get(health::handler))
+        .route(
+            "/import/sharesight/schema-preview",
+            get(sharesight::handler),
+        )
+        .route(
+            "/instruments",
+            get(instruments::list).post(instruments::create),
+        )
+        .route(
+            "/transactions",
+            get(transactions::list).post(transactions::create),
+        )
+        .route(
+            "/transactions/{id}",
+            put(transactions::replace).delete(transactions::remove),
+        )
 }
 
 #[derive(Clone)]
