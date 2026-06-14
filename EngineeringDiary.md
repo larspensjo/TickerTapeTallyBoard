@@ -234,3 +234,41 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/src/vite-env.d.ts`.
+
+## 2026-06-14 - Backend DB foundation and schema
+Added the SQLite persistence foundation for the ledger core and wired app startup through shared Axum state.
+What changed:
+- Added `sqlx` runtime dependencies, the first ledger migration, and the SQLite pool/migration helpers.
+- Added `AppState` and threaded it through `app.rs`, `api/mod.rs`, and the existing health/import route tests.
+- Extended config with `TTTB_DATABASE_URL` and a default local SQLite file, and ignored the dev database file in `.gitignore`.
+Observed:
+- `cargo build`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+- The migration test verified schema creation plus unique, check, and foreign-key constraints against a real in-memory database.
+Open question:
+- None.
+Refs: `backend/Cargo.toml`, `backend/migrations/0001_create_ledger_core.sql`, `backend/src/db/`, `backend/src/state.rs`, `backend/src/config.rs`, `backend/src/app.rs`, `backend/src/api/mod.rs`, `backend/src/api/health.rs`, `backend/src/api/sharesight.rs`, `.gitignore`.
+
+## 2026-06-14 - Project statistics script
+Added a repository-specific PowerShell stats report adapted from the other project and scoped to this repo's backend, frontend, docs, and scripts layout.
+What changed:
+- Added `scripts/project-stats.ps1` to report backend Rust and migration lines, frontend source lines, documentation, script, config/data, and dependency counts.
+- Filtered out generated paths such as `backend/target`, `frontend/dist`, `frontend/node_modules`, and repo-local editor/runtime clutter.
+- Removed duplicated SQL accounting after the first run so totals are internally consistent.
+Observed:
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\project-stats.ps1` completed successfully.
+- The current report shows 1,944 backend Rust lines, 39 migration lines, 1,011 frontend lines, 5,859 documentation lines, and 658 PowerShell script lines.
+Open question:
+- None.
+Refs: `scripts/project-stats.ps1`.
+
+## 2026-06-14 - DB foundation review polish
+Applied low-risk review findings from the ledger database foundation pass.
+What changed:
+- Restored schema comments for transaction date and signed quantity semantics.
+- Logged the configured database URL after startup connection, removed an unnecessary router state clone, and collapsed a redundant runtime database ignore rule.
+- Added a regression test for the production SQLite `connect` path covering file creation, migration application, and foreign-key pragma setup.
+Observed:
+- `cargo test`, `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/migrations/0001_create_ledger_core.sql`, `backend/src/app.rs`, `backend/src/db/pool.rs`, `.gitignore`.

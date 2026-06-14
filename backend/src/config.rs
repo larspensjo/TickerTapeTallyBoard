@@ -8,8 +8,10 @@ use std::{
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_DATABASE_URL: &str = "sqlite://tttb-ledger.sqlite";
 const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
 const HOST_ENV: &str = "TTTB_HOST";
+const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
 const PORT_ENV: &str = "TTTB_PORT";
 const HOSTING_PORT_ENV: &str = "PORT";
 const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
@@ -18,6 +20,7 @@ const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub database_url: String,
     pub static_assets_dir: PathBuf,
 }
 
@@ -37,6 +40,9 @@ impl AppConfig {
                 .unwrap_or(DEFAULT_PORT),
         };
 
+        let database_url =
+            read_optional(DATABASE_URL_ENV)?.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned());
+
         let static_assets_dir = read_optional(STATIC_ASSETS_DIR_ENV)?
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_STATIC_ASSETS_DIR));
@@ -44,6 +50,7 @@ impl AppConfig {
         Ok(Self {
             host,
             port,
+            database_url,
             static_assets_dir,
         })
     }
@@ -55,6 +62,10 @@ impl AppConfig {
     pub fn static_assets_dir(&self) -> &Path {
         &self.static_assets_dir
     }
+
+    pub fn database_url(&self) -> &str {
+        &self.database_url
+    }
 }
 
 impl Default for AppConfig {
@@ -62,6 +73,7 @@ impl Default for AppConfig {
         Self {
             host: DEFAULT_HOST,
             port: DEFAULT_PORT,
+            database_url: DEFAULT_DATABASE_URL.to_owned(),
             static_assets_dir: PathBuf::from(DEFAULT_STATIC_ASSETS_DIR),
         }
     }
@@ -144,6 +156,7 @@ mod tests {
         assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.port, 8080);
         assert_eq!(config.socket_addr().to_string(), "127.0.0.1:8080");
+        assert_eq!(config.database_url, DEFAULT_DATABASE_URL);
         assert_eq!(
             config.static_assets_dir,
             PathBuf::from(DEFAULT_STATIC_ASSETS_DIR)
@@ -154,6 +167,7 @@ mod tests {
     fn from_env_uses_tttb_port_before_hosting_port() {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
+            (DATABASE_URL_ENV, None),
             (PORT_ENV, Some("9090")),
             (HOSTING_PORT_ENV, Some("3000")),
             (STATIC_ASSETS_DIR_ENV, None),
@@ -169,6 +183,7 @@ mod tests {
     fn from_env_uses_hosting_port_when_tttb_port_is_missing() {
         let _guard = TestEnv::new(&[
             (HOST_ENV, Some("0.0.0.0")),
+            (DATABASE_URL_ENV, None),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, Some("3000")),
             (STATIC_ASSETS_DIR_ENV, None),
@@ -187,6 +202,7 @@ mod tests {
     fn from_env_uses_static_assets_dir_override() {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
+            (DATABASE_URL_ENV, None),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, None),
             (STATIC_ASSETS_DIR_ENV, Some("C:/tttb/static")),
@@ -195,6 +211,21 @@ mod tests {
         let config = AppConfig::from_env().expect("config should load");
 
         assert_eq!(config.static_assets_dir, PathBuf::from("C:/tttb/static"));
+    }
+
+    #[test]
+    fn from_env_uses_database_url_override() {
+        let _guard = TestEnv::new(&[
+            (HOST_ENV, None),
+            (DATABASE_URL_ENV, Some("sqlite:///tmp/tttb.sqlite")),
+            (PORT_ENV, None),
+            (HOSTING_PORT_ENV, None),
+            (STATIC_ASSETS_DIR_ENV, None),
+        ]);
+
+        let config = AppConfig::from_env().expect("config should load");
+
+        assert_eq!(config.database_url, "sqlite:///tmp/tttb.sqlite");
     }
 
     #[test]

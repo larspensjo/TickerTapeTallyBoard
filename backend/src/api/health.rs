@@ -44,7 +44,8 @@ mod tests {
 
     #[tokio::test]
     async fn health_endpoint_returns_status_and_build_info() {
-        let response = crate::api::router()
+        let state = crate::state::AppState::for_tests().await;
+        let response = crate::api::router(state)
             .oneshot(
                 Request::builder()
                     .uri("/api/health")

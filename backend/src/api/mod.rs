@@ -13,32 +13,35 @@ use axum::{
 use std::{path::Path, sync::Arc};
 use tower_http::services::ServeDir;
 
-pub fn router() -> Router {
-    api_routes()
+use crate::state::AppState;
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
         .route("/", get(root::handler))
+        .nest("/api", api_router())
         .layer(cors::layer())
+        .with_state(state)
 }
 
-pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>) -> Router {
+pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: AppState) -> Router {
     let static_assets_dir = static_assets_dir.as_ref();
     let static_assets = StaticAssets {
         index_path: Arc::from(static_assets_dir.join("index.html").into_boxed_path()),
     };
 
-    api_routes()
+    Router::new()
+        .nest("/api", api_router())
         .fallback_service(
             ServeDir::new(static_assets_dir).fallback(get(static_index).with_state(static_assets)),
         )
         .layer(cors::layer())
+        .with_state(state)
 }
 
-fn api_routes() -> Router {
-    Router::new().nest(
-        "/api",
-        Router::new().route("/health", get(health::handler)).route(
-            "/import/sharesight/schema-preview",
-            get(sharesight::handler),
-        ),
+fn api_router() -> Router<AppState> {
+    Router::new().route("/health", get(health::handler)).route(
+        "/import/sharesight/schema-preview",
+        get(sharesight::handler),
     )
 }
 
@@ -74,8 +77,9 @@ mod tests {
     #[tokio::test]
     async fn static_router_serves_frontend_index_for_root() {
         let fixture = StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path())
+        let response = router_with_static_assets(fixture.path(), state)
             .oneshot(
                 Request::builder()
                     .uri("/")
@@ -99,8 +103,9 @@ mod tests {
     #[tokio::test]
     async fn static_router_uses_index_fallback_for_frontend_routes() {
         let fixture = StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path())
+        let response = router_with_static_assets(fixture.path(), state)
             .oneshot(
                 Request::builder()
                     .uri("/portfolio/holdings")
@@ -124,8 +129,9 @@ mod tests {
     #[tokio::test]
     async fn static_router_serves_root_static_files_before_spa_fallback() {
         let fixture = StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path())
+        let response = router_with_static_assets(fixture.path(), state)
             .oneshot(
                 Request::builder()
                     .uri("/manifest.json")
@@ -149,8 +155,9 @@ mod tests {
     #[tokio::test]
     async fn static_router_serves_asset_files_with_content_type() {
         let fixture = StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path())
+        let response = router_with_static_assets(fixture.path(), state)
             .oneshot(
                 Request::builder()
                     .uri("/assets/app.css")
@@ -182,8 +189,9 @@ mod tests {
     #[tokio::test]
     async fn static_router_keeps_api_routes_available() {
         let fixture = StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path())
+        let response = router_with_static_assets(fixture.path(), state)
             .oneshot(
                 Request::builder()
                     .uri("/api/health")

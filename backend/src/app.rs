@@ -1,19 +1,22 @@
-use crate::config::AppConfig;
+use crate::{config::AppConfig, state::AppState};
 
 pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let address = config.socket_addr();
+    let pool = crate::db::connect(config.database_url()).await?;
+    crate::engine_info!("database ready at {}", config.database_url());
+    let state = AppState::new(pool);
     let router = if config.static_assets_dir().is_dir() {
         crate::engine_info!(
             "serving frontend assets from {}",
             config.static_assets_dir().display()
         );
-        crate::api::router_with_static_assets(config.static_assets_dir())
+        crate::api::router_with_static_assets(config.static_assets_dir(), state)
     } else {
         crate::engine_warn!(
             "frontend assets not found at {}; serving backend routes only",
             config.static_assets_dir().display()
         );
-        crate::api::router()
+        crate::api::router(state)
     };
 
     let listener = tokio::net::TcpListener::bind(address).await?;

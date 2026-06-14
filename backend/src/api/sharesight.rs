@@ -49,7 +49,8 @@ mod tests {
 
     #[tokio::test]
     async fn sharesight_schema_preview_exposes_expected_fields() {
-        let response = crate::api::router()
+        let state = crate::state::AppState::for_tests().await;
+        let response = crate::api::router(state)
             .oneshot(
                 Request::builder()
                     .uri("/api/import/sharesight/schema-preview")
