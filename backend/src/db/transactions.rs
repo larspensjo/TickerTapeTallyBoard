@@ -106,6 +106,16 @@ pub async fn ledger_for_instrument(
     rows.iter().map(TransactionRow::to_ledger).collect()
 }
 
+/// All transactions ordered for deriving holdings across instruments in memory.
+pub async fn all_for_holdings(pool: &SqlitePool) -> Result<Vec<TransactionRow>, RepoError> {
+    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
+        "SELECT {COLUMNS} FROM transactions ORDER BY instrument_id, trade_date, id"
+    ))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn insert(pool: &SqlitePool, new: &NewTransaction) -> Result<TransactionRow, RepoError> {
     let row = sqlx::query_as::<_, TransactionRow>(&format!(
         "INSERT INTO transactions \

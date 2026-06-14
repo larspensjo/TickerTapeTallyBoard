@@ -310,3 +310,16 @@ Observed:
 Open question:
 - None.
 Refs: `scripts/start.ps1`, `README.md`.
+
+## 2026-06-14 - Derived holdings API
+Added the read-only holdings endpoint that derives open positions from the stored transaction ledger.
+What changed:
+- Added `GET /api/holdings` with instrument details, quantity, native cost basis, weighted-average cost, and base-cost availability or missing-FX reasons.
+- Registered the holdings route and covered weighted-average cost, split rescaling, missing-FX reporting, closed-position omission, partial-sell formatting, and multi-holding order with API integration tests.
+- Formats derived money values to two decimal places at the API boundary so Decimal scale and partial-sell precision artifacts do not leak into response values.
+- Fetches all transactions for holdings derivation in one ordered query and groups them in memory instead of querying once per instrument.
+Observed:
+- `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- Should the weighted-average sell fold eliminate tiny internal Decimal residuals instead of relying on API-boundary money formatting?
+Refs: `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `backend/src/db/transactions.rs`; implements: Cost-Basis Accounting Method, Missing-FX Contamination Rule, Ledger Ordering.

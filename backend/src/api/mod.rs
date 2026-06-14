@@ -1,6 +1,7 @@
 mod cors;
 mod error;
 mod health;
+mod holdings;
 mod instruments;
 mod root;
 mod sharesight;
@@ -48,6 +49,7 @@ fn api_router() -> Router<AppState> {
             "/import/sharesight/schema-preview",
             get(sharesight::handler),
         )
+        .route("/holdings", get(holdings::list))
         .route(
             "/instruments",
             get(instruments::list).post(instruments::create),
