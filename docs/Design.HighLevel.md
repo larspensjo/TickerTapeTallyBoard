@@ -74,12 +74,12 @@ REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /ap
 
 Each phase ends with something usable. Estimates assume one experienced developer, part-time; treat as relative sizing.
 
-### Phase 0 — Spikes & skeleton (~1 week)
-- Repo setup: `backend/` (cargo) + `frontend/` (Vite); dev proxy; CI build.
-- **Spike A:** export real All Trades Report from Sharesight; confirm columns, dividend coverage, fund/ETF representation. *De-risks the import design.*
-- **Spike B:** fetch EOD prices for 3 representative instruments (ST stock, US stock, fund) from 2 candidate providers; pick primary.
-- Decide base currency handling details based on spike findings.
-- **Exit criteria:** real Sharesight file in hand and parsed in a throwaway script; price provider chosen.
+### Phase 0 — Spikes & skeleton ✅ Done (2026-06-13)
+- **Skeleton:** `backend/` (axum/tokio) + `frontend/` (Vite/React/TS), dev `/api` proxy, local start script, `engine_logging`, `/api/health` exposing both frontend and backend versions, and disk static serving of the built frontend.
+- **Spike A (Sharesight):** parsed the real All Trades CSV (189 rows: 105 buys, 83 sells, 1 split) and fixed the CSV/FX conventions. All holdings are EUR/USD across Euronext, Frankfurt, Xetra, NASDAQ, and NYSE — no Stockholm-listed or fund-type rows, and no dividends in this report (so v1 takes dividends by manual entry). Split quantities use delta semantics (5/1 confirmed against the live position).
+- **Spike B (prices/FX):** chose Yahoo Finance chart endpoint for equity EOD/history and Frankfurter v2 (pinned to ECB) for FX→SEK. Twelve Data is the keyed fallback; manual price CSV import is the last resort. Missing prices are represented explicitly with a reason, never as zero.
+- **Currency/FX:** SEK base; native price and trade-date FX stored separately (never a pre-converted SEK value); the portfolio is an ISK account, so v1 does no tax calculation. Rules captured in `docs/CurrencyAndFxRules.md`.
+- Exit criteria met. Detail in `docs/DecisionLog.md` and `docs/spikes/`.
 
 ### Phase 1 — Ledger core (~1–2 weeks)
 - SQLite schema + migrations (sqlx).
