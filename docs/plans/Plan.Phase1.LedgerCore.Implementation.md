@@ -1,5 +1,4 @@
 # Phase 1 — Ledger Core Implementation Plan
-
 **Goal:** Deliver a manual, no-live-prices portfolio tracker: a SQLite ledger, transaction/instrument CRUD, a derived holdings view (weighted-average cost, per-currency cost basis), and a manual-entry UI.
 
 **Architecture:** Pure `domain/` ledger logic (no axum/sqlx/HTTP) derives positions from `(trade_date, id)`-ordered transactions; `db/` repositories own all SQL against a `SqlitePool`; thin `api/` handlers inject an `AppState { pool }` via axum `State` and reuse the domain for stateful validation; the React frontend keeps input → action → reducer → state → render with side effects (queries/mutations) isolated.
