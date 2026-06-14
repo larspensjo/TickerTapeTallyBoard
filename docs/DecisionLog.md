@@ -96,3 +96,38 @@ Consequences: Phase 1 and v1 valuation should avoid tax-reporting claims and sho
 Decision: The backend serves built frontend assets from disk for the initial production-style path, using `../frontend/dist` by default and `TTTB_STATIC_DIR` as an override. Embedded frontend assets are deferred until packaging needs justify them.
 Context: The app needs concrete local development and future serving behavior without adding packaging complexity. Vite already handles development serving and proxies `/api` to the backend.
 Consequences: Local development continues to run Vite and the backend as separate processes. A production-style smoke run builds the frontend first, then runs the backend from `backend/`; API routes remain under `/api`, while frontend routes are served by the built SPA fallback when the static directory exists.
+
+## 2026-06-14: Cost-Basis Accounting Method
+Decision: Portfolio cost basis uses weighted-average cost per instrument. A buy adds to quantity and native cost basis; a sell reduces quantity and every cost-basis component proportionally at the current average, leaving average cost per share unchanged. FIFO tax-lots remain out of scope for v1.
+Context: `docs/CurrencyAndFxRules.md` deferred "the chosen portfolio accounting method"; this resolves it. The ISK tax scope means cost basis is for analytics and reconciliation only.
+Consequences: Sell handling and holdings derivation use a single blended average. Per-lot recovery of historical cost is not possible without a future FIFO model.
+
+## 2026-06-14: Ledger Ordering
+Decision: Position derivation processes a single instrument's transactions in `(trade_date, id)` order. `id` is the monotonic insert/import tiebreaker; same-day same-instrument rows stay distinct.
+Context: Weighted-average cost is order-sensitive when buys and sells interleave on the same trade date. A deterministic order is required for reproducible holdings.
+Consequences: A later explicit import-sequence column can replace the tiebreaker without changing the contract. Writes are validated by re-deriving the full ordered ledger.
+
+## 2026-06-14: Instrument Identity
+Decision: Instrument identity is `UNIQUE (exchange, symbol)`. Currency is an attribute, not part of identity. Creating an instrument is upsert-like: an existing `(exchange, symbol)` returns the existing row unchanged rather than creating a duplicate.
+Context: Inline instrument creation from the transaction form must not fragment a holding into duplicate instruments.
+Consequences: Provider-specific symbols are stored separately when added later. Renames/currency corrections to an existing instrument need an explicit update path (not part of upsert).
+
+## 2026-06-14: Missing-FX Contamination Rule
+Decision: A position's SEK cost basis (`cost_basis_base` / `average_cost_base`) is available only while every buy contributing to the currently open quantity had a known trade-date FX rate. The first missing-FX buy folded into the blended average makes the position's base cost unavailable (with reasons and offending transaction ids) until the position fully closes (`quantity → 0`) and is rebuilt from buys that all have FX. Native cost basis is always derivable.
+Context: Under one blended weighted-average, shares bought without FX cannot be isolated, so a partial SEK basis would be misleading. Missing data must be explicit, never zero. This refines the 2026-06-13 Base Currency And FX Rules commitment that missing FX is an explicit state, not zero.
+Consequences: Holdings expose an explicit unavailable state. Per-lot recovery is deferred with FIFO tax-lots.
+
+## 2026-06-14: Ledger-Write Validity Invariant
+Decision: Every transaction write (create, full-replace, delete) must leave the affected instrument's `(trade_date, id)`-ordered ledger derivable — no step may drive quantity below zero and every split must remain valid — otherwise the write is rejected. Missing FX is not a violation (it derives successfully with an unavailable base).
+Context: Holdings are derived purely from the ledger and must always be computable. Back-dated edits and deletes can otherwise invalidate later rows.
+Consequences: Corrections may need to be applied in dependency order (e.g. remove a dependent sell before the buy it draws from). Holdings derivation can assume a consistent stored ledger.
+
+## 2026-06-14: Transaction Type Constraint And Manual Entry Scope
+Decision: The `transactions.type` CHECK constraint allows `BUY|SELL|SPLIT|DIVIDEND`, but manual entry and the API support only Buy, Sell, and Split; a Dividend create request is rejected (`dividend_not_supported`) until dividend fields and validation exist. This narrows the 2026-06-12 Phase 0 Planning Decisions commitment that v1 "allows manual dividend entry": manual dividend entry is deferred, not yet available.
+Context: Keeping DIVIDEND in the constraint avoids a future table-rebuild migration when dividend support is designed, while current behaviour stays limited to the types that have defined fields. The earlier scope assumed manual dividend entry would ship, but no dividend fields or validation have been designed yet.
+Consequences: The schema is forward-compatible for dividends. Until dividend fields land, no Dividend rows are created, and derivation treats any Dividend row as a position no-op. When dividend support is added, revisit this entry and the 2026-06-12 Phase 0 Planning Decisions entry.
+
+## 2026-06-14: Backend Persistence Stack
+Decision: The backend persists to SQLite via sqlx using runtime `query_as` and `FromRow` (no compile-time macros, no `.sqlx/` offline metadata, no `SQLX_OFFLINE`). Money, prices, FX, and quantities-as-decimals are stored as TEXT and round-tripped through `rust_decimal` strings; integer share quantities as INTEGER; dates as ISO-8601 TEXT. Schema correctness is covered by DB integration tests that run the real migrations. Migrations are forward-only and additive.
+Context: For a single-binary local SQLite app where SQLite stores decimals as TEXT, compile-time query macros add tooling friction for little type-safety gain, and the existing `cargo clippy --all-targets -- -D warnings` workflow must stay free of a live database.
+Consequences: All SQL lives in `db/` repositories. Reads decode TEXT decimals/dates into domain types; a decode failure is an internal error. Revisit the macro approach only if a richer database or compile-time guarantees are later justified.
