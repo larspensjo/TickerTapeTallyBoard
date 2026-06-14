@@ -224,3 +224,13 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/api/mod.rs`.
+
+## 2026-06-14 - Frontend CSS import declarations
+Added Vite client ambient types so TypeScript accepts side-effect CSS imports used by the app entry point.
+What changed:
+- Added `frontend/src/vite-env.d.ts` with the Vite client type reference.
+Observed:
+- `npm run check` passed from `frontend/`.
+Open question:
+- None.
+Refs: `frontend/src/vite-env.d.ts`.
