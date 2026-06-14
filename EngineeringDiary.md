@@ -298,3 +298,15 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/db/`, `backend/src/api/`, `backend/Cargo.toml`; implements: Ledger-Write Validity Invariant, Instrument Identity.
+
+## 2026-06-14 - Startup database modes
+Made the local startup script choose an explicit disposable local database by default and added a production database flag for portfolio data.
+What changed:
+- Added `-ProductionDb`, `-LocalDatabaseUrl`, and `-ProductionDatabaseUrl` to `scripts/start.ps1`.
+- The script now sets `TTTB_DATABASE_URL` for its backend child process, prints the active database mode, and restores the caller's environment after shutdown.
+- Documented the default local and production database paths plus override environment variables in the README.
+Observed:
+- `scripts/start.ps1 -SkipInstall -SkipBuild -BuildOnly` still completes without needing a database.
+Open question:
+- None.
+Refs: `scripts/start.ps1`, `README.md`.

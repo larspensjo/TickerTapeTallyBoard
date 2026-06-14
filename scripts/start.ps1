@@ -3,7 +3,10 @@ param(
     [switch]$SkipInstall,
     [switch]$SkipBuild,
     [switch]$BuildOnly,
-    [int]$FrontendPort = 5173
+    [int]$FrontendPort = 5173,
+    [switch]$ProductionDb,
+    [string]$LocalDatabaseUrl,
+    [string]$ProductionDatabaseUrl
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +14,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BackendDir = Join-Path $RepoRoot "backend"
 $FrontendDir = Join-Path $RepoRoot "frontend"
+$DefaultLocalDatabasePath = Join-Path $RepoRoot ".local/db/tttb-ledger-test.sqlite"
+$DefaultProductionDatabasePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "TickerTapeTallyBoard/portfolio.sqlite"
 
 function Assert-Command {
     param(
@@ -87,6 +92,60 @@ function Wait-Url {
     throw "Timed out waiting for $Url."
 }
 
+function ConvertTo-SqliteUrl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    if ($Value.StartsWith("sqlite:", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $Value
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($Value)
+    $parent = Split-Path -Parent $fullPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+
+    $normalized = $fullPath.Replace("\", "/")
+    return "sqlite://$normalized"
+}
+
+function Resolve-DatabaseUrl {
+    if ($ProductionDb) {
+        $candidate = if (-not [string]::IsNullOrWhiteSpace($ProductionDatabaseUrl)) {
+            $ProductionDatabaseUrl
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($env:TTTB_PRODUCTION_DATABASE_URL)) {
+            $env:TTTB_PRODUCTION_DATABASE_URL
+        }
+        else {
+            $DefaultProductionDatabasePath
+        }
+
+        return @{
+            Mode = "production"
+            Url = ConvertTo-SqliteUrl $candidate
+        }
+    }
+
+    $candidate = if (-not [string]::IsNullOrWhiteSpace($LocalDatabaseUrl)) {
+        $LocalDatabaseUrl
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:TTTB_LOCAL_DATABASE_URL)) {
+        $env:TTTB_LOCAL_DATABASE_URL
+    }
+    else {
+        $DefaultLocalDatabasePath
+    }
+
+    return @{
+        Mode = "local test"
+        Url = ConvertTo-SqliteUrl $candidate
+    }
+}
+
 Assert-Command "cargo"
 Assert-Command "npm"
 
@@ -138,10 +197,13 @@ if ($BuildOnly) {
     exit 0
 }
 
+$Database = Resolve-DatabaseUrl
+
 Write-Host ""
 Write-Host "==> Start application" -ForegroundColor Cyan
 Write-Host "Backend:  http://127.0.0.1:8080/"
 Write-Host "Frontend: http://127.0.0.1:$FrontendPort/"
+Write-Host "Database: $($Database.Mode) ($($Database.Url))"
 Write-Host "Press Ctrl+C to stop both processes."
 Write-Host ""
 
@@ -164,24 +226,30 @@ $FrontendStdout = Join-Path $LogDir "frontend.out.log"
 $FrontendStderr = Join-Path $LogDir "frontend.err.log"
 Remove-Item $BackendStdout, $BackendStderr, $FrontendStdout, $FrontendStderr -ErrorAction SilentlyContinue
 
-$backendProcess = Start-Process `
-    -FilePath $BackendExe `
-    -WorkingDirectory $BackendDir `
-    -RedirectStandardOutput $BackendStdout `
-    -RedirectStandardError $BackendStderr `
-    -PassThru `
-    -WindowStyle Hidden
+$PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
+$env:TTTB_DATABASE_URL = $Database.Url
 
-$frontendProcess = Start-Process `
-    -FilePath $NpmCommand.Source `
-    -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $FrontendPort) `
-    -WorkingDirectory $FrontendDir `
-    -RedirectStandardOutput $FrontendStdout `
-    -RedirectStandardError $FrontendStderr `
-    -PassThru `
-    -WindowStyle Hidden
+$backendProcess = $null
+$frontendProcess = $null
 
 try {
+    $backendProcess = Start-Process `
+        -FilePath $BackendExe `
+        -WorkingDirectory $BackendDir `
+        -RedirectStandardOutput $BackendStdout `
+        -RedirectStandardError $BackendStderr `
+        -PassThru `
+        -WindowStyle Hidden
+
+    $frontendProcess = Start-Process `
+        -FilePath $NpmCommand.Source `
+        -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $FrontendPort) `
+        -WorkingDirectory $FrontendDir `
+        -RedirectStandardOutput $FrontendStdout `
+        -RedirectStandardError $FrontendStderr `
+        -PassThru `
+        -WindowStyle Hidden
+
     Wait-Url "http://127.0.0.1:8080/"
     Wait-Url "http://127.0.0.1:$FrontendPort/"
     Write-Host "Application is running." -ForegroundColor Green
@@ -205,6 +273,17 @@ finally {
     Write-Host ""
     Write-Host "Stopping application processes..." -ForegroundColor Yellow
 
-    Stop-ProcessTree $frontendProcess
-    Stop-ProcessTree $backendProcess
+    if ($frontendProcess) {
+        Stop-ProcessTree $frontendProcess
+    }
+    if ($backendProcess) {
+        Stop-ProcessTree $backendProcess
+    }
+
+    if ($null -eq $PreviousDatabaseUrl) {
+        Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TTTB_DATABASE_URL = $PreviousDatabaseUrl
+    }
 }

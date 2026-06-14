@@ -24,12 +24,29 @@ Run the backend and frontend together:
 
 The script builds both projects, starts the backend on `http://127.0.0.1:8080/`,
 starts Vite on `http://127.0.0.1:5173/`, and stops both processes when it exits.
+By default it uses a disposable local test database under `.local/db/`.
 
 For a faster rerun after dependencies and builds are already current:
 
 ```powershell
 .\scripts\start.ps1 -SkipInstall -SkipBuild
 ```
+
+To run against the production portfolio database instead:
+
+```powershell
+.\scripts\start.ps1 -ProductionDb
+```
+
+The default production database path is
+`Documents\TickerTapeTallyBoard\portfolio.sqlite`. Override it with either:
+
+```powershell
+.\scripts\start.ps1 -ProductionDb -ProductionDatabaseUrl "sqlite://C:/Users/larsp/Documents/TickerTapeTallyBoard/portfolio.sqlite"
+```
+
+or by setting `TTTB_PRODUCTION_DATABASE_URL`. The local test database can be
+overridden with `-LocalDatabaseUrl` or `TTTB_LOCAL_DATABASE_URL`.
 
 The Vite dev server proxies `/api` to the backend, so the frontend can call
 `/api/health` without a separate development API URL.
@@ -51,6 +68,9 @@ Configuration:
 - `TTTB_PORT`: backend port, default `8080`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
+- `TTTB_DATABASE_URL`: backend SQLite database URL
+- `TTTB_PRODUCTION_DATABASE_URL`: startup-script production database URL
+- `TTTB_LOCAL_DATABASE_URL`: startup-script local test database URL
 
 ## Frontend Commands
 
