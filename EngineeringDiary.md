@@ -323,3 +323,19 @@ Observed:
 Open question:
 - Should the weighted-average sell fold eliminate tiny internal Decimal residuals instead of relying on API-boundary money formatting?
 Refs: `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `backend/src/db/transactions.rs`; implements: Cost-Basis Accounting Method, Missing-FX Contamination Rule, Ledger Ordering.
+
+## 2026-06-14 - Frontend ledger board wiring
+Replaced the mock portfolio board with the real ledger-backed frontend flow, including manual transaction entry, instrument upsert, sortable holdings, and filterable transactions.
+What changed:
+- Added typed API helpers and React Query hooks for instruments, transactions, holdings, and transaction deletion.
+- Added TanStack Table holdings and transactions views, plus a reducer-driven add-transaction form that can create a new instrument inline.
+- Reworked `App.tsx` to fetch live backend data, surface the backend/frontend versions, and wire refresh and delete actions through mutations.
+- Bumped the frontend package version to `0.3.0` and the backend Cargo version to `0.2.0`.
+- Applied review follow-up fixes so rejected deletes show an inline error, blank quantity input is rejected before submit, and non-sortable display columns no longer look clickable.
+Observed:
+- `cargo build` and `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `npm run check`, `npm run fmt`, and `npm run build` passed from `frontend/`.
+- After review follow-up, `npm run check` and `npm run fmt` passed again from `frontend/`.
+Open question:
+- None.
+Refs: `frontend/src/api/`, `frontend/src/components/`, `frontend/src/App.tsx`, `frontend/src/styles.css`, `frontend/package.json`, `frontend/package-lock.json`, `backend/Cargo.toml`; implements: Displayed Application Versions.

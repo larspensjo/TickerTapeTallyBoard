@@ -1,6 +1,6 @@
 {
   "name": "ticker-tape-tally-board-frontend",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-table": "^8.21.3",
     "lucide-react": "^1.18.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

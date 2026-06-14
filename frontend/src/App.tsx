@@ -1,117 +1,46 @@
+import type { UseQueryResult } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
-import { useReducer } from "react";
+import { type ReactNode, useReducer, useState } from "react";
 import packageJson from "../package.json";
+import {
+  useDeleteTransaction,
+  useHoldings,
+  useInstruments,
+  useTransactions,
+} from "./api/queries";
+import { AddTransactionForm } from "./components/AddTransactionForm";
+import { HoldingsTable } from "./components/HoldingsTable";
+import { TransactionsTable } from "./components/TransactionsTable";
 
 const frontendVersion = packageJson.version;
 
 type BoardView = "holdings" | "transactions";
 
-type UiState = {
+interface UiState {
   boardView: BoardView;
-};
+  formOpen: boolean;
+}
 
-type UiAction = { type: "boardViewSelected"; boardView: BoardView };
+type UiAction =
+  | { type: "boardViewSelected"; boardView: BoardView }
+  | { type: "formToggled"; open: boolean };
 
 interface HealthResponse {
   status: string;
   version: string;
-  build: {
-    package: string;
-    profile: string;
-  };
+  build: { package: string; profile: string };
 }
-
-type HoldingRow = {
-  symbol: string;
-  exchange: string;
-  name: string;
-  quantity: string;
-  price: string;
-  value: string;
-  dayChange: string;
-  dayChangeDirection: "up" | "down" | "flat";
-};
-
-type TransactionRow = {
-  id: string;
-  date: string;
-  type: "Buy" | "Sell" | "Split";
-  instrument: string;
-  market: string;
-  quantity: string;
-  value: string;
-};
-
-const holdings: HoldingRow[] = [
-  {
-    symbol: "MSFT",
-    exchange: "NASDAQ",
-    name: "Microsoft",
-    quantity: "24",
-    price: "USD 474.12",
-    value: "SEK 119,840",
-    dayChange: "+1.42%",
-    dayChangeDirection: "up",
-  },
-  {
-    symbol: "ASML",
-    exchange: "EURONEXT",
-    name: "ASML Holding",
-    quantity: "7",
-    price: "EUR 681.90",
-    value: "SEK 53,120",
-    dayChange: "-0.38%",
-    dayChangeDirection: "down",
-  },
-  {
-    symbol: "NOW",
-    exchange: "NYSE",
-    name: "ServiceNow",
-    quantity: "10",
-    price: "USD 1,012.45",
-    value: "SEK 106,930",
-    dayChange: "0.00%",
-    dayChangeDirection: "flat",
-  },
-];
-
-// Mock rows keep the board shape visible until import-backed data lands.
-const transactions: TransactionRow[] = [
-  {
-    id: "mock-2026-06-12-msft-buy-1",
-    date: "2026-06-12",
-    type: "Buy",
-    instrument: "MSFT",
-    market: "NASDAQ",
-    quantity: "4",
-    value: "SEK 19,980",
-  },
-  {
-    id: "mock-2026-06-10-asml-sell-1",
-    date: "2026-06-10",
-    type: "Sell",
-    instrument: "ASML",
-    market: "EURONEXT",
-    quantity: "-2",
-    value: "SEK -15,420",
-  },
-  {
-    id: "mock-2026-06-06-now-split-1",
-    date: "2026-06-06",
-    type: "Split",
-    instrument: "NOW",
-    market: "NYSE",
-    quantity: "+8",
-    value: "SEK 0",
-  },
-];
 
 function uiReducer(state: UiState, action: UiAction): UiState {
   switch (action.type) {
     case "boardViewSelected":
       return { ...state, boardView: action.boardView };
+    case "formToggled":
+      return { ...state, formOpen: action.open };
   }
+
+  return state;
 }
 
 async function fetchHealth(): Promise<HealthResponse> {
@@ -124,7 +53,7 @@ async function fetchHealth(): Promise<HealthResponse> {
   return (await response.json()) as HealthResponse;
 }
 
-function healthLabel(healthQuery: ReturnType<typeof useQuery<HealthResponse>>) {
+function healthLabel(healthQuery: UseQueryResult<HealthResponse, Error>) {
   if (healthQuery.isPending) {
     return "Checking API";
   }
@@ -136,18 +65,38 @@ function healthLabel(healthQuery: ReturnType<typeof useQuery<HealthResponse>>) {
   return `API ${healthQuery.data.status}`;
 }
 
-function directionClass(direction: HoldingRow["dayChangeDirection"]) {
-  return direction === "flat" ? "number flat" : `number ${direction}`;
-}
-
 export function App() {
   const [uiState, dispatch] = useReducer(uiReducer, {
     boardView: "holdings",
+    formOpen: false,
   });
+
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
   });
+  const instrumentsQuery = useInstruments();
+  const transactionsQuery = useTransactions();
+  const holdingsQuery = useHoldings();
+  const deleteTransaction = useDeleteTransaction();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const instruments = instrumentsQuery.data ?? [];
+  const holdingsCount = holdingsQuery.data?.length ?? 0;
+  const transactionsCount = transactionsQuery.data?.length ?? 0;
+
+  async function handleDelete(id: number) {
+    setDeleteError(null);
+    try {
+      await deleteTransaction.mutateAsync(id);
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Could not delete transaction.",
+      );
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -170,18 +119,41 @@ export function App() {
             className="button secondary"
             type="button"
             onClick={() => {
-              void healthQuery.refetch();
+              void Promise.all([
+                healthQuery.refetch(),
+                holdingsQuery.refetch(),
+                instrumentsQuery.refetch(),
+                transactionsQuery.refetch(),
+              ]);
             }}
-            disabled={healthQuery.isFetching}
+            disabled={
+              healthQuery.isFetching ||
+              holdingsQuery.isFetching ||
+              instrumentsQuery.isFetching ||
+              transactionsQuery.isFetching
+            }
           >
             <RefreshCw
               aria-hidden="true"
-              className={healthQuery.isFetching ? "spin" : undefined}
+              className={
+                healthQuery.isFetching ||
+                holdingsQuery.isFetching ||
+                instrumentsQuery.isFetching ||
+                transactionsQuery.isFetching
+                  ? "spin"
+                  : undefined
+              }
               size={16}
             />
             <span>Refresh</span>
           </button>
-          <button className="button primary" type="button">
+          <button
+            className="button primary"
+            type="button"
+            onClick={() =>
+              dispatch({ type: "formToggled", open: !uiState.formOpen })
+            }
+          >
             <Plus aria-hidden="true" size={16} />
             <span>Add transaction</span>
           </button>
@@ -191,18 +163,16 @@ export function App() {
       <main className="workspace">
         <section className="totals-band" aria-label="Portfolio summary">
           <div>
-            <p className="eyebrow">Portfolio value</p>
-            <strong className="total-value">SEK 279,890</strong>
+            <p className="eyebrow">Portfolio</p>
+            <strong className="total-value">{holdingsCount} holdings</strong>
           </div>
           <div className="summary-metrics">
             <span>
-              Today <strong className="number up">+0.84%</strong>
+              Holdings <strong className="number">{holdingsCount}</strong>
             </span>
             <span>
-              Holdings <strong className="number">3</strong>
-            </span>
-            <span>
-              Transactions <strong className="number">189</strong>
+              Transactions{" "}
+              <strong className="number">{transactionsCount}</strong>
             </span>
           </div>
         </section>
@@ -215,11 +185,32 @@ export function App() {
           >
             {healthLabel(healthQuery)}
           </span>
-          <span className="status-chip">EOD pending</span>
+          <span className="status-chip">Manual entry</span>
           <span className="status-chip">SEK base</span>
+          <span className="status-chip">UI {frontendVersion}</span>
+          <span className="status-chip">
+            API{" "}
+            {healthQuery.data?.version ??
+              (healthQuery.isPending ? "checking" : "unavailable")}
+          </span>
         </section>
 
-        <section className="board-grid">
+        {uiState.formOpen ? (
+          <section className="panel form-panel" aria-label="Add transaction">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Manual entry</p>
+                <h2>Add transaction</h2>
+              </div>
+            </div>
+            <AddTransactionForm
+              instruments={instruments}
+              onClose={() => dispatch({ type: "formToggled", open: false })}
+            />
+          </section>
+        ) : null}
+
+        <section className="board-grid single">
           <article className="panel ledger-panel">
             <div className="panel-header">
               <div>
@@ -262,113 +253,82 @@ export function App() {
             </div>
 
             {uiState.boardView === "holdings" ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Instrument</th>
-                      <th scope="col">Qty</th>
-                      <th scope="col">Price</th>
-                      <th scope="col">Value</th>
-                      <th scope="col">Today</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {holdings.map((holding) => (
-                      <tr key={`${holding.exchange}-${holding.symbol}`}>
-                        <td>
-                          <div className="instrument-cell">
-                            <strong>{holding.symbol}</strong>
-                            <span>{holding.name}</span>
-                            <em>{holding.exchange}</em>
-                          </div>
-                        </td>
-                        <td className="number">{holding.quantity}</td>
-                        <td className="number">{holding.price}</td>
-                        <td className="number">{holding.value}</td>
-                        <td
-                          className={directionClass(holding.dayChangeDirection)}
-                        >
-                          {holding.dayChange}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <BoardSection
+                isPending={holdingsQuery.isPending}
+                isError={holdingsQuery.isError}
+                isEmpty={(holdingsQuery.data?.length ?? 0) === 0}
+                onRetry={() => void holdingsQuery.refetch()}
+                emptyMessage="No holdings yet. Add a Buy to get started."
+              >
+                <HoldingsTable holdings={holdingsQuery.data ?? []} />
+              </BoardSection>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Date</th>
-                      <th scope="col">Type</th>
-                      <th scope="col">Instrument</th>
-                      <th scope="col">Qty</th>
-                      <th scope="col">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map((transaction) => (
-                      <tr key={transaction.id}>
-                        <td className="number">{transaction.date}</td>
-                        <td>
-                          <span className="type-chip">{transaction.type}</span>
-                        </td>
-                        <td>
-                          <div className="instrument-cell compact">
-                            <strong>{transaction.instrument}</strong>
-                            <em>{transaction.market}</em>
-                          </div>
-                        </td>
-                        <td className="number">{transaction.quantity}</td>
-                        <td className="number">{transaction.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <BoardSection
+                isPending={transactionsQuery.isPending}
+                isError={transactionsQuery.isError}
+                isEmpty={(transactionsQuery.data?.length ?? 0) === 0}
+                onRetry={() => void transactionsQuery.refetch()}
+                emptyMessage="No transactions yet. Add one with the button above."
+              >
+                <TransactionsTable
+                  transactions={transactionsQuery.data ?? []}
+                  instruments={instruments}
+                  onDelete={(id) => void handleDelete(id)}
+                  deletingId={
+                    deleteTransaction.isPending
+                      ? (deleteTransaction.variables ?? null)
+                      : null
+                  }
+                  errorMessage={deleteError}
+                />
+              </BoardSection>
             )}
           </article>
-
-          <aside className="panel side-panel" aria-label="API status">
-            <div className="panel-header compact">
-              <div>
-                <p className="eyebrow">API</p>
-                <h2>Health</h2>
-              </div>
-              <span
-                className={
-                  healthQuery.isError ? "status-dot warning" : "status-dot"
-                }
-                aria-hidden="true"
-              />
-            </div>
-
-            <dl className="health-list">
-              <div>
-                <dt>Status</dt>
-                <dd>{healthLabel(healthQuery)}</dd>
-              </div>
-              <div>
-                <dt>Backend</dt>
-                <dd>
-                  {healthQuery.data?.version ??
-                    (healthQuery.isPending ? "checking" : "unavailable")}
-                </dd>
-              </div>
-              <div>
-                <dt>Build</dt>
-                <dd>{healthQuery.data?.build.profile ?? "unknown"}</dd>
-              </div>
-              <div>
-                <dt>Frontend</dt>
-                <dd>{frontendVersion}</dd>
-              </div>
-            </dl>
-          </aside>
         </section>
       </main>
     </div>
   );
+}
+
+function BoardSection({
+  isPending,
+  isError,
+  isEmpty,
+  onRetry,
+  emptyMessage,
+  children,
+}: {
+  isPending: boolean;
+  isError: boolean;
+  isEmpty: boolean;
+  onRetry: () => void;
+  emptyMessage: string;
+  children: ReactNode;
+}) {
+  if (isPending) {
+    return (
+      <div className="board-state">
+        <div className="skeleton-bar" />
+        <div className="skeleton-bar" />
+        <div className="skeleton-bar" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="board-state error">
+        <p className="down">Could not load data.</p>
+        <button type="button" className="button outline" onClick={onRetry}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (isEmpty) {
+    return <div className="board-state muted">{emptyMessage}</div>;
+  }
+
+  return <>{children}</>;
 }
