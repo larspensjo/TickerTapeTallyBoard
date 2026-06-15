@@ -1,4 +1,4 @@
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 
 use crate::db::RepoError;
 
@@ -90,6 +90,54 @@ pub async fn upsert(
                 .ok_or_else(|| {
                     RepoError::Decode("instrument vanished after unique violation".to_owned())
                 })?;
+            Ok((existing, false))
+        }
+        Err(error) => Err(RepoError::Sqlx(error)),
+    }
+}
+
+/// Upsert on `(exchange, symbol)` inside a caller-managed transaction.
+pub async fn upsert_in_tx(
+    conn: &mut SqliteConnection,
+    new: &NewInstrument,
+) -> Result<(InstrumentRow, bool), RepoError> {
+    if let Some(existing) = sqlx::query_as::<_, InstrumentRow>(&format!(
+        "SELECT {COLUMNS} FROM instruments WHERE exchange = ? AND symbol = ?"
+    ))
+    .bind(&new.exchange)
+    .bind(&new.symbol)
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Ok((existing, false));
+    }
+
+    let inserted = sqlx::query_as::<_, InstrumentRow>(&format!(
+        "INSERT INTO instruments (symbol, exchange, name, type, currency) \
+         VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+    ))
+    .bind(&new.symbol)
+    .bind(&new.exchange)
+    .bind(&new.name)
+    .bind(&new.kind)
+    .bind(&new.currency)
+    .fetch_one(&mut *conn)
+    .await;
+
+    match inserted {
+        Ok(row) => Ok((row, true)),
+        Err(sqlx::Error::Database(database_error)) if database_error.is_unique_violation() => {
+            // A concurrent insert can win between the read above and this insert.
+            let existing = sqlx::query_as::<_, InstrumentRow>(&format!(
+                "SELECT {COLUMNS} FROM instruments WHERE exchange = ? AND symbol = ?"
+            ))
+            .bind(&new.exchange)
+            .bind(&new.symbol)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| {
+                RepoError::Decode("instrument vanished after unique violation".to_owned())
+            })?;
             Ok((existing, false))
         }
         Err(error) => Err(RepoError::Sqlx(error)),

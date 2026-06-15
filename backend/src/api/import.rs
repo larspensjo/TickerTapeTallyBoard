@@ -1,16 +1,24 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use axum::{body::Bytes, extract::State, Json};
-use serde::Serialize;
+use axum::{
+    body::Bytes,
+    extract::{Query, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
+use crate::db::instruments::NewInstrument;
+use crate::db::transactions::NewImportTransaction;
 use crate::db::{import_batches, instruments, transactions};
-use crate::import::raw_file_hash;
-use crate::import::sharesight::mapper::InstrumentKey;
-use crate::import::sharesight::parser::{parse_report, ParseError};
+use crate::domain;
+use crate::import::sharesight::mapper::{map_row, InstrumentKey};
+use crate::import::sharesight::parser::{parse_report, ParseError, ParsedKind, ParsedReport};
 use crate::import::sharesight::plan::{
     build_plan, ExistingInstrument, ImportPlan, PlanContext, RowNote,
 };
+use crate::import::{now_iso8601, raw_file_hash};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -56,6 +64,18 @@ pub struct RowNoteDto {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CommitParams {
+    #[serde(default)]
+    pub allow_duplicate: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub batch_id: i64,
+    pub counts: PreviewCounts,
+}
+
 pub async fn preview(
     State(state): State<AppState>,
     bytes: Bytes,
@@ -88,6 +108,59 @@ pub async fn preview(
         warnings: plan.warnings.iter().map(row_note_dto).collect(),
         errors: plan.errors.iter().map(row_note_dto).collect(),
         duplicate_of_batch_id,
+    }))
+}
+
+pub async fn commit(
+    State(state): State<AppState>,
+    Query(params): Query<CommitParams>,
+    bytes: Bytes,
+) -> Result<Json<ImportResult>, ApiError> {
+    let hash = raw_file_hash(&bytes);
+    let report = match parse_report(&bytes) {
+        Ok(report) => report,
+        Err(error) => return Err(ApiError::bad_request(error.code, error.message)),
+    };
+
+    let ctx = load_plan_context(&state).await?;
+    let plan = build_plan(&report, &ctx);
+    if !plan.errors.is_empty() {
+        let first = &plan.errors[0];
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            first.code,
+            first.message.clone(),
+        )
+        .with_details(serde_json::json!({
+            "errors": plan
+                .errors
+                .iter()
+                .map(|error| serde_json::json!({
+                    "row": error.row,
+                    "code": error.code,
+                    "message": error.message,
+                }))
+                .collect::<Vec<_>>()
+        })));
+    }
+
+    if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
+        if !params.allow_duplicate {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "duplicate_import",
+                format!("file already imported as batch {}", existing.id),
+            )
+            .with_details(serde_json::json!({
+                "duplicate_of_batch_id": existing.id
+            })));
+        }
+    }
+
+    let batch_id = write_batch(&state, &report, &hash).await?;
+    Ok(Json(ImportResult {
+        batch_id,
+        counts: counts_dto(&plan),
     }))
 }
 
@@ -132,6 +205,93 @@ pub(crate) async fn load_plan_context(state: &AppState) -> Result<PlanContext, A
         existing_ledgers,
         max_existing_id: transactions::max_id(&state.pool).await?,
     })
+}
+
+async fn write_batch(state: &AppState, report: &ParsedReport, hash: &str) -> Result<i64, ApiError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    let batch_id =
+        import_batches::insert_in_tx(&mut tx, "SHARESIGHT", &now_iso8601(), hash).await?;
+
+    let mut instrument_ids: BTreeMap<(String, String), i64> = BTreeMap::new();
+    let mut affected: BTreeSet<i64> = BTreeSet::new();
+
+    for parsed in &report.rows {
+        // Re-map during the write so the transaction path never trusts preview-only state.
+        let mapped = map_row(parsed).map_err(|error| {
+            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.code, error.message)
+        })?;
+
+        let key = (
+            mapped.instrument.exchange.to_lowercase(),
+            mapped.instrument.symbol.to_lowercase(),
+        );
+
+        let instrument_id = match instrument_ids.get(&key) {
+            Some(id) => *id,
+            None => {
+                let (row, _created) = instruments::upsert_in_tx(
+                    &mut tx,
+                    &NewInstrument {
+                        symbol: mapped.instrument.symbol.clone(),
+                        exchange: mapped.instrument.exchange.clone(),
+                        name: mapped.instrument.name.clone(),
+                        kind: "STOCK".to_string(),
+                        currency: mapped.instrument.currency.clone(),
+                    },
+                )
+                .await?;
+                instrument_ids.insert(key, row.id);
+                row.id
+            }
+        };
+
+        affected.insert(instrument_id);
+
+        let signed = domain::validate(&mapped.proposed).map_err(ApiError::from)?;
+        let brokerage_currency = mapped.proposed.brokerage_base.map(|_| "SEK".to_string());
+        let source_currency =
+            matches!(mapped.kind, ParsedKind::Buy | ParsedKind::Sell).then(|| "SEK".to_string());
+
+        transactions::insert_in_tx(
+            &mut tx,
+            &NewImportTransaction {
+                instrument_id,
+                kind: mapped.proposed.kind,
+                trade_date: mapped.proposed.trade_date,
+                quantity: signed,
+                price: mapped.proposed.price,
+                currency: mapped.proposed.currency.clone(),
+                fx_rate_to_base: mapped.proposed.fx_rate_to_base,
+                brokerage: mapped.proposed.brokerage_base,
+                brokerage_currency,
+                source_value: Some(mapped.source_value),
+                source_currency,
+                note: non_empty(&parsed.comments),
+                import_batch_id: batch_id,
+            },
+        )
+        .await?;
+    }
+
+    for instrument_id in affected {
+        let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, instrument_id).await?;
+        domain::derive_position(&ledger).map_err(ApiError::from)?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(batch_id)
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn counts_dto(plan: &ImportPlan) -> PreviewCounts {

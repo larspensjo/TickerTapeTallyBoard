@@ -378,3 +378,17 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/import_batches.rs`, `backend/src/db/mod.rs`, `backend/src/db/transactions.rs`, `backend/src/import/mod.rs`, `backend/tests/import_api.rs`, `backend/tests/fixtures/sharesight_synthetic.csv`.
+
+## 2026-06-15 - Sharesight import commit path
+Added the atomic Sharesight import commit path and its integration coverage.
+What changed:
+- Added transactional helpers for import batches, instruments, and transactions.
+- Added `POST /api/import/sharesight/commit` with duplicate-file protection, atomic batch writes, and in-transaction ledger revalidation.
+- Bumped the backend package version to `0.3.0`.
+- Applied review polish so plan hard errors take precedence over duplicate-file reporting, intentional write-time re-mapping is documented, and timestamp/no-write tests are stricter.
+Observed:
+- The commit path now rejects malformed CSV as `400`, duplicate files as `409`, and hard ledger errors as `422` before any persisted write survives.
+- The synthetic import test covers success, duplicate detection, malformed CSV rejection, hard-error precedence over duplicate hashes, and the no-writes-on-error path.
+Open question:
+- None.
+Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/`, `backend/tests/import_api.rs`, `backend/Cargo.toml`; implements: Sharesight Import Endpoints And Atomicity.

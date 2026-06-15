@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 
 use crate::db::RepoError;
 use crate::domain::{LedgerTransaction, TransactionKind};
@@ -73,6 +73,24 @@ pub struct NewTransaction {
     pub note: Option<String>,
 }
 
+/// Import insert payload: editable fields plus audit/batch columns.
+#[derive(Clone, Debug)]
+pub struct NewImportTransaction {
+    pub instrument_id: i64,
+    pub kind: TransactionKind,
+    pub trade_date: NaiveDate,
+    pub quantity: i64,
+    pub price: Option<Decimal>,
+    pub currency: Option<String>,
+    pub fx_rate_to_base: Option<Decimal>,
+    pub brokerage: Option<Decimal>,
+    pub brokerage_currency: Option<String>,
+    pub source_value: Option<Decimal>,
+    pub source_currency: Option<String>,
+    pub note: Option<String>,
+    pub import_batch_id: i64,
+}
+
 pub async fn list(pool: &SqlitePool) -> Result<Vec<TransactionRow>, RepoError> {
     let rows = sqlx::query_as::<_, TransactionRow>(&format!(
         "SELECT {COLUMNS} FROM transactions ORDER BY trade_date DESC, id DESC"
@@ -102,6 +120,20 @@ pub async fn ledger_for_instrument(
     ))
     .bind(instrument_id)
     .fetch_all(pool)
+    .await?;
+    rows.iter().map(TransactionRow::to_ledger).collect()
+}
+
+/// One instrument's stored ledger inside a caller-managed transaction.
+pub async fn ledger_for_instrument_in_tx(
+    conn: &mut SqliteConnection,
+    instrument_id: i64,
+) -> Result<Vec<LedgerTransaction>, RepoError> {
+    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
+        "SELECT {COLUMNS} FROM transactions WHERE instrument_id = ? ORDER BY trade_date, id"
+    ))
+    .bind(instrument_id)
+    .fetch_all(&mut *conn)
     .await?;
     rows.iter().map(TransactionRow::to_ledger).collect()
 }
@@ -142,6 +174,34 @@ pub async fn insert(pool: &SqlitePool, new: &NewTransaction) -> Result<Transacti
     .bind(new.brokerage.map(|_| "SEK"))
     .bind(new.note.clone())
     .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn insert_in_tx(
+    conn: &mut SqliteConnection,
+    new: &NewImportTransaction,
+) -> Result<TransactionRow, RepoError> {
+    let row = sqlx::query_as::<_, TransactionRow>(&format!(
+        "INSERT INTO transactions \
+           (instrument_id, type, trade_date, quantity, price, currency, fx_rate_to_base, \
+            brokerage, brokerage_currency, source_value, source_currency, note, import_batch_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+    ))
+    .bind(new.instrument_id)
+    .bind(new.kind.as_db_str())
+    .bind(new.trade_date.format("%Y-%m-%d").to_string())
+    .bind(new.quantity)
+    .bind(new.price.map(|d| d.to_string()))
+    .bind(new.currency.clone())
+    .bind(new.fx_rate_to_base.map(|d| d.to_string()))
+    .bind(new.brokerage.map(|d| d.to_string()))
+    .bind(new.brokerage_currency.clone())
+    .bind(new.source_value.map(|d| d.to_string()))
+    .bind(new.source_currency.clone())
+    .bind(new.note.clone())
+    .bind(new.import_batch_id)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(row)
 }

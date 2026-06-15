@@ -46,6 +46,7 @@ fn api_router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
         .route("/import/sharesight/preview", post(import::preview))
+        .route("/import/sharesight/commit", post(import::commit))
         .route("/holdings", get(holdings::list))
         .route(
             "/instruments",
