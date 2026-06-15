@@ -50,3 +50,45 @@ export interface Holding {
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
 }
+
+export interface ImportRowNote {
+  row: number | null;
+  code: string;
+  message: string;
+}
+
+export interface ImportCounts {
+  rows: number;
+  buys: number;
+  sells: number;
+  splits: number;
+  new_instruments: number;
+  warnings: number;
+  errors: number;
+}
+
+export interface ImportNewInstrument {
+  exchange: string;
+  symbol: string;
+  name: string;
+  currency: string;
+}
+
+export interface ImportPreview {
+  metadata: { title: string; date_from: string; date_to: string } | null;
+  counts: ImportCounts;
+  new_instruments: ImportNewInstrument[];
+  warnings: ImportRowNote[];
+  errors: ImportRowNote[];
+  duplicate_of_batch_id: number | null;
+}
+
+export interface ImportResult {
+  batch_id: number;
+  counts: ImportCounts;
+}
+
+export interface RollbackResult {
+  batch_id: number;
+  removed: number;
+}

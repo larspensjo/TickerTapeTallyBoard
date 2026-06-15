@@ -184,13 +184,18 @@ impl HeaderIndexes {
 }
 
 fn parse_metadata(record: &StringRecord) -> Result<Option<ReportMetadata>, ParseError> {
-    let Some(title) = record.get(0).map(str::trim) else {
+    let Some(title) = record
+        .iter()
+        .map(str::trim)
+        .find(|field| field.contains(REPORT_TITLE_MARKER))
+    else {
         return Ok(None);
     };
 
-    if !title.contains(REPORT_TITLE_MARKER) {
-        return Ok(None);
-    }
+    let title = title
+        .split_once(REPORT_TITLE_MARKER)
+        .map(|(_, tail)| format!("{REPORT_TITLE_MARKER}{tail}"))
+        .unwrap_or_else(|| title.to_string());
 
     let (_, range) = title
         .split_once(" between ")
@@ -388,6 +393,10 @@ mod tests {
     #[test]
     fn parses_metadata_header_and_rows() {
         let report = parse_report(SYNTHETIC.as_bytes()).expect("parses");
+        assert_eq!(
+            report.metadata.title,
+            "All Trades Report between 2025-06-12 and 2026-06-12"
+        );
         assert_eq!(report.metadata.date_from.to_string(), "2025-06-12");
         assert_eq!(report.metadata.date_to.to_string(), "2026-06-12");
         assert_eq!(report.rows.len(), 4);
@@ -441,6 +450,24 @@ mod tests {
         let bad = "Synthetic Portfolio - All Trades Report between 2025-06-12 and 2026-06-12\n\nno,header,here\n";
         let error = parse_report(bad.as_bytes()).expect_err("no header");
         assert_eq!(error.code, "header_not_found");
+    }
+
+    #[test]
+    fn metadata_can_be_found_after_preamble_text_in_the_same_row() {
+        let csv = concat!(
+            "This report is provided for informational purposes only,Lars Pensjö's Portfolio - All Trades Report between 2025-06-12 and 2026-06-12,,,,,,,,,,,,,,\n",
+            ",,,,,,,,,,,,,,,\n",
+            "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+            "NASDAQ,MSFT,Microsoft,Buy,12/06/2025,29,\"479,66\",USD,\"0,00\",\"9,60\",SEK,\"0,1056\",\"131\u{00A0}760,06\",All Trades,\n",
+        );
+
+        let report = parse_report(csv.as_bytes()).expect("parses mixed preamble metadata");
+
+        assert_eq!(
+            report.metadata.title,
+            "All Trades Report between 2025-06-12 and 2026-06-12"
+        );
+        assert_eq!(report.rows.len(), 1);
     }
 
     #[test]

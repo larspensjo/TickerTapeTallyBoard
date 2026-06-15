@@ -415,3 +415,29 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/import_batches.rs`, `backend/src/db/transactions.rs`, `backend/tests/import_api.rs`; implements: Import Batch Rollback Semantics.
+
+## 2026-06-15 - Sharesight import UI
+Wired the frontend Import view to the Sharesight preview, commit, and rollback endpoints.
+What changed:
+- Added import DTOs, a raw-bytes API sender, and React Query hooks for preview, commit, and rollback.
+- Added a reducer-driven `ImportView` with file selection, preview summary, warnings/new-instruments tables, duplicate confirmation, commit, and undo.
+- Switched the top-level app nav between Board and Import views and bumped the frontend package version.
+Observed:
+- `npm run check` and `npm run fmt` pass from `frontend/`.
+Open question:
+- None.
+Refs: `frontend/src/components/ImportView.tsx`, `frontend/src/api/`, `frontend/src/App.tsx`, `frontend/package.json`.
+
+## 2026-06-15 - Sharesight import review polish
+Applied review findings for the Sharesight import UI and metadata parser.
+What changed:
+- Made metadata detection scan all cells in the first CSV records instead of only column 0.
+- Added regression coverage for the real export shape where note text and the report title share the first row.
+- Locked the normalized metadata title in the happy-path parser test and replaced stray fixture text with a realistic preamble note.
+- Kept the import view mounted across Board/Import navigation so preview and undo state survive view switches.
+- Hid board-only header actions while the Import view is active and added `aria-current` to the active nav link.
+Observed:
+- The placeholder Settings nav link remains omitted because there is no settings view yet; the primary nav now exposes only implemented top-level views.
+Open question:
+- None.
+Refs: `backend/src/import/sharesight/parser.rs`, `frontend/src/App.tsx`.

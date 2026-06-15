@@ -11,18 +11,22 @@ import {
 } from "./api/queries";
 import { AddTransactionForm } from "./components/AddTransactionForm";
 import { HoldingsTable } from "./components/HoldingsTable";
+import { ImportView } from "./components/ImportView";
 import { TransactionsTable } from "./components/TransactionsTable";
 
 const frontendVersion = packageJson.version;
 
 type BoardView = "holdings" | "transactions";
+type AppView = "board" | "import";
 
 interface UiState {
+  appView: AppView;
   boardView: BoardView;
   formOpen: boolean;
 }
 
 type UiAction =
+  | { type: "appViewSelected"; appView: AppView }
   | { type: "boardViewSelected"; boardView: BoardView }
   | { type: "formToggled"; open: boolean };
 
@@ -34,6 +38,8 @@ interface HealthResponse {
 
 function uiReducer(state: UiState, action: UiAction): UiState {
   switch (action.type) {
+    case "appViewSelected":
+      return { ...state, appView: action.appView };
     case "boardViewSelected":
       return { ...state, boardView: action.boardView };
     case "formToggled":
@@ -67,6 +73,7 @@ function healthLabel(healthQuery: UseQueryResult<HealthResponse, Error>) {
 
 export function App() {
   const [uiState, dispatch] = useReducer(uiReducer, {
+    appView: "board",
     boardView: "holdings",
     formOpen: false,
   });
@@ -107,56 +114,77 @@ export function App() {
         </a>
 
         <nav className="app-nav" aria-label="Primary">
-          <a className="active" href="/">
+          <a
+            className={uiState.appView === "board" ? "active" : undefined}
+            aria-current={uiState.appView === "board" ? "page" : undefined}
+            href="/"
+            onClick={(event) => {
+              event.preventDefault();
+              dispatch({ type: "appViewSelected", appView: "board" });
+            }}
+          >
             Board
           </a>
-          <a href="/">Import</a>
-          <a href="/">Settings</a>
+          <a
+            className={uiState.appView === "import" ? "active" : undefined}
+            aria-current={uiState.appView === "import" ? "page" : undefined}
+            href="/"
+            onClick={(event) => {
+              event.preventDefault();
+              dispatch({ type: "appViewSelected", appView: "import" });
+            }}
+          >
+            Import
+          </a>
         </nav>
 
         <div className="app-actions">
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => {
-              void Promise.all([
-                healthQuery.refetch(),
-                holdingsQuery.refetch(),
-                instrumentsQuery.refetch(),
-                transactionsQuery.refetch(),
-              ]);
-            }}
-            disabled={
-              healthQuery.isFetching ||
-              holdingsQuery.isFetching ||
-              instrumentsQuery.isFetching ||
-              transactionsQuery.isFetching
-            }
-          >
-            <RefreshCw
-              aria-hidden="true"
-              className={
-                healthQuery.isFetching ||
-                holdingsQuery.isFetching ||
-                instrumentsQuery.isFetching ||
-                transactionsQuery.isFetching
-                  ? "spin"
-                  : undefined
-              }
-              size={16}
-            />
-            <span>Refresh</span>
-          </button>
-          <button
-            className="button primary"
-            type="button"
-            onClick={() =>
-              dispatch({ type: "formToggled", open: !uiState.formOpen })
-            }
-          >
-            <Plus aria-hidden="true" size={16} />
-            <span>Add transaction</span>
-          </button>
+          {uiState.appView === "board" ? (
+            <>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => {
+                  void Promise.all([
+                    healthQuery.refetch(),
+                    holdingsQuery.refetch(),
+                    instrumentsQuery.refetch(),
+                    transactionsQuery.refetch(),
+                  ]);
+                }}
+                disabled={
+                  healthQuery.isFetching ||
+                  holdingsQuery.isFetching ||
+                  instrumentsQuery.isFetching ||
+                  transactionsQuery.isFetching
+                }
+              >
+                <RefreshCw
+                  aria-hidden="true"
+                  className={
+                    healthQuery.isFetching ||
+                    holdingsQuery.isFetching ||
+                    instrumentsQuery.isFetching ||
+                    transactionsQuery.isFetching
+                      ? "spin"
+                      : undefined
+                  }
+                  size={16}
+                />
+                <span>Refresh</span>
+              </button>
+              <button
+                className="button primary"
+                type="button"
+                onClick={() =>
+                  dispatch({ type: "formToggled", open: !uiState.formOpen })
+                }
+              >
+                <Plus aria-hidden="true" size={16} />
+                <span>Add transaction</span>
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -195,96 +223,104 @@ export function App() {
           </span>
         </section>
 
-        {uiState.formOpen ? (
-          <section className="panel form-panel" aria-label="Add transaction">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Manual entry</p>
-                <h2>Add transaction</h2>
+        <div hidden={uiState.appView !== "board"}>
+          {uiState.formOpen ? (
+            <section className="panel form-panel" aria-label="Add transaction">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Manual entry</p>
+                  <h2>Add transaction</h2>
+                </div>
               </div>
-            </div>
-            <AddTransactionForm
-              instruments={instruments}
-              onClose={() => dispatch({ type: "formToggled", open: false })}
-            />
+              <AddTransactionForm
+                instruments={instruments}
+                onClose={() => dispatch({ type: "formToggled", open: false })}
+              />
+            </section>
+          ) : null}
+
+          <section className="board-grid single">
+            <article className="panel ledger-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Workspace</p>
+                  <h1>Portfolio Board</h1>
+                </div>
+                <fieldset className="segmented-control">
+                  <legend className="sr-only">Board view</legend>
+                  <button
+                    className={
+                      uiState.boardView === "holdings" ? "active" : undefined
+                    }
+                    type="button"
+                    aria-pressed={uiState.boardView === "holdings"}
+                    onClick={() =>
+                      dispatch({
+                        type: "boardViewSelected",
+                        boardView: "holdings",
+                      })
+                    }
+                  >
+                    Holdings
+                  </button>
+                  <button
+                    className={
+                      uiState.boardView === "transactions"
+                        ? "active"
+                        : undefined
+                    }
+                    type="button"
+                    aria-pressed={uiState.boardView === "transactions"}
+                    onClick={() =>
+                      dispatch({
+                        type: "boardViewSelected",
+                        boardView: "transactions",
+                      })
+                    }
+                  >
+                    Transactions
+                  </button>
+                </fieldset>
+              </div>
+
+              {uiState.boardView === "holdings" ? (
+                <BoardSection
+                  isPending={holdingsQuery.isPending}
+                  isError={holdingsQuery.isError}
+                  isEmpty={(holdingsQuery.data?.length ?? 0) === 0}
+                  onRetry={() => void holdingsQuery.refetch()}
+                  emptyMessage="No holdings yet. Add a Buy to get started."
+                >
+                  <HoldingsTable holdings={holdingsQuery.data ?? []} />
+                </BoardSection>
+              ) : (
+                <BoardSection
+                  isPending={transactionsQuery.isPending}
+                  isError={transactionsQuery.isError}
+                  isEmpty={(transactionsQuery.data?.length ?? 0) === 0}
+                  onRetry={() => void transactionsQuery.refetch()}
+                  emptyMessage="No transactions yet. Add one with the button above."
+                >
+                  <TransactionsTable
+                    transactions={transactionsQuery.data ?? []}
+                    instruments={instruments}
+                    onDelete={(id) => void handleDelete(id)}
+                    deletingId={
+                      deleteTransaction.isPending
+                        ? (deleteTransaction.variables ?? null)
+                        : null
+                    }
+                    errorMessage={deleteError}
+                  />
+                </BoardSection>
+              )}
+            </article>
           </section>
-        ) : null}
+        </div>
 
-        <section className="board-grid single">
-          <article className="panel ledger-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Workspace</p>
-                <h1>Portfolio Board</h1>
-              </div>
-              <fieldset className="segmented-control">
-                <legend className="sr-only">Board view</legend>
-                <button
-                  className={
-                    uiState.boardView === "holdings" ? "active" : undefined
-                  }
-                  type="button"
-                  aria-pressed={uiState.boardView === "holdings"}
-                  onClick={() =>
-                    dispatch({
-                      type: "boardViewSelected",
-                      boardView: "holdings",
-                    })
-                  }
-                >
-                  Holdings
-                </button>
-                <button
-                  className={
-                    uiState.boardView === "transactions" ? "active" : undefined
-                  }
-                  type="button"
-                  aria-pressed={uiState.boardView === "transactions"}
-                  onClick={() =>
-                    dispatch({
-                      type: "boardViewSelected",
-                      boardView: "transactions",
-                    })
-                  }
-                >
-                  Transactions
-                </button>
-              </fieldset>
-            </div>
-
-            {uiState.boardView === "holdings" ? (
-              <BoardSection
-                isPending={holdingsQuery.isPending}
-                isError={holdingsQuery.isError}
-                isEmpty={(holdingsQuery.data?.length ?? 0) === 0}
-                onRetry={() => void holdingsQuery.refetch()}
-                emptyMessage="No holdings yet. Add a Buy to get started."
-              >
-                <HoldingsTable holdings={holdingsQuery.data ?? []} />
-              </BoardSection>
-            ) : (
-              <BoardSection
-                isPending={transactionsQuery.isPending}
-                isError={transactionsQuery.isError}
-                isEmpty={(transactionsQuery.data?.length ?? 0) === 0}
-                onRetry={() => void transactionsQuery.refetch()}
-                emptyMessage="No transactions yet. Add one with the button above."
-              >
-                <TransactionsTable
-                  transactions={transactionsQuery.data ?? []}
-                  instruments={instruments}
-                  onDelete={(id) => void handleDelete(id)}
-                  deletingId={
-                    deleteTransaction.isPending
-                      ? (deleteTransaction.variables ?? null)
-                      : null
-                  }
-                  errorMessage={deleteError}
-                />
-              </BoardSection>
-            )}
-          </article>
-        </section>
+        <div hidden={uiState.appView !== "import"}>
+          <ImportView />
+        </div>
       </main>
     </div>
   );

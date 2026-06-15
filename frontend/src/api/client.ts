@@ -58,3 +58,17 @@ export async function apiSend<T>(
     }),
   );
 }
+
+export async function apiSendBytes<T>(
+  method: string,
+  path: string,
+  body: ArrayBuffer,
+): Promise<T> {
+  return parse<T>(
+    await fetch(path, {
+      method,
+      headers: { "content-type": "text/csv" },
+      body,
+    }),
+  );
+}
