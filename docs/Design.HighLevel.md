@@ -81,7 +81,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Currency/FX:** SEK base; native price and trade-date FX stored separately (never a pre-converted SEK value); the portfolio is an ISK account, so v1 does no tax calculation. Rules captured in `docs/CurrencyAndFxRules.md`.
 - Exit criteria met. Detail in `docs/DecisionLog.md` and `docs/spikes/`.
 
-### Phase 1 — Ledger core (~1–2 weeks)
+### Phase 1 — Ledger core ✅ Done (2026-06-14)
 - SQLite schema + migrations (sqlx).
 - Transaction CRUD API + manual-entry UI (form + TanStack Table list with filter/sort).
 - Derived holdings endpoint: current positions, average cost, per-currency cost basis.
