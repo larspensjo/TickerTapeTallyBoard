@@ -402,3 +402,16 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/db/import_batches.rs`, `backend/src/db/instruments.rs`, `backend/src/db/transactions.rs`.
+
+## 2026-06-15 - Sharesight import rollback
+Added per-batch rollback for Sharesight imports.
+What changed:
+- Added `POST /api/import/sharesight/rollback/{batch_id}` and the supporting batch lookup and delete helpers.
+- Added batch-scoped transaction queries for rollback validation.
+- Extended the import API integration tests with rollback, dependent-manual-sell, not-found, and re-import-after-rollback coverage.
+- Added split-based rollback rejection coverage so the documented rollback invariant is exercised for both dependent sells and dependent splits.
+Observed:
+- `backend/tests/import_api.rs` passes.
+Open question:
+- None.
+Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/import_batches.rs`, `backend/src/db/transactions.rs`, `backend/tests/import_api.rs`; implements: Import Batch Rollback Semantics.

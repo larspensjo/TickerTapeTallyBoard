@@ -35,10 +35,20 @@ async fn send_bytes(state: &AppState, uri: &str, body: &[u8]) -> (StatusCode, Va
 }
 
 async fn send_json(state: &AppState, method: &str, uri: &str) -> (StatusCode, Value) {
+    send_json_body(state, method, uri, serde_json::Value::Null).await
+}
+
+async fn send_json_body(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, Value) {
     let request = Request::builder()
         .method(method)
         .uri(uri)
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
         .expect("request builds");
     let response = api::router(state.clone())
         .oneshot(request)
@@ -198,4 +208,134 @@ async fn hard_error_takes_precedence_over_duplicate_hash() {
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "sell_exceeds_position");
+}
+
+#[tokio::test]
+async fn rollback_removes_a_batch() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let (status, body) = send_json(
+        &state,
+        "POST",
+        &format!("/api/import/sharesight/rollback/{batch_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["batch_id"], batch_id);
+    assert_eq!(body["removed"].as_u64().expect("removed"), 4);
+
+    let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
+    assert_eq!(holdings.as_array().expect("array").len(), 0);
+}
+
+#[tokio::test]
+async fn rollback_is_rejected_when_a_dependent_manual_sell_exists() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let instruments = db::instruments::list(&state.pool).await.expect("list");
+    let asml = instruments
+        .iter()
+        .find(|instrument| instrument.symbol == "ASML")
+        .expect("asml");
+
+    let (sell_status, _) = send_json_body(
+        &state,
+        "POST",
+        "/api/transactions",
+        serde_json::json!({
+            "instrument_id": asml.id,
+            "type": "Sell",
+            "trade_date": "2026-06-20",
+            "quantity": 3,
+            "price": "650",
+            "currency": "EUR"
+        }),
+    )
+    .await;
+    assert_eq!(sell_status, StatusCode::CREATED);
+
+    let (status, body) = send_json(
+        &state,
+        "POST",
+        &format!("/api/import/sharesight/rollback/{batch_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "sell_exceeds_position");
+
+    let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
+    assert!(!holdings.as_array().expect("array").is_empty());
+}
+
+#[tokio::test]
+async fn rollback_is_rejected_when_a_dependent_manual_split_exists() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let instruments = db::instruments::list(&state.pool).await.expect("list");
+    let msft = instruments
+        .iter()
+        .find(|instrument| instrument.symbol == "MSFT")
+        .expect("msft");
+
+    let (split_status, _) = send_json_body(
+        &state,
+        "POST",
+        "/api/transactions",
+        serde_json::json!({
+            "instrument_id": msft.id,
+            "type": "Split",
+            "trade_date": "2026-06-20",
+            "quantity": 2
+        }),
+    )
+    .await;
+    assert_eq!(split_status, StatusCode::CREATED);
+
+    let (status, body) = send_json(
+        &state,
+        "POST",
+        &format!("/api/import/sharesight/rollback/{batch_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "split_without_position");
+
+    let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
+    assert!(!holdings.as_array().expect("array").is_empty());
+}
+
+#[tokio::test]
+async fn rollback_unknown_batch_is_not_found() {
+    let state = test_state().await;
+    let (status, body) = send_json(&state, "POST", "/api/import/sharesight/rollback/999").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn same_file_can_be_reimported_after_rollback() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let (rolled, _) = send_json(
+        &state,
+        "POST",
+        &format!("/api/import/sharesight/rollback/{batch_id}"),
+    )
+    .await;
+    assert_eq!(rolled, StatusCode::OK);
+
+    let (status, preview) = send_bytes(&state, "/api/import/sharesight/preview", SYNTHETIC).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(preview["duplicate_of_batch_id"].is_null());
+
+    let (recommit, _) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    assert_eq!(recommit, StatusCode::OK);
 }

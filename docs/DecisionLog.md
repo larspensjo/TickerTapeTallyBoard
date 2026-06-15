@@ -136,3 +136,8 @@ Consequences: All SQL lives in `db/` repositories. Reads decode TEXT decimals/da
 Decision: Sharesight CSV import uses a read-only `preview` endpoint and an atomic `commit` endpoint that both consume raw CSV bytes. Commit writes one sqlx transaction containing the import batch row, upserted instruments, and transactions in CSV order, then re-derives each affected ledger before commit. Duplicate-file detection is based on `raw_file_hash`; a repeated file is rejected with `duplicate_import` unless `allow_duplicate=true` is set.
 Context: The import flow needs a non-mutating dry run, safe retries, and deterministic same-day ordering between preview and commit.
 Consequences: The frontend must keep the file between preview and commit. Import rollback work can delete batches by `import_batch_id` later without changing the duplicate-guard contract.
+
+## 2026-06-15: Import Batch Rollback Semantics
+Decision: Rolling back an import batch deletes every transaction tagged with that `import_batch_id` in one transaction, then re-derives each affected instrument's remaining ledger. If any remaining row is no longer derivable, the rollback is rejected and nothing is removed. When re-derivation passes, the now-empty `import_batches` row carrying `raw_file_hash` is deleted in the same transaction so the same file can be re-imported afterwards without tripping the duplicate guard.
+Context: Imports must be reversible, but a back-dated import can become load-bearing for later manual edits.
+Consequences: A user must remove dependent manual transactions before rolling back an import they depend on. Instruments created by the batch are left in place as harmless empty instruments. Empty imported batches are not retained for duplicate detection after rollback.

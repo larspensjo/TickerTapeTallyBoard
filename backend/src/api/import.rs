@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use axum::{
     body::Bytes,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -74,6 +74,12 @@ pub struct CommitParams {
 pub struct ImportResult {
     pub batch_id: i64,
     pub counts: PreviewCounts,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RollbackResult {
+    pub batch_id: i64,
+    pub removed: u64,
 }
 
 pub async fn preview(
@@ -162,6 +168,39 @@ pub async fn commit(
         batch_id,
         counts: counts_dto(&plan),
     }))
+}
+
+pub async fn rollback(
+    State(state): State<AppState>,
+    Path(batch_id): Path<i64>,
+) -> Result<Json<RollbackResult>, ApiError> {
+    if import_batches::find(&state.pool, batch_id).await?.is_none() {
+        return Err(ApiError::not_found("import batch", batch_id));
+    }
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    let affected = transactions::instrument_ids_for_batch(&mut tx, batch_id).await?;
+    let removed = transactions::delete_batch_in_tx(&mut tx, batch_id).await?;
+
+    for instrument_id in affected {
+        let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, instrument_id).await?;
+        domain::derive_position(&ledger).map_err(ApiError::from)?;
+    }
+
+    let deleted = import_batches::delete_in_tx(&mut tx, batch_id).await?;
+    if deleted == 0 {
+        return Err(ApiError::not_found("import batch", batch_id));
+    }
+
+    tx.commit()
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(RollbackResult { batch_id, removed }))
 }
 
 fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) -> ImportPreview {

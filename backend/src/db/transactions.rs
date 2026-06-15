@@ -38,6 +38,9 @@ const REPLACE_SQL: &str = "UPDATE transactions SET instrument_id = ?, type = ?, 
        note = ? WHERE id = ? RETURNING id, instrument_id, type, trade_date, quantity, price, currency, \
        fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
        note, import_batch_id";
+const INSTRUMENT_IDS_FOR_BATCH_SQL: &str =
+    "SELECT DISTINCT instrument_id FROM transactions WHERE import_batch_id = ?";
+const DELETE_BATCH_SQL: &str = "DELETE FROM transactions WHERE import_batch_id = ?";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct TransactionRow {
@@ -241,6 +244,30 @@ pub async fn delete(pool: &SqlitePool, id: i64) -> Result<u64, RepoError> {
     let result = sqlx::query("DELETE FROM transactions WHERE id = ?")
         .bind(id)
         .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Distinct instrument ids touched by one import batch.
+pub async fn instrument_ids_for_batch(
+    conn: &mut SqliteConnection,
+    batch_id: i64,
+) -> Result<Vec<i64>, RepoError> {
+    let ids: Vec<(i64,)> = sqlx::query_as(INSTRUMENT_IDS_FOR_BATCH_SQL)
+        .bind(batch_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(ids.into_iter().map(|(id,)| id).collect())
+}
+
+/// Delete every transaction in a batch inside a caller-managed transaction.
+pub async fn delete_batch_in_tx(
+    conn: &mut SqliteConnection,
+    batch_id: i64,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query(DELETE_BATCH_SQL)
+        .bind(batch_id)
+        .execute(&mut *conn)
         .await?;
     Ok(result.rows_affected())
 }

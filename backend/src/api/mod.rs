@@ -47,6 +47,10 @@ fn api_router() -> Router<AppState> {
         .route("/health", get(health::handler))
         .route("/import/sharesight/preview", post(import::preview))
         .route("/import/sharesight/commit", post(import::commit))
+        .route(
+            "/import/sharesight/rollback/{batch_id}",
+            post(import::rollback),
+        )
         .route("/holdings", get(holdings::list))
         .route(
             "/instruments",
