@@ -7,9 +7,37 @@ use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use crate::db::RepoError;
 use crate::domain::{LedgerTransaction, TransactionKind};
 
-const COLUMNS: &str = "id, instrument_id, type, trade_date, quantity, price, currency, \
+const LIST_SQL: &str = "SELECT id, instrument_id, type, trade_date, quantity, price, currency, \
     fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
-    note, import_batch_id";
+    note, import_batch_id FROM transactions ORDER BY trade_date DESC, id DESC";
+const FIND_SQL: &str = "SELECT id, instrument_id, type, trade_date, quantity, price, currency, \
+    fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+    note, import_batch_id FROM transactions WHERE id = ?";
+const LEDGER_FOR_INSTRUMENT_SQL: &str =
+    "SELECT id, instrument_id, type, trade_date, quantity, price, currency, \
+    fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+    note, import_batch_id FROM transactions WHERE instrument_id = ? ORDER BY trade_date, id";
+const ALL_FOR_HOLDINGS_SQL: &str =
+    "SELECT id, instrument_id, type, trade_date, quantity, price, currency, \
+    fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+    note, import_batch_id FROM transactions ORDER BY instrument_id, trade_date, id";
+const INSERT_SQL: &str = "INSERT INTO transactions \
+       (instrument_id, type, trade_date, quantity, price, currency, fx_rate_to_base, \
+        brokerage, brokerage_currency, source_value, source_currency, note, import_batch_id) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL) RETURNING id, instrument_id, type, trade_date, quantity, price, currency, \
+       fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+       note, import_batch_id";
+const INSERT_IMPORT_SQL: &str = "INSERT INTO transactions \
+       (instrument_id, type, trade_date, quantity, price, currency, fx_rate_to_base, \
+        brokerage, brokerage_currency, source_value, source_currency, note, import_batch_id) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, instrument_id, type, trade_date, quantity, price, currency, \
+       fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+       note, import_batch_id";
+const REPLACE_SQL: &str = "UPDATE transactions SET instrument_id = ?, type = ?, trade_date = ?, quantity = ?, \
+       price = ?, currency = ?, fx_rate_to_base = ?, brokerage = ?, brokerage_currency = ?, \
+       note = ? WHERE id = ? RETURNING id, instrument_id, type, trade_date, quantity, price, currency, \
+       fx_rate_to_base, brokerage, brokerage_currency, source_value, source_currency, \
+       note, import_batch_id";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct TransactionRow {
@@ -92,21 +120,17 @@ pub struct NewImportTransaction {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<TransactionRow>, RepoError> {
-    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {COLUMNS} FROM transactions ORDER BY trade_date DESC, id DESC"
-    ))
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, TransactionRow>(LIST_SQL)
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
 }
 
 pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<TransactionRow>, RepoError> {
-    let row = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {COLUMNS} FROM transactions WHERE id = ?"
-    ))
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query_as::<_, TransactionRow>(FIND_SQL)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -115,12 +139,10 @@ pub async fn ledger_for_instrument(
     pool: &SqlitePool,
     instrument_id: i64,
 ) -> Result<Vec<LedgerTransaction>, RepoError> {
-    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {COLUMNS} FROM transactions WHERE instrument_id = ? ORDER BY trade_date, id"
-    ))
-    .bind(instrument_id)
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, TransactionRow>(LEDGER_FOR_INSTRUMENT_SQL)
+        .bind(instrument_id)
+        .fetch_all(pool)
+        .await?;
     rows.iter().map(TransactionRow::to_ledger).collect()
 }
 
@@ -129,22 +151,18 @@ pub async fn ledger_for_instrument_in_tx(
     conn: &mut SqliteConnection,
     instrument_id: i64,
 ) -> Result<Vec<LedgerTransaction>, RepoError> {
-    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {COLUMNS} FROM transactions WHERE instrument_id = ? ORDER BY trade_date, id"
-    ))
-    .bind(instrument_id)
-    .fetch_all(&mut *conn)
-    .await?;
+    let rows = sqlx::query_as::<_, TransactionRow>(LEDGER_FOR_INSTRUMENT_SQL)
+        .bind(instrument_id)
+        .fetch_all(&mut *conn)
+        .await?;
     rows.iter().map(TransactionRow::to_ledger).collect()
 }
 
 /// All transactions ordered for deriving holdings across instruments in memory.
 pub async fn all_for_holdings(pool: &SqlitePool) -> Result<Vec<TransactionRow>, RepoError> {
-    let rows = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {COLUMNS} FROM transactions ORDER BY instrument_id, trade_date, id"
-    ))
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, TransactionRow>(ALL_FOR_HOLDINGS_SQL)
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
 }
 
@@ -157,24 +175,19 @@ pub async fn max_id(pool: &SqlitePool) -> Result<i64, RepoError> {
 }
 
 pub async fn insert(pool: &SqlitePool, new: &NewTransaction) -> Result<TransactionRow, RepoError> {
-    let row = sqlx::query_as::<_, TransactionRow>(&format!(
-        "INSERT INTO transactions \
-           (instrument_id, type, trade_date, quantity, price, currency, fx_rate_to_base, \
-            brokerage, brokerage_currency, source_value, source_currency, note, import_batch_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL) RETURNING {COLUMNS}"
-    ))
-    .bind(new.instrument_id)
-    .bind(new.kind.as_db_str())
-    .bind(new.trade_date.format("%Y-%m-%d").to_string())
-    .bind(new.quantity)
-    .bind(new.price.map(|d| d.to_string()))
-    .bind(new.currency.clone())
-    .bind(new.fx_rate_to_base.map(|d| d.to_string()))
-    .bind(new.brokerage.map(|d| d.to_string()))
-    .bind(new.brokerage.map(|_| "SEK"))
-    .bind(new.note.clone())
-    .fetch_one(pool)
-    .await?;
+    let row = sqlx::query_as::<_, TransactionRow>(INSERT_SQL)
+        .bind(new.instrument_id)
+        .bind(new.kind.as_db_str())
+        .bind(new.trade_date.format("%Y-%m-%d").to_string())
+        .bind(new.quantity)
+        .bind(new.price.map(|d| d.to_string()))
+        .bind(new.currency.clone())
+        .bind(new.fx_rate_to_base.map(|d| d.to_string()))
+        .bind(new.brokerage.map(|d| d.to_string()))
+        .bind(new.brokerage.map(|_| "SEK"))
+        .bind(new.note.clone())
+        .fetch_one(pool)
+        .await?;
     Ok(row)
 }
 
@@ -182,27 +195,22 @@ pub async fn insert_in_tx(
     conn: &mut SqliteConnection,
     new: &NewImportTransaction,
 ) -> Result<TransactionRow, RepoError> {
-    let row = sqlx::query_as::<_, TransactionRow>(&format!(
-        "INSERT INTO transactions \
-           (instrument_id, type, trade_date, quantity, price, currency, fx_rate_to_base, \
-            brokerage, brokerage_currency, source_value, source_currency, note, import_batch_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
-    .bind(new.instrument_id)
-    .bind(new.kind.as_db_str())
-    .bind(new.trade_date.format("%Y-%m-%d").to_string())
-    .bind(new.quantity)
-    .bind(new.price.map(|d| d.to_string()))
-    .bind(new.currency.clone())
-    .bind(new.fx_rate_to_base.map(|d| d.to_string()))
-    .bind(new.brokerage.map(|d| d.to_string()))
-    .bind(new.brokerage_currency.clone())
-    .bind(new.source_value.map(|d| d.to_string()))
-    .bind(new.source_currency.clone())
-    .bind(new.note.clone())
-    .bind(new.import_batch_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let row = sqlx::query_as::<_, TransactionRow>(INSERT_IMPORT_SQL)
+        .bind(new.instrument_id)
+        .bind(new.kind.as_db_str())
+        .bind(new.trade_date.format("%Y-%m-%d").to_string())
+        .bind(new.quantity)
+        .bind(new.price.map(|d| d.to_string()))
+        .bind(new.currency.clone())
+        .bind(new.fx_rate_to_base.map(|d| d.to_string()))
+        .bind(new.brokerage.map(|d| d.to_string()))
+        .bind(new.brokerage_currency.clone())
+        .bind(new.source_value.map(|d| d.to_string()))
+        .bind(new.source_currency.clone())
+        .bind(new.note.clone())
+        .bind(new.import_batch_id)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(row)
 }
 
@@ -212,24 +220,20 @@ pub async fn replace(
     id: i64,
     new: &NewTransaction,
 ) -> Result<TransactionRow, RepoError> {
-    let row = sqlx::query_as::<_, TransactionRow>(&format!(
-        "UPDATE transactions SET instrument_id = ?, type = ?, trade_date = ?, quantity = ?, \
-           price = ?, currency = ?, fx_rate_to_base = ?, brokerage = ?, brokerage_currency = ?, \
-           note = ? WHERE id = ? RETURNING {COLUMNS}"
-    ))
-    .bind(new.instrument_id)
-    .bind(new.kind.as_db_str())
-    .bind(new.trade_date.format("%Y-%m-%d").to_string())
-    .bind(new.quantity)
-    .bind(new.price.map(|d| d.to_string()))
-    .bind(new.currency.clone())
-    .bind(new.fx_rate_to_base.map(|d| d.to_string()))
-    .bind(new.brokerage.map(|d| d.to_string()))
-    .bind(new.brokerage.map(|_| "SEK"))
-    .bind(new.note.clone())
-    .bind(id)
-    .fetch_one(pool)
-    .await?;
+    let row = sqlx::query_as::<_, TransactionRow>(REPLACE_SQL)
+        .bind(new.instrument_id)
+        .bind(new.kind.as_db_str())
+        .bind(new.trade_date.format("%Y-%m-%d").to_string())
+        .bind(new.quantity)
+        .bind(new.price.map(|d| d.to_string()))
+        .bind(new.currency.clone())
+        .bind(new.fx_rate_to_base.map(|d| d.to_string()))
+        .bind(new.brokerage.map(|d| d.to_string()))
+        .bind(new.brokerage.map(|_| "SEK"))
+        .bind(new.note.clone())
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
     Ok(row)
 }
 

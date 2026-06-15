@@ -10,19 +10,18 @@ pub struct ImportBatchRow {
     pub raw_file_hash: Option<String>,
 }
 
-const COLUMNS: &str = "id, source, imported_at, raw_file_hash";
+const FIND_BY_HASH_SQL: &str =
+    "SELECT id, source, imported_at, raw_file_hash FROM import_batches WHERE raw_file_hash = ? ORDER BY id LIMIT 1";
 
 /// First existing batch whose `raw_file_hash` matches, if any.
 pub async fn find_by_hash(
     pool: &SqlitePool,
     hash: &str,
 ) -> Result<Option<ImportBatchRow>, RepoError> {
-    let row = sqlx::query_as::<_, ImportBatchRow>(&format!(
-        "SELECT {COLUMNS} FROM import_batches WHERE raw_file_hash = ? ORDER BY id LIMIT 1"
-    ))
-    .bind(hash)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query_as::<_, ImportBatchRow>(FIND_BY_HASH_SQL)
+        .bind(hash)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 

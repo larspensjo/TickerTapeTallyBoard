@@ -12,9 +12,9 @@ rust_decimal = { version = "1", features = ["serde-with-str"] }
 rust_decimal_macros = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11.0"
 simplelog = "0.12"
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9.0", default-features = false, features = [
     "macros",
     "migrate",
     "runtime-tokio",
@@ -27,7 +27,7 @@ tokio = { version = "1", features = [
     "rt-multi-thread",
     "signal",
 ] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.7.0", features = ["cors", "fs"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

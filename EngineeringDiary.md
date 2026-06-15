@@ -392,3 +392,13 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/`, `backend/tests/import_api.rs`, `backend/Cargo.toml`; implements: Sharesight Import Endpoints And Atomicity.
+
+## 2026-06-15 - SQLx static repository queries
+Adjusted repository SQL strings for SQLx 0.9's static SQL safety checks.
+What changed:
+- Replaced fixed `format!`-built repository queries with static SQL constants in import batch, instrument, and transaction storage modules.
+Observed:
+- `cargo build`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/db/import_batches.rs`, `backend/src/db/instruments.rs`, `backend/src/db/transactions.rs`.

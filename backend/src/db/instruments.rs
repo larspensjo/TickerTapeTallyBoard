@@ -2,7 +2,13 @@ use sqlx::sqlite::{SqliteConnection, SqlitePool};
 
 use crate::db::RepoError;
 
-const COLUMNS: &str = "id, symbol, exchange, name, type, currency";
+const LIST_SQL: &str =
+    "SELECT id, symbol, exchange, name, type, currency FROM instruments ORDER BY exchange, symbol";
+const FIND_SQL: &str =
+    "SELECT id, symbol, exchange, name, type, currency FROM instruments WHERE id = ?";
+const FIND_BY_EXCHANGE_SYMBOL_SQL: &str = "SELECT id, symbol, exchange, name, type, currency FROM instruments WHERE exchange = ? AND symbol = ?";
+const INSERT_SQL: &str = "INSERT INTO instruments (symbol, exchange, name, type, currency) \
+     VALUES (?, ?, ?, ?, ?) RETURNING id, symbol, exchange, name, type, currency";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct InstrumentRow {
@@ -26,21 +32,17 @@ pub struct NewInstrument {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<InstrumentRow>, RepoError> {
-    let rows = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "SELECT {COLUMNS} FROM instruments ORDER BY exchange, symbol"
-    ))
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, InstrumentRow>(LIST_SQL)
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
 }
 
 pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<InstrumentRow>, RepoError> {
-    let row = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "SELECT {COLUMNS} FROM instruments WHERE id = ?"
-    ))
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query_as::<_, InstrumentRow>(FIND_SQL)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -49,13 +51,11 @@ pub async fn find_by_exchange_symbol(
     exchange: &str,
     symbol: &str,
 ) -> Result<Option<InstrumentRow>, RepoError> {
-    let row = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "SELECT {COLUMNS} FROM instruments WHERE exchange = ? AND symbol = ?"
-    ))
-    .bind(exchange)
-    .bind(symbol)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query_as::<_, InstrumentRow>(FIND_BY_EXCHANGE_SYMBOL_SQL)
+        .bind(exchange)
+        .bind(symbol)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -69,17 +69,14 @@ pub async fn upsert(
         return Ok((existing, false));
     }
 
-    let inserted = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "INSERT INTO instruments (symbol, exchange, name, type, currency) \
-         VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
-    .bind(&new.symbol)
-    .bind(&new.exchange)
-    .bind(&new.name)
-    .bind(&new.kind)
-    .bind(&new.currency)
-    .fetch_one(pool)
-    .await;
+    let inserted = sqlx::query_as::<_, InstrumentRow>(INSERT_SQL)
+        .bind(&new.symbol)
+        .bind(&new.exchange)
+        .bind(&new.name)
+        .bind(&new.kind)
+        .bind(&new.currency)
+        .fetch_one(pool)
+        .await;
 
     match inserted {
         Ok(row) => Ok((row, true)),
@@ -101,43 +98,36 @@ pub async fn upsert_in_tx(
     conn: &mut SqliteConnection,
     new: &NewInstrument,
 ) -> Result<(InstrumentRow, bool), RepoError> {
-    if let Some(existing) = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "SELECT {COLUMNS} FROM instruments WHERE exchange = ? AND symbol = ?"
-    ))
-    .bind(&new.exchange)
-    .bind(&new.symbol)
-    .fetch_optional(&mut *conn)
-    .await?
+    if let Some(existing) = sqlx::query_as::<_, InstrumentRow>(FIND_BY_EXCHANGE_SYMBOL_SQL)
+        .bind(&new.exchange)
+        .bind(&new.symbol)
+        .fetch_optional(&mut *conn)
+        .await?
     {
         return Ok((existing, false));
     }
 
-    let inserted = sqlx::query_as::<_, InstrumentRow>(&format!(
-        "INSERT INTO instruments (symbol, exchange, name, type, currency) \
-         VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
-    .bind(&new.symbol)
-    .bind(&new.exchange)
-    .bind(&new.name)
-    .bind(&new.kind)
-    .bind(&new.currency)
-    .fetch_one(&mut *conn)
-    .await;
+    let inserted = sqlx::query_as::<_, InstrumentRow>(INSERT_SQL)
+        .bind(&new.symbol)
+        .bind(&new.exchange)
+        .bind(&new.name)
+        .bind(&new.kind)
+        .bind(&new.currency)
+        .fetch_one(&mut *conn)
+        .await;
 
     match inserted {
         Ok(row) => Ok((row, true)),
         Err(sqlx::Error::Database(database_error)) if database_error.is_unique_violation() => {
             // A concurrent insert can win between the read above and this insert.
-            let existing = sqlx::query_as::<_, InstrumentRow>(&format!(
-                "SELECT {COLUMNS} FROM instruments WHERE exchange = ? AND symbol = ?"
-            ))
-            .bind(&new.exchange)
-            .bind(&new.symbol)
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| {
-                RepoError::Decode("instrument vanished after unique violation".to_owned())
-            })?;
+            let existing = sqlx::query_as::<_, InstrumentRow>(FIND_BY_EXCHANGE_SYMBOL_SQL)
+                .bind(&new.exchange)
+                .bind(&new.symbol)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| {
+                    RepoError::Decode("instrument vanished after unique violation".to_owned())
+                })?;
             Ok((existing, false))
         }
         Err(error) => Err(RepoError::Sqlx(error)),
