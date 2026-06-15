@@ -116,6 +116,14 @@ pub async fn all_for_holdings(pool: &SqlitePool) -> Result<Vec<TransactionRow>, 
     Ok(rows)
 }
 
+/// Current maximum transaction id, or 0 when the table is empty.
+pub async fn max_id(pool: &SqlitePool) -> Result<i64, RepoError> {
+    let max: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM transactions")
+        .fetch_one(pool)
+        .await?;
+    Ok(max)
+}
+
 pub async fn insert(pool: &SqlitePool, new: &NewTransaction) -> Result<TransactionRow, RepoError> {
     let row = sqlx::query_as::<_, TransactionRow>(&format!(
         "INSERT INTO transactions \

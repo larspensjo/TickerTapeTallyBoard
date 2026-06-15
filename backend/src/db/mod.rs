@@ -1,5 +1,10 @@
 mod pool;
 
+use std::str::FromStr;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+
+pub mod import_batches;
 pub mod instruments;
 pub mod transactions;
 
@@ -7,6 +12,19 @@ pub mod transactions;
 pub mod testing;
 
 pub use pool::connect;
+
+/// A migrated single-connection in-memory pool, for examples and integration tests.
+pub async fn memory_pool() -> Result<SqlitePool, sqlx::Error> {
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")?.foreign_keys(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?;
+
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    Ok(pool)
+}
 
 /// Errors a repository can surface: a SQL/driver failure, or a failure to decode
 /// stored data back into domain types (an internal invariant violation).

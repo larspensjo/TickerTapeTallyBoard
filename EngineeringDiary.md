@@ -366,3 +366,15 @@ Observed:
 Open question:
 - None.
 Refs: `backend/examples/sharesight_import_spike.rs`.
+
+## 2026-06-15 - Sharesight import preview endpoint
+Added a read-only Sharesight CSV preview endpoint with a migrated in-memory test pool and a synthetic integration fixture.
+What changed:
+- Replaced the placeholder Sharesight schema endpoint with `POST /api/import/sharesight/preview`.
+- Added a public migrated in-memory SQLite pool helper, a raw-file SHA-256 helper, and a batch hash lookup for duplicate detection.
+- Added a synthetic Sharesight CSV fixture plus integration tests that check preview counts, parse-error shaping, duplicate annotation, and that no rows are written.
+Observed:
+- `cargo test`, `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/api/import.rs`, `backend/src/api/mod.rs`, `backend/src/db/import_batches.rs`, `backend/src/db/mod.rs`, `backend/src/db/transactions.rs`, `backend/src/import/mod.rs`, `backend/tests/import_api.rs`, `backend/tests/fixtures/sharesight_synthetic.csv`.

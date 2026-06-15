@@ -1,28 +1,13 @@
 //! Test-only database helpers shared across the crate's `#[cfg(test)]` modules.
 
-use std::str::FromStr;
-
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::SqlitePool;
 
 /// A migrated in-memory SQLite pool. Uses a single connection so the in-memory
 /// database (which is per-connection) persists for the pool's lifetime.
 pub async fn memory_pool() -> SqlitePool {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
-        .expect("in-memory URL is valid")
-        .foreign_keys(true);
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
+    super::memory_pool()
         .await
-        .expect("in-memory pool should connect");
-
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations should apply");
-
-    pool
+        .expect("in-memory pool should connect and migrate")
 }
 
 #[cfg(test)]

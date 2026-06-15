@@ -1,0 +1,7 @@
+Synthetic Portfolio - All Trades Report between 2025-06-12 and 2026-06-12
+
+Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments
+NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,"12,50",USD,"0,00","9,60",SEK,"0,100000","1 259,60",All Trades,First buy
+NASDAQ,MSFT,Microsoft,Sell,13/06/2026,−4,"12,60",USD,"0,00","0,00",SEK,"0,100000","−504,00",All Trades,
+XETR,ASML,ASML Holding,Buy,14/06/2026,3,"600,00",EUR,"0,00","0,00",SEK,,"0,00",All Trades,Missing FX
+NASDAQ,MSFT,Microsoft,Split,15/06/2026,10,"0,00",USD,"0,00","0,00",SEK,,"0,00",All Trades,Ten for one
