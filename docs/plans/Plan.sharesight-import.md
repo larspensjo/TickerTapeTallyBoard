@@ -1,7 +1,5 @@
 # Sharesight Import Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Load a Sharesight All Trades CSV into the ledger through a dry-run preview, an atomic commit, and a per-batch rollback, with a reducer-driven Import view.
 
 **Architecture:** Promote the working spike parser into pure, unit-testable `parser` / `mapper` / `plan` modules behind a new `src/lib.rs`. Two stateless endpoints (`preview`, `commit`) take raw CSV bytes; the frontend holds the file between them. Commit writes one atomic `import_batches` + transactions batch via executor-generic db functions; rollback deletes a batch and re-validates remaining ledgers.

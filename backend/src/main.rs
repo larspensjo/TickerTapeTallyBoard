@@ -1,12 +1,4 @@
-mod api;
-mod app;
-mod config;
-mod db;
-mod domain;
-mod engine_logging;
-mod import;
-mod providers;
-mod state;
+use ticker_tape_tally_board_backend::{app, config, engine_logging};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

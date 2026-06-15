@@ -339,3 +339,19 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/src/api/`, `frontend/src/components/`, `frontend/src/App.tsx`, `frontend/src/styles.css`, `frontend/package.json`, `frontend/package-lock.json`, `backend/Cargo.toml`; implements: Displayed Application Versions.
+
+## 2026-06-15 - Sharesight parser promoted to a library module
+Promoted the All Trades CSV parser from the example into reusable library modules.
+What changed:
+- Added `src/lib.rs` and reduced `src/main.rs` to a thin wrapper.
+- Added pure `import::sharesight` `parser`, `mapper`, and `plan` modules with unit tests.
+- Moved `csv` to a normal dependency and added `sha2`.
+- Refactored the import spike example to call the shared parser.
+- Applied review polish by reusing planner validation output and covering same-day grouping warnings.
+- Made the parser tolerate Sharesight exports that omit the optional report/source column.
+Observed:
+- `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` pass.
+- A source-column-free All Trades export parses through the spike example.
+Open question:
+- None.
+Refs: `backend/src/lib.rs`, `backend/src/import/sharesight/`, `backend/examples/sharesight_import_spike.rs`; implements: Sharesight CSV Import Conventions.

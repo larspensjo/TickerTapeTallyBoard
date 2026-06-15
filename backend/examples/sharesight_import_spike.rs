@@ -1,20 +1,20 @@
 use chrono::NaiveDate;
-use csv::StringRecord;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::error::Error;
-use std::fmt;
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
+use ticker_tape_tally_board_backend::import::sharesight::parser::{
+    parse_report, sanitize_report_title, ParsedKind, ParsedReport, ParsedRow,
+};
 
 const DEFAULT_CSV_PATH: &str = "../docs/AllTradesReport_2026-06-12.csv";
-const HEADER_MARKER: &str = "Market";
-const REPORT_TITLE_MARKER: &str = "All Trades Report between";
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse(env::args().skip(1))?;
-    let report = parse_report(&args.csv_path)?;
+    let bytes = fs::read(&args.csv_path)?;
+    let report = parse_report(&bytes)?;
     let summary = summarize(&report, args.split_current_position);
     print!("{summary}");
     Ok(())
@@ -64,328 +64,67 @@ impl Args {
     }
 }
 
-#[derive(Debug)]
-struct Report {
-    metadata: ReportMetadata,
-    header_row_number: usize,
-    trades: Vec<Trade>,
-}
-
-#[derive(Debug)]
-struct ReportMetadata {
-    title: String,
-    date_from: NaiveDate,
-    date_to: NaiveDate,
-}
-
-#[derive(Debug, Clone)]
-struct Trade {
-    source_row_number: usize,
-    market: String,
-    code: String,
-    name: String,
-    transaction_type: TransactionType,
-    trade_date: NaiveDate,
-    quantity: Decimal,
-    price: Decimal,
-    instrument_currency: String,
-    cost_base_per_share_sek: Decimal,
-    brokerage: Decimal,
-    brokerage_currency: String,
-    exchange_rate: Decimal,
-    value: Decimal,
-    source_column: String,
-    comments: String,
-    raw_signature: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum TransactionType {
-    Buy,
-    Sell,
-    Split,
-}
-
-impl TransactionType {
-    fn parse(value: &str, row_number: usize) -> Result<Self, String> {
-        match value.trim() {
-            "Buy" => Ok(Self::Buy),
-            "Sell" => Ok(Self::Sell),
-            "Split" => Ok(Self::Split),
-            other => Err(format!(
-                "row {row_number}: unknown transaction type {other:?}"
-            )),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Buy => "Buy",
-            Self::Sell => "Sell",
-            Self::Split => "Split",
-        }
-    }
-}
-
-#[derive(Debug)]
-struct HeaderIndexes {
-    market: usize,
-    code: usize,
-    name: usize,
-    transaction_type: usize,
-    trade_date: usize,
-    quantity: usize,
-    price: usize,
-    instrument_currency: usize,
-    cost_base_per_share_sek: usize,
-    brokerage: usize,
-    brokerage_currency: usize,
-    exchange_rate: usize,
-    value: usize,
-    source_column: usize,
-    comments: usize,
-}
-
-fn parse_report(path: &PathBuf) -> Result<Report, Box<dyn Error>> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .flexible(true)
-        .from_path(path)?;
-
-    let mut metadata = None;
-    let mut header = None;
-    let mut records = Vec::new();
-
-    for (zero_based_index, record) in reader.records().enumerate() {
-        let row_number = zero_based_index + 1;
-        let record = record?;
-
-        if metadata.is_none() {
-            metadata = parse_metadata(&record)?;
-        }
-
-        if header.is_none() && is_header_record(&record) {
-            header = Some((row_number, HeaderIndexes::parse(&record)?));
-            continue;
-        }
-
-        if header.is_some() && !record_is_empty(&record) {
-            records.push((row_number, record));
-        }
-    }
-
-    let metadata = metadata.ok_or("report metadata line was not found")?;
-    let (header_row_number, header) = header.ok_or("header row was not found")?;
-    let trades = records
-        .iter()
-        .map(|(row_number, record)| parse_trade(*row_number, record, &header))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(Report {
-        metadata,
-        header_row_number,
-        trades,
-    })
-}
-
-impl HeaderIndexes {
-    fn parse(record: &StringRecord) -> Result<Self, String> {
-        Ok(Self {
-            market: require_header(record, "Market")?,
-            code: require_header(record, "Code")?,
-            name: require_header(record, "Name")?,
-            transaction_type: require_header(record, "Type")?,
-            trade_date: require_header(record, "Date")?,
-            quantity: require_header(record, "Quantity")?,
-            price: require_header(record, "Price")?,
-            instrument_currency: require_header(record, "Instrument Currency")?,
-            cost_base_per_share_sek: require_header(record, "Cost base per share (SEK)")?,
-            brokerage: require_header(record, "Brokerage")?,
-            brokerage_currency: require_header(record, "Brokerage Currency")?,
-            exchange_rate: require_header(record, "Exchange Rate")?,
-            value: require_header(record, "Value")?,
-            source_column: record
-                .iter()
-                .position(|field| field.trim().is_empty())
-                .ok_or_else(|| "unnamed report/source column was not found".to_string())?,
-            comments: require_header(record, "Comments")?,
-        })
-    }
-}
-
-fn parse_metadata(record: &StringRecord) -> Result<Option<ReportMetadata>, Box<dyn Error>> {
-    let Some(title) = record.get(0).map(str::trim) else {
-        return Ok(None);
-    };
-
-    if !title.contains(REPORT_TITLE_MARKER) {
-        return Ok(None);
-    }
-
-    let (_, range) = title
-        .split_once(" between ")
-        .ok_or("metadata line did not contain a report range")?;
-    let (date_from, date_to) = range
-        .split_once(" and ")
-        .ok_or("metadata line did not contain both range dates")?;
-
-    Ok(Some(ReportMetadata {
-        title: title.to_string(),
-        date_from: NaiveDate::parse_from_str(date_from, "%Y-%m-%d")?,
-        date_to: NaiveDate::parse_from_str(date_to, "%Y-%m-%d")?,
-    }))
-}
-
-fn parse_trade(
-    source_row_number: usize,
-    record: &StringRecord,
-    header: &HeaderIndexes,
-) -> Result<Trade, String> {
-    Ok(Trade {
-        source_row_number,
-        market: field(record, header.market, "Market", source_row_number)?.to_string(),
-        code: field(record, header.code, "Code", source_row_number)?.to_string(),
-        name: field(record, header.name, "Name", source_row_number)?.to_string(),
-        transaction_type: TransactionType::parse(
-            field(record, header.transaction_type, "Type", source_row_number)?,
-            source_row_number,
-        )?,
-        trade_date: NaiveDate::parse_from_str(
-            field(record, header.trade_date, "Date", source_row_number)?,
-            "%d/%m/%Y",
-        )
-        .map_err(|error| format!("row {source_row_number}: invalid Date: {error}"))?,
-        quantity: parse_decimal_field(
-            field(record, header.quantity, "Quantity", source_row_number)?,
-            "Quantity",
-            source_row_number,
-        )?,
-        price: parse_decimal_field(
-            field(record, header.price, "Price", source_row_number)?,
-            "Price",
-            source_row_number,
-        )?,
-        instrument_currency: field(
-            record,
-            header.instrument_currency,
-            "Instrument Currency",
-            source_row_number,
-        )?
-        .to_string(),
-        cost_base_per_share_sek: parse_decimal_field(
-            field(
-                record,
-                header.cost_base_per_share_sek,
-                "Cost base per share (SEK)",
-                source_row_number,
-            )?,
-            "Cost base per share (SEK)",
-            source_row_number,
-        )?,
-        brokerage: parse_decimal_field(
-            field(record, header.brokerage, "Brokerage", source_row_number)?,
-            "Brokerage",
-            source_row_number,
-        )?,
-        brokerage_currency: field(
-            record,
-            header.brokerage_currency,
-            "Brokerage Currency",
-            source_row_number,
-        )?
-        .to_string(),
-        exchange_rate: parse_decimal_field(
-            field(
-                record,
-                header.exchange_rate,
-                "Exchange Rate",
-                source_row_number,
-            )?,
-            "Exchange Rate",
-            source_row_number,
-        )?,
-        value: parse_decimal_field(
-            field(record, header.value, "Value", source_row_number)?,
-            "Value",
-            source_row_number,
-        )?,
-        source_column: field(
-            record,
-            header.source_column,
-            "source column",
-            source_row_number,
-        )?
-        .to_string(),
-        comments: field(record, header.comments, "Comments", source_row_number)?.to_string(),
-        raw_signature: record
-            .iter()
-            .map(|field| normalize_text(field).to_string())
-            .collect::<Vec<_>>()
-            .join("|"),
-    })
-}
-
-fn summarize(report: &Report, split_current_position: Option<Decimal>) -> String {
+fn summarize(report: &ParsedReport, split_current_position: Option<Decimal>) -> String {
     let mut output = String::new();
-    let trade_count = report.trades.len();
+    let trade_count = report.rows.len();
     let markets = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.market.as_str())
         .collect::<BTreeSet<_>>();
     let instrument_currencies = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.instrument_currency.as_str())
         .collect::<BTreeSet<_>>();
     let source_columns = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.source_column.as_str())
         .collect::<BTreeSet<_>>();
     let brokerage_currencies = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.brokerage_currency.as_str())
         .collect::<BTreeSet<_>>();
-    let type_counts = type_counts(&report.trades);
-    let instrument_keys = instrument_key_map(&report.trades);
+    let type_counts = type_counts(&report.rows);
+    let instrument_keys = instrument_key_map(&report.rows);
     let ambiguous_keys = instrument_keys
         .values()
         .filter(|identity_set| identity_set.len() > 1)
         .count();
-    let duplicate_rows = duplicate_count(&report.trades);
-    let partial_fill_summary = partial_fill_summary(&report.trades);
+    let duplicate_rows = duplicate_count(&report.rows);
+    let partial_fill_summary = partial_fill_summary(&report.rows);
     let value_sign_mismatches = report
-        .trades
+        .rows
         .iter()
         .filter(|trade| !value_sign_is_consistent(trade))
         .count();
     let quantity_sign_mismatches = report
-        .trades
+        .rows
         .iter()
         .filter(|trade| !quantity_sign_is_consistent(trade))
         .count();
     let nonzero_cost_base_rows = report
-        .trades
+        .rows
         .iter()
         .filter(|trade| !trade.cost_base_per_share_sek.is_zero())
         .count();
     let blank_comments = report
-        .trades
+        .rows
         .iter()
         .filter(|trade| trade.comments.trim().is_empty())
         .count();
-    let fx_summary = fx_model_summary(&report.trades);
-    let split_summary = split_summary(&report.trades, split_current_position);
+    let fx_summary = fx_model_summary(&report.rows);
+    let split_summary = split_summary(&report.rows, split_current_position);
     let first_row = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.source_row_number)
         .min()
         .unwrap_or_default();
     let last_row = report
-        .trades
+        .rows
         .iter()
         .map(|trade| trade.source_row_number)
         .max()
@@ -559,7 +298,7 @@ struct FxModelResult {
     total_abs_residual: Decimal,
 }
 
-fn fx_model_summary(trades: &[Trade]) -> FxSummary {
+fn fx_model_summary(trades: &[ParsedRow]) -> FxSummary {
     let mut models = vec![
         FxModelResult::new("Value = native gross / exchange rate"),
         FxModelResult::new("Value = native gross / exchange rate + brokerage"),
@@ -571,15 +310,18 @@ fn fx_model_summary(trades: &[Trade]) -> FxSummary {
     let mut row_count = 0;
 
     for trade in trades.iter().filter(|trade| {
-        trade.transaction_type != TransactionType::Split
+        trade.kind != ParsedKind::Split
             && !trade.quantity.is_zero()
             && !trade.price.is_zero()
-            && !trade.exchange_rate.is_zero()
+            && trade.exchange_rate.is_some_and(|rate| !rate.is_zero())
     }) {
         row_count += 1;
+        let exchange_rate = trade
+            .exchange_rate
+            .expect("filtered to present exchange rate");
         let native_gross = trade.quantity * trade.price;
-        let divide_base = native_gross / trade.exchange_rate;
-        let multiply_base = native_gross * trade.exchange_rate;
+        let divide_base = native_gross / exchange_rate;
+        let multiply_base = native_gross * exchange_rate;
         let expected_values = [
             divide_base,
             divide_base + trade.brokerage,
@@ -636,10 +378,10 @@ struct SplitSummary {
     lines: Vec<String>,
 }
 
-fn split_summary(trades: &[Trade], current_position: Option<Decimal>) -> SplitSummary {
+fn split_summary(trades: &[ParsedRow], current_position: Option<Decimal>) -> SplitSummary {
     let split_trades = trades
         .iter()
-        .filter(|trade| trade.transaction_type == TransactionType::Split)
+        .filter(|trade| trade.kind == ParsedKind::Split)
         .collect::<Vec<_>>();
 
     if split_trades.is_empty() {
@@ -725,8 +467,8 @@ struct PartialFillSummary {
     row_count: usize,
 }
 
-fn partial_fill_summary(trades: &[Trade]) -> PartialFillSummary {
-    let mut groups: BTreeMap<(&str, &str, NaiveDate, TransactionType), usize> = BTreeMap::new();
+fn partial_fill_summary(trades: &[ParsedRow]) -> PartialFillSummary {
+    let mut groups = BTreeMap::<(&str, &str, NaiveDate, &'static str), usize>::new();
 
     for trade in trades {
         *groups
@@ -734,7 +476,7 @@ fn partial_fill_summary(trades: &[Trade]) -> PartialFillSummary {
                 trade.market.as_str(),
                 trade.code.as_str(),
                 trade.trade_date,
-                trade.transaction_type,
+                trade.kind.as_str(),
             ))
             .or_default() += 1;
     }
@@ -751,11 +493,11 @@ fn partial_fill_summary(trades: &[Trade]) -> PartialFillSummary {
     }
 }
 
-fn duplicate_count(trades: &[Trade]) -> usize {
-    let mut counts = BTreeMap::<&str, usize>::new();
+fn duplicate_count(trades: &[ParsedRow]) -> usize {
+    let mut counts = BTreeMap::<String, usize>::new();
 
     for trade in trades {
-        *counts.entry(&trade.raw_signature).or_default() += 1;
+        *counts.entry(raw_signature(trade)).or_default() += 1;
     }
 
     counts
@@ -765,7 +507,31 @@ fn duplicate_count(trades: &[Trade]) -> usize {
         .sum()
 }
 
-fn instrument_key_map(trades: &[Trade]) -> BTreeMap<(&str, &str), BTreeSet<(&str, &str)>> {
+fn raw_signature(trade: &ParsedRow) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        normalize_text(&trade.market),
+        normalize_text(&trade.code),
+        normalize_text(&trade.name),
+        trade.kind.as_str(),
+        trade.trade_date,
+        trade.quantity,
+        trade.price,
+        normalize_text(&trade.instrument_currency),
+        trade.cost_base_per_share_sek,
+        trade.brokerage,
+        normalize_text(&trade.brokerage_currency),
+        trade
+            .exchange_rate
+            .map(|rate| rate.to_string())
+            .unwrap_or_default(),
+        trade.value,
+        normalize_text(&trade.source_column),
+        normalize_text(&trade.comments)
+    )
+}
+
+fn instrument_key_map(trades: &[ParsedRow]) -> BTreeMap<(&str, &str), BTreeSet<(&str, &str)>> {
     let mut map = BTreeMap::<(&str, &str), BTreeSet<(&str, &str)>>::new();
 
     for trade in trades {
@@ -777,94 +543,53 @@ fn instrument_key_map(trades: &[Trade]) -> BTreeMap<(&str, &str), BTreeSet<(&str
     map
 }
 
-fn type_counts(trades: &[Trade]) -> BTreeMap<TransactionType, usize> {
+fn type_counts(trades: &[ParsedRow]) -> BTreeMap<&'static str, usize> {
     let mut counts = BTreeMap::new();
 
     for trade in trades {
-        *counts.entry(trade.transaction_type).or_default() += 1;
+        *counts.entry(trade.kind.as_str()).or_default() += 1;
     }
 
     counts
 }
 
-fn format_type_counts(counts: &BTreeMap<TransactionType, usize>) -> String {
-    [
-        TransactionType::Buy,
-        TransactionType::Sell,
-        TransactionType::Split,
-    ]
-    .iter()
-    .map(|transaction_type| {
-        format!(
-            "{} {}",
-            transaction_type.as_str(),
-            counts.get(transaction_type).copied().unwrap_or_default()
-        )
-    })
-    .collect::<Vec<_>>()
-    .join(", ")
-}
-
-fn value_sign_is_consistent(trade: &Trade) -> bool {
-    match trade.transaction_type {
-        TransactionType::Buy => trade.value > Decimal::ZERO,
-        TransactionType::Sell => trade.value < Decimal::ZERO,
-        TransactionType::Split => trade.value.is_zero(),
-    }
-}
-
-fn quantity_sign_is_consistent(trade: &Trade) -> bool {
-    match trade.transaction_type {
-        TransactionType::Buy => trade.quantity > Decimal::ZERO,
-        TransactionType::Sell => trade.quantity < Decimal::ZERO,
-        TransactionType::Split => trade.quantity > Decimal::ZERO,
-    }
-}
-
-fn is_header_record(record: &StringRecord) -> bool {
-    record.get(0).map(str::trim) == Some(HEADER_MARKER)
-        && record.iter().any(|field| field.trim() == "Exchange Rate")
-}
-
-fn record_is_empty(record: &StringRecord) -> bool {
-    record.iter().all(|field| field.trim().is_empty())
-}
-
-fn require_header(record: &StringRecord, name: &str) -> Result<usize, String> {
-    record
+fn format_type_counts(counts: &BTreeMap<&'static str, usize>) -> String {
+    [ParsedKind::Buy, ParsedKind::Sell, ParsedKind::Split]
         .iter()
-        .position(|field| field.trim() == name)
-        .ok_or_else(|| format!("required header {name:?} was not found"))
+        .map(|kind| {
+            let label = kind.as_str();
+            format!(
+                "{} {}",
+                label,
+                counts.get(label).copied().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn field<'a>(
-    record: &'a StringRecord,
-    index: usize,
-    label: &str,
-    row_number: usize,
-) -> Result<&'a str, String> {
-    record
-        .get(index)
-        .map(str::trim)
-        .ok_or_else(|| format!("row {row_number}: missing field {label} at index {index}"))
+fn value_sign_is_consistent(trade: &ParsedRow) -> bool {
+    match trade.kind {
+        ParsedKind::Buy => trade.value > Decimal::ZERO,
+        ParsedKind::Sell => trade.value < Decimal::ZERO,
+        ParsedKind::Split => trade.value.is_zero(),
+    }
 }
 
-fn parse_decimal_field(value: &str, label: &str, row_number: usize) -> Result<Decimal, String> {
-    parse_decimal(value).map_err(|error| format!("row {row_number}: invalid {label}: {error}"))
+fn quantity_sign_is_consistent(trade: &ParsedRow) -> bool {
+    match trade.kind {
+        ParsedKind::Buy => trade.quantity > Decimal::ZERO,
+        ParsedKind::Sell => trade.quantity < Decimal::ZERO,
+        ParsedKind::Split => trade.quantity > Decimal::ZERO,
+    }
 }
 
 fn parse_decimal_arg(value: &str) -> Result<Decimal, String> {
-    parse_decimal(value).map_err(|error| format!("invalid decimal argument: {error}"))
-}
-
-fn parse_decimal(value: &str) -> Result<Decimal, DecimalParseError> {
     let normalized = normalize_decimal(value);
-
     if normalized.is_empty() {
-        return Err(DecimalParseError::Empty);
+        return Err("empty decimal argument".to_string());
     }
-
-    Decimal::from_str(&normalized).map_err(|_| DecimalParseError::Invalid(value.to_string()))
+    Decimal::from_str(&normalized).map_err(|_| format!("invalid decimal argument: {value:?}"))
 }
 
 fn normalize_decimal(value: &str) -> String {
@@ -878,32 +603,7 @@ fn normalize_text(value: &str) -> &str {
     value.trim()
 }
 
-fn sanitize_report_title(title: &str) -> String {
-    let Some((_, report_part)) = title.split_once(" - ") else {
-        return "All Trades Report".to_string();
-    };
-
-    report_part.to_string()
-}
-
 fn push_line(output: &mut String, line: &str) {
     output.push_str(line);
     output.push('\n');
 }
-
-#[derive(Debug)]
-enum DecimalParseError {
-    Empty,
-    Invalid(String),
-}
-
-impl fmt::Display for DecimalParseError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(formatter, "empty decimal"),
-            Self::Invalid(value) => write!(formatter, "{value:?} is not a decimal"),
-        }
-    }
-}
-
-impl Error for DecimalParseError {}
