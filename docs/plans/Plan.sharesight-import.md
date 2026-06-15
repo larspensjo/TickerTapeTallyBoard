@@ -28,7 +28,7 @@ These were resolved from the codebase and `docs/DecisionLog.md`. Flag during rev
 3. **Parser keeps every CSV column it already parses** (including the all-zero `Cost base per share (SEK)` and the unnamed source column) so the maintained example keeps its diagnostics; the mapper ignores audit-only columns. The per-row `raw_signature` is dropped from the shared parser (per-row dedupe is a non-goal); the example computes its own signature locally.
 4. **`exchange_rate` is `Option<Decimal>` in the parser** (blank → `None`; present-but-not-a-decimal → parse error). The mapper inverts only positive rates.
 5. **Synthetic CSV fixtures contain no private data** and are committed: small inline `const`s for unit tests, plus `backend/tests/fixtures/sharesight_synthetic.csv` for the integration suite.
-6. **Preview always returns `200` with a plan-shaped body** (errors live in the `errors` array, including a parse failure rendered as one error entry). **Commit returns `422` with `ApiError`** and persists nothing when there are hard errors.
+6. **Preview always returns `200` with a plan-shaped body** (errors live in the `errors` array, including a parse failure rendered as one error entry). **Commit uses distinct `ApiError` statuses** and persists nothing on any hard error: `400 bad_request` for a parse failure (malformed CSV), `409 duplicate_import` when the file's `raw_file_hash` already exists and `allow_duplicate` is not set, and `422 Unprocessable Entity` for mapping/ledger hard errors (e.g. `non_sek_brokerage`, `sell_exceeds_position`). The frontend must treat all three as commit failures and surface the `error.code`/`error.message`; only `409` offers the "Import anyway" override.
 7. **Diary entries are added per phase** (Agents.md requires every code change to be reflected in the diary); the design's "EngineeringDiary entries" phase is folded into per-phase staging, leaving only the spec-archival + human-acceptance work for the final phase.
 
 ---
@@ -128,16 +128,17 @@ Expected: all existing tests pass.
 **Files:**
 - Modify: `backend/Cargo.toml`
 
-- [ ] **Step 1: Move `csv` to `[dependencies]` and add `sha2`**
+- [ ] **Step 1: Move `csv` and `rust_decimal_macros` to `[dependencies]` and add `sha2`**
 
 In `[dependencies]` add:
 
 ```toml
 csv = "1"
+rust_decimal_macros = "1"
 sha2 = "0.10"
 ```
 
-Remove `csv = "1"` from `[dev-dependencies]` (keep `rust_decimal_macros` and `tower` there).
+Remove `csv = "1"` and `rust_decimal_macros = "1"` from `[dev-dependencies]` (keep `tower` there). The `plan` module uses the `dec!` macro in production constants, so `rust_decimal_macros` must be a normal dependency rather than dev-only.
 
 - [ ] **Step 2: Build**
 
@@ -174,6 +175,8 @@ pub mod mapper;
 pub mod parser;
 pub mod plan;
 ```
+
+> **Compilation order:** Rust requires every declared module file to exist. Before declaring `mapper` and `plan` here, create empty placeholder files `backend/src/import/sharesight/mapper.rs` and `backend/src/import/sharesight/plan.rs` (Tasks 1.4 and 1.5 fill them in). Otherwise the parser test command in Task 1.3 Step 6 fails to compile because the declared modules are missing. (Alternatively, declare only `pub mod parser;` here and add `pub mod mapper;` / `pub mod plan;` in Tasks 1.4 and 1.5.)
 
 - [ ] **Step 2: Define the public types and `ParseError` in `parser.rs`**
 
@@ -573,6 +576,15 @@ mod tests {
         let _ = MapError { row: 1, code: "x", message: String::new() }; // type is constructible
         let _ = Decimal::ZERO;
     }
+
+    #[test]
+    fn reverse_split_preserves_negative_delta() {
+        let mut r = row(ParsedKind::Split);
+        r.quantity = dec!(-9); // reverse split removes shares
+        let mapped = map_row(&r).expect("maps");
+        assert_eq!(mapped.proposed.kind, TransactionKind::Split);
+        assert_eq!(mapped.proposed.quantity, -9); // sign preserved, not abs()
+    }
 }
 ```
 
@@ -633,10 +645,9 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
         ParsedKind::Split => TransactionKind::Split,
     };
 
-    let magnitude = integral_magnitude(row)?;
-
     let proposed = match row.kind {
         ParsedKind::Buy | ParsedKind::Sell => {
+            let magnitude = integral_magnitude(row)?;
             let fx_rate_to_base = invert_fx(row.exchange_rate);
             let fx_warning = fx_rate_to_base.is_none();
             let brokerage_base = sek_brokerage(row)?;
@@ -660,7 +671,7 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
         ParsedKind::Split => ProposedTransaction {
             kind,
             trade_date: row.trade_date,
-            quantity: magnitude, // split delta (export uses a positive delta)
+            quantity: integral_signed(row)?, // signed split delta (preserve reverse-split sign)
             price: None,
             currency: None,
             fx_rate_to_base: None,
@@ -679,8 +690,14 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
 }
 
 /// Quantity must be integral; the magnitude (absolute value) is passed to the
-/// domain validator, which re-signs it from the row's kind.
+/// domain validator for Buy/Sell, which re-signs it from the row's kind.
 fn integral_magnitude(row: &ParsedRow) -> Result<i64, MapError> {
+    Ok(integral_signed(row)?.abs())
+}
+
+/// Quantity must be integral; returns the signed value. Splits keep the sign so
+/// a reverse-split (negative delta) is preserved; Buy/Sell take `.abs()` of this.
+fn integral_signed(row: &ParsedRow) -> Result<i64, MapError> {
     if !row.quantity.fract().is_zero() {
         return Err(MapError {
             row: row.source_row_number,
@@ -688,7 +705,7 @@ fn integral_magnitude(row: &ParsedRow) -> Result<i64, MapError> {
             message: format!("quantity {} is not an integer", row.quantity),
         });
     }
-    row.quantity.abs().to_i64().ok_or(MapError {
+    row.quantity.to_i64().ok_or(MapError {
         row: row.source_row_number,
         code: "non_integer_quantity",
         message: format!("quantity {} does not fit in i64", row.quantity),
@@ -1491,7 +1508,7 @@ pub async fn memory_pool() -> Result<sqlx::sqlite::SqlitePool, sqlx::Error> {
 }
 ```
 
-(The existing `#[cfg(test)] db::testing::memory_pool` stays for in-crate unit tests; this public one serves `tests/` and the example. Optionally refactor `testing::memory_pool` to delegate to this to stay DRY.)
+(The existing `#[cfg(test)] db::testing::memory_pool` stays for in-crate unit tests; this public one serves `tests/` and the example. Refactor `testing::memory_pool` to delegate to this public helper (or have both call one shared private fn) so the two cannot drift in migration setup.)
 
 - [ ] **Step 2: Write the preview integration test**
 
@@ -1833,7 +1850,7 @@ async fn write_batch(
     let mut tx = state.pool.begin().await.map_err(|e| ApiError::internal(e.to_string()))?;
 
     let batch_id =
-        import_batches::insert_in_tx(&mut tx, "SHARESIGHT", &now_iso8601(), hash).await?;
+        import_batches::insert_in_tx(&mut *tx, "SHARESIGHT", &now_iso8601(), hash).await?;
 
     // Upsert instruments (first-seen order) and remember their ids.
     let mut instrument_ids: std::collections::BTreeMap<(String, String), i64> = Default::default();
@@ -1850,7 +1867,7 @@ async fn write_batch(
             Some(id) => *id,
             None => {
                 let (row, _created) = instruments::upsert_in_tx(
-                    &mut tx,
+                    &mut *tx,
                     &NewInstrument {
                         symbol: mapped.instrument.symbol.clone(),
                         exchange: mapped.instrument.exchange.clone(),
@@ -1878,7 +1895,7 @@ async fn write_batch(
             .then(|| "SEK".to_string());
 
         transactions::insert_in_tx(
-            &mut tx,
+            &mut *tx,
             &NewImportTransaction {
                 instrument_id,
                 kind: mapped.proposed.kind,
@@ -1892,6 +1909,7 @@ async fn write_batch(
                 source_value: Some(mapped.source_value),
                 source_currency,
                 note: non_empty(&parsed.comments),
+                import_batch_id: batch_id,
             },
         )
         .await?;
@@ -1899,7 +1917,7 @@ async fn write_batch(
 
     // In-transaction revalidation: every affected ledger must still derive.
     for instrument_id in affected {
-        let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, instrument_id).await?;
+        let ledger = transactions::ledger_for_instrument_in_tx(&mut *tx, instrument_id).await?;
         domain::derive_position(&ledger).map_err(ApiError::from)?;
     }
 
@@ -1977,9 +1995,13 @@ async fn preview_reports_duplicate_after_commit() {
 }
 
 #[tokio::test]
-async fn hard_error_rolls_commit_back() {
+async fn hard_error_is_rejected_before_any_write() {
     let state = test_state().await;
-    // A sell with no prior buy: oversell -> hard error, nothing persisted.
+    // A sell with no prior buy is caught during pre-commit planning, so commit
+    // returns 422 and persists nothing. (This proves "no writes on a hard
+    // error", not in-transaction rollback — the sqlx transaction is never
+    // opened. The in-transaction revalidation/rollback path is exercised by the
+    // rollback tests below, which delete rows inside a transaction and re-derive.)
     let bad = concat!(
         "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
         "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
@@ -2109,6 +2131,20 @@ pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<ImportBatchRow>, 
     .await?;
     Ok(row)
 }
+
+/// Delete the batch row itself inside a transaction; returns the count removed.
+/// Called after a batch's transactions are deleted so re-importing the same
+/// file is not reported as a duplicate.
+pub async fn delete_in_tx(
+    conn: &mut SqliteConnection,
+    id: i64,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query("DELETE FROM import_batches WHERE id = ?")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(result.rows_affected())
+}
 ```
 
 - [ ] **Step 2: Build**
@@ -2144,14 +2180,18 @@ pub async fn rollback(
 
     let mut tx = state.pool.begin().await.map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let affected = transactions::instrument_ids_for_batch(&mut tx, batch_id).await?;
-    let removed = transactions::delete_batch_in_tx(&mut tx, batch_id).await?;
+    let affected = transactions::instrument_ids_for_batch(&mut *tx, batch_id).await?;
+    let removed = transactions::delete_batch_in_tx(&mut *tx, batch_id).await?;
 
     // Every remaining ledger must still derive; otherwise reject and roll back.
     for instrument_id in affected {
-        let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, instrument_id).await?;
+        let ledger = transactions::ledger_for_instrument_in_tx(&mut *tx, instrument_id).await?;
         domain::derive_position(&ledger).map_err(ApiError::from)?;
     }
+
+    // Remove the now-empty batch row so the same file can be re-imported without
+    // tripping the duplicate-hash guard.
+    import_batches::delete_in_tx(&mut *tx, batch_id).await?;
 
     tx.commit().await.map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Json(RollbackResult { batch_id, removed }))
@@ -2237,6 +2277,26 @@ async fn rollback_unknown_batch_is_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "not_found");
 }
+
+#[tokio::test]
+async fn same_file_can_be_reimported_after_rollback() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let (rolled, _) =
+        send_json(&state, "POST", &format!("/api/import/sharesight/rollback/{batch_id}")).await;
+    assert_eq!(rolled, StatusCode::OK);
+
+    // Preview no longer reports a duplicate, and a fresh commit succeeds without
+    // `allow_duplicate` because the batch row (and its hash) was removed.
+    let (status, preview) = send_bytes(&state, "/api/import/sharesight/preview", SYNTHETIC).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(preview["duplicate_of_batch_id"].is_null());
+
+    let (recommit, _) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;
+    assert_eq!(recommit, StatusCode::OK);
+}
 ```
 
 Add a `send_json_body` helper (POST/PUT JSON body → status + JSON), mirroring the `send` helper in `api/transactions.rs` tests.
@@ -2255,9 +2315,9 @@ Expected: all pass.
 
 ```markdown
 ## 2026-06-15 - Import Batch Rollback Semantics
-Decision: Rolling back an import batch deletes every transaction tagged with that `import_batch_id` in one transaction, then re-derives each affected instrument's remaining ledger. If any remaining row is no longer derivable (a later manual sell now oversells, or a split becomes invalid), the rollback is rejected with the offending transaction id and nothing is removed. Instruments created by the batch are left in place as harmless empty instruments.
-Context: Imports must be reversible, but a back-dated import can become load-bearing for later manual edits. Cleanup of empty instruments is not worth a dependency-tracking pass in v1.
-Consequences: A user must remove dependent manual transactions before rolling back an import they depend on. Empty-instrument cleanup is deferred.
+Decision: Rolling back an import batch deletes every transaction tagged with that `import_batch_id` in one transaction, then re-derives each affected instrument's remaining ledger. If any remaining row is no longer derivable (a later manual sell now oversells, or a split becomes invalid), the rollback is rejected with the offending transaction id and nothing is removed. When re-derivation passes, the now-empty `import_batches` row (carrying `raw_file_hash`) is deleted in the same transaction, so the same file can be re-imported afterwards without tripping the duplicate guard. Instruments created by the batch are left in place as harmless empty instruments.
+Context: Imports must be reversible, but a back-dated import can become load-bearing for later manual edits. A rolled-back file should be importable again without forcing `allow_duplicate`. Cleanup of empty instruments is not worth a dependency-tracking pass in v1.
+Consequences: A user must remove dependent manual transactions before rolling back an import they depend on. The batch id is not reusable after rollback. Empty-instrument cleanup is deferred.
 ```
 
 ## Task 4.5: Phase 4 verification and staging
@@ -2450,12 +2510,16 @@ interface State {
   fileName: string | null;
   preview: ImportPreview | null;
   result: ImportResult | null;
+  /// True once the user has explicitly chosen to override a duplicate file.
+  confirmingDuplicate: boolean;
   error: string | null;
 }
 
 type Action =
   | { type: "fileCleared" }
   | { type: "previewReady"; preview: ImportPreview; fileName: string }
+  | { type: "confirmDuplicate" }
+  | { type: "cancelDuplicate" }
   | { type: "committed"; result: ImportResult }
   | { type: "failed"; message: string }
   | { type: "reset" };
@@ -2463,21 +2527,25 @@ type Action =
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "fileCleared":
-      return { ...state, preview: null, result: null, error: null, fileName: null, phase: "idle" };
+      return { ...state, preview: null, result: null, error: null, fileName: null, confirmingDuplicate: false, phase: "idle" };
     case "previewReady":
-      return { ...state, phase: "previewReady", preview: action.preview, fileName: action.fileName, error: null };
+      return { ...state, phase: "previewReady", preview: action.preview, fileName: action.fileName, confirmingDuplicate: false, error: null };
+    case "confirmDuplicate":
+      return { ...state, confirmingDuplicate: true, error: null };
+    case "cancelDuplicate":
+      return { ...state, confirmingDuplicate: false };
     case "committed":
-      return { ...state, phase: "committed", result: action.result, error: null };
+      return { ...state, phase: "committed", result: action.result, confirmingDuplicate: false, error: null };
     case "failed":
       return { ...state, error: action.message };
     case "reset":
-      return { phase: "idle", fileName: null, preview: null, result: null, error: null };
+      return { phase: "idle", fileName: null, preview: null, result: null, confirmingDuplicate: false, error: null };
   }
 }
 
 export function ImportView() {
   const [state, dispatch] = useReducer(reducer, {
-    phase: "idle", fileName: null, preview: null, result: null, error: null,
+    phase: "idle", fileName: null, preview: null, result: null, confirmingDuplicate: false, error: null,
   });
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
   const previewImport = usePreviewImport();
@@ -2574,18 +2642,38 @@ export function ImportView() {
 
           {/* New-instruments list and warnings table follow the same table pattern. */}
 
+          {/* Duplicate override is a deliberate two-step confirmation, not a
+              single-click bypass: the first click only arms the override. */}
+          {isDuplicate && state.confirmingDuplicate ? (
+            <p className="form-error">
+              This file was already imported as batch {preview.duplicate_of_batch_id}. Importing again
+              will create a second, duplicate batch. Click “Import anyway” to confirm.
+            </p>
+          ) : null}
+
           <div className="form-actions">
             <button type="button" className="button secondary" onClick={() => { dispatch({ type: "reset" }); setFileBytes(null); }}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="button primary"
-              disabled={hasErrors || commitImport.isPending}
-              onClick={() => void onCommit(isDuplicate)}
-            >
-              {isDuplicate ? "Import anyway" : "Commit import"}
-            </button>
+            {isDuplicate && !state.confirmingDuplicate ? (
+              <button
+                type="button"
+                className="button outline danger"
+                disabled={hasErrors || commitImport.isPending}
+                onClick={() => dispatch({ type: "confirmDuplicate" })}
+              >
+                Import anyway…
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button primary"
+                disabled={hasErrors || commitImport.isPending}
+                onClick={() => void onCommit(isDuplicate)}
+              >
+                {isDuplicate ? "Import anyway" : "Commit import"}
+              </button>
+            )}
           </div>
         </>
       ) : null}
