@@ -254,11 +254,32 @@ fn summarize(report: &ParsedReport, split_current_position: Option<Decimal>) -> 
             fx_summary.row_count
         ),
     );
-    for model in &fx_summary.models {
+    push_line(
+        &mut output,
+        "- Sharesight Exchange Rate is interpreted as instrument currency per SEK; the import stores the inverse as SEK per instrument currency.",
+    );
+    push_line(
+        &mut output,
+        "- Residuals under the selected interpretation are expected from exported exchange-rate rounding and Avanza's buy/sell FX spread.",
+    );
+    push_line(&mut output, "");
+    push_line(&mut output, "### Selected Interpretation");
+    push_model_line(&mut output, &fx_summary.best_model, fx_summary.row_count);
+    push_line(&mut output, "");
+    push_line(&mut output, "### Candidate Cross-Checks");
+    push_line(
+        &mut output,
+        "These alternatives are printed only to show why they were rejected; large residuals here are diagnostic evidence, not import errors.",
+    );
+    for model in fx_summary
+        .models
+        .iter()
+        .filter(|model| model.label != fx_summary.best_model.label)
+    {
         push_line(
             &mut output,
             &format!(
-                "- {}: average absolute residual {} SEK; max absolute residual {} SEK.",
+                "- rejected, {}: average absolute residual {} SEK; max absolute residual {} SEK.",
                 model.label,
                 model.average_abs_residual(fx_summary.row_count),
                 model.max_abs_residual
@@ -267,7 +288,10 @@ fn summarize(report: &ParsedReport, split_current_position: Option<Decimal>) -> 
     }
     push_line(
         &mut output,
-        &format!("- Best observed interpretation: {}.", fx_summary.best_label),
+        &format!(
+            "- Best observed interpretation: {}.",
+            fx_summary.best_model.label
+        ),
     );
     push_line(&mut output, "");
     push_line(&mut output, "## Split Handling");
@@ -288,10 +312,10 @@ fn summarize(report: &ParsedReport, split_current_position: Option<Decimal>) -> 
 struct FxSummary {
     row_count: usize,
     models: Vec<FxModelResult>,
-    best_label: String,
+    best_model: FxModelResult,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FxModelResult {
     label: &'static str,
     max_abs_residual: Decimal,
@@ -336,17 +360,29 @@ fn fx_model_summary(trades: &[ParsedRow]) -> FxSummary {
         }
     }
 
-    let best_label = models
+    let best_model = models
         .iter()
         .min_by(|left, right| left.total_abs_residual.cmp(&right.total_abs_residual))
-        .map(|model| model.label.to_string())
-        .unwrap_or_else(|| "no FX model rows were available".to_string());
+        .cloned()
+        .unwrap_or_else(|| FxModelResult::new("no FX model rows were available"));
 
     FxSummary {
         row_count,
         models,
-        best_label,
+        best_model,
     }
+}
+
+fn push_model_line(output: &mut String, model: &FxModelResult, row_count: usize) {
+    push_line(
+        output,
+        &format!(
+            "- {}: average absolute residual {} SEK; max absolute residual {} SEK.",
+            model.label,
+            model.average_abs_residual(row_count),
+            model.max_abs_residual
+        ),
+    );
 }
 
 impl FxModelResult {

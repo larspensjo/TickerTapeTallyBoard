@@ -355,3 +355,14 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/lib.rs`, `backend/src/import/sharesight/`, `backend/examples/sharesight_import_spike.rs`; implements: Sharesight CSV Import Conventions.
+
+## 2026-06-15 - Sharesight FX diagnostics wording
+Clarified the Sharesight import spike summary so rejected FX interpretations are not presented like alarming findings.
+What changed:
+- Split the FX summary into the selected interpretation and candidate cross-checks.
+- Added wording that residuals under the selected interpretation are expected from exported exchange-rate rounding and Avanza's buy/sell FX spread.
+Observed:
+- Large residuals from rejected multiply-by-rate candidates are now labeled as diagnostic evidence, not import errors.
+Open question:
+- None.
+Refs: `backend/examples/sharesight_import_spike.rs`.
