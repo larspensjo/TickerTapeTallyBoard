@@ -57,7 +57,11 @@ CREATE TABLE market_data_refresh_runs (
     started_at  TEXT NOT NULL,
     finished_at TEXT,
     status      TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
-    message     TEXT
+    message     TEXT,
+    prices_written INTEGER NOT NULL DEFAULT 0,
+    fx_rates_written INTEGER NOT NULL DEFAULT 0,
+    unmapped_instruments INTEGER NOT NULL DEFAULT 0,
+    failed_items INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_market_data_refresh_runs_started_at

@@ -8,7 +8,7 @@ const SYNTHETIC: &[u8] = include_bytes!("fixtures/sharesight_synthetic.csv");
 const MALFORMED: &[u8] = b"not,a,sharesight,report\n";
 
 async fn test_state() -> AppState {
-    AppState::new(db::memory_pool().await.expect("memory pool"))
+    AppState::for_tests().await
 }
 
 async fn send_bytes(state: &AppState, uri: &str, body: &[u8]) -> (StatusCode, Value) {

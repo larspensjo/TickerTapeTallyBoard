@@ -7,6 +7,7 @@ use std::{
     fmt,
     sync::{Arc, Mutex},
 };
+use tokio::sync::Notify;
 
 pub mod frankfurter;
 pub mod yahoo;
@@ -28,6 +29,15 @@ impl MarketDataProvider {
             Self::Yahoo => "YAHOO",
             Self::TwelveData => "TWELVE_DATA",
             Self::Manual => "MANUAL",
+        }
+    }
+
+    pub fn from_db_str(value: &str) -> Option<Self> {
+        match value {
+            "YAHOO" => Some(Self::Yahoo),
+            "TWELVE_DATA" => Some(Self::TwelveData),
+            "MANUAL" => Some(Self::Manual),
+            _ => None,
         }
     }
 }
@@ -52,6 +62,15 @@ impl FxProvider {
             Self::Frankfurter => "FRANKFURTER",
             Self::Yahoo => "YAHOO",
             Self::Manual => "MANUAL",
+        }
+    }
+
+    pub fn from_db_str(value: &str) -> Option<Self> {
+        match value {
+            "FRANKFURTER" => Some(Self::Frankfurter),
+            "YAHOO" => Some(Self::Yahoo),
+            "MANUAL" => Some(Self::Manual),
+            _ => None,
         }
     }
 }
@@ -212,35 +231,6 @@ pub trait FxRateProvider: Send + Sync {
     ) -> ProviderResult<Vec<FxRate>>;
 }
 
-#[derive(Clone)]
-pub struct MarketDataProviders {
-    pub price_provider: Arc<dyn PriceProvider>,
-    pub fx_provider: Arc<dyn FxRateProvider>,
-}
-
-impl MarketDataProviders {
-    pub fn new<P, F>(price_provider: P, fx_provider: F) -> Self
-    where
-        P: PriceProvider + 'static,
-        F: FxRateProvider + 'static,
-    {
-        Self {
-            price_provider: Arc::new(price_provider),
-            fx_provider: Arc::new(fx_provider),
-        }
-    }
-
-    pub fn from_arcs(
-        price_provider: Arc<dyn PriceProvider>,
-        fx_provider: Arc<dyn FxRateProvider>,
-    ) -> Self {
-        Self {
-            price_provider,
-            fx_provider,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceHistoryRequest {
     pub symbol: String,
@@ -266,6 +256,7 @@ pub struct FakePriceProvider {
 struct FakePriceProviderState {
     responses: VecDeque<ProviderResult<Vec<DailyClose>>>,
     calls: Vec<PriceHistoryRequest>,
+    next_call_gate: Option<Arc<Notify>>,
 }
 
 impl FakePriceProvider {
@@ -286,6 +277,13 @@ impl FakePriceProvider {
             .expect("fake price provider mutex poisoned")
             .responses
             .push_back(response);
+    }
+
+    pub fn block_next_call_on(&self, gate: Arc<Notify>) {
+        self.state
+            .lock()
+            .expect("fake price provider mutex poisoned")
+            .next_call_gate = Some(gate);
     }
 
     pub fn calls(&self) -> Vec<PriceHistoryRequest> {
@@ -311,21 +309,31 @@ impl PriceProvider for FakePriceProvider {
         start: NaiveDate,
         end: NaiveDate,
     ) -> ProviderResult<Vec<DailyClose>> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("fake price provider mutex poisoned");
-        state.calls.push(PriceHistoryRequest {
-            symbol: symbol.to_owned(),
-            start,
-            end,
-        });
-        state.responses.pop_front().unwrap_or_else(|| {
-            Err(ProviderError::provider_error(
-                self.provider.as_str(),
-                format!("no fake price response configured for {symbol}"),
-            ))
-        })
+        let (gate, response) = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("fake price provider mutex poisoned");
+            state.calls.push(PriceHistoryRequest {
+                symbol: symbol.to_owned(),
+                start,
+                end,
+            });
+            let gate = state.next_call_gate.take();
+            let response = state.responses.pop_front().unwrap_or_else(|| {
+                Err(ProviderError::provider_error(
+                    self.provider.as_str(),
+                    format!("no fake price response configured for {symbol}"),
+                ))
+            });
+            (gate, response)
+        };
+
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+
+        response
     }
 }
 
@@ -420,7 +428,6 @@ mod tests {
     async fn fake_providers_record_calls_and_return_queued_results() {
         let price = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
         let fx = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
-        let providers = MarketDataProviders::new(price.clone(), fx.clone());
 
         price.push_response(Ok(vec![DailyClose {
             provider: MarketDataProvider::Yahoo,
@@ -437,8 +444,7 @@ mod tests {
             rate: dec!(9.47),
         }]));
 
-        let prices = providers
-            .price_provider
+        let prices = price
             .daily_history(
                 "MSFT",
                 NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
@@ -448,8 +454,7 @@ mod tests {
             .expect("fake price call should succeed");
         assert_eq!(prices.len(), 1);
 
-        let rates = providers
-            .fx_provider
+        let rates = fx
             .fx_history(
                 "USD",
                 "SEK",

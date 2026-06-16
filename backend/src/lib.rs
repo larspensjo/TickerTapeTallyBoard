@@ -10,5 +10,6 @@ pub mod db;
 pub mod domain;
 pub mod engine_logging;
 pub mod import;
+pub mod market_data;
 pub mod providers;
 pub mod state;

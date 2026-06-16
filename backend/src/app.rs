@@ -1,10 +1,15 @@
+use std::sync::Arc;
+
 use crate::{config::AppConfig, state::AppState};
 
 pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let address = config.socket_addr();
     let pool = crate::db::connect(config.database_url()).await?;
     crate::engine_info!("database ready at {}", config.database_url());
-    let state = AppState::new(pool);
+    let state = AppState::new(
+        pool,
+        Arc::new(crate::market_data::MarketDataService::live()),
+    );
     let router = if config.static_assets_dir().is_dir() {
         crate::engine_info!(
             "serving frontend assets from {}",

@@ -12,7 +12,6 @@ pub mod prices;
 pub mod provider_symbols;
 pub mod transactions;
 
-#[cfg(test)]
 pub mod testing;
 
 pub use pool::connect;

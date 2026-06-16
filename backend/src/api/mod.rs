@@ -4,6 +4,8 @@ mod health;
 mod holdings;
 mod import;
 mod instruments;
+mod prices;
+mod provider_symbols;
 mod root;
 mod transactions;
 
@@ -51,10 +53,16 @@ fn api_router() -> Router<AppState> {
             "/import/sharesight/rollback/{batch_id}",
             post(import::rollback),
         )
+        .route("/prices/refresh", post(prices::refresh))
+        .route("/prices/status", get(prices::status))
         .route("/holdings", get(holdings::list))
         .route(
             "/instruments",
             get(instruments::list).post(instruments::create),
+        )
+        .route(
+            "/instruments/{id}/provider-symbols/{provider}",
+            put(provider_symbols::update),
         )
         .route(
             "/transactions",

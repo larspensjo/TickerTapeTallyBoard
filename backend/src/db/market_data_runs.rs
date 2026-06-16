@@ -2,17 +2,31 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::db::RepoError;
 
-const LIST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message \
+const LIST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items \
     FROM market_data_refresh_runs ORDER BY started_at DESC, id DESC";
-const FIND_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message \
+const FIND_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items \
     FROM market_data_refresh_runs WHERE id = ?";
-const LATEST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message \
+const LATEST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items \
     FROM market_data_refresh_runs ORDER BY started_at DESC, id DESC LIMIT 1";
 const START_SQL: &str = "INSERT INTO market_data_refresh_runs (\"trigger\", started_at, status) \
-    VALUES (?, ?, 'RUNNING') RETURNING id, \"trigger\", started_at, finished_at, status, message";
+    VALUES (?, ?, 'RUNNING') RETURNING id, \"trigger\", started_at, finished_at, status, message, \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items";
 const FINISH_SQL: &str =
-    "UPDATE market_data_refresh_runs SET finished_at = ?, status = ?, message = ? \
-    WHERE id = ? RETURNING id, \"trigger\", started_at, finished_at, status, message";
+    "UPDATE market_data_refresh_runs SET finished_at = ?, status = ?, message = ?, \
+    prices_written = ?, fx_rates_written = ?, unmapped_instruments = ?, failed_items = ? \
+    WHERE id = ? RETURNING id, \"trigger\", started_at, finished_at, status, message, \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RefreshRunCounts {
+    pub prices_written: i64,
+    pub fx_rates_written: i64,
+    pub unmapped_instruments: i64,
+    pub failed_items: i64,
+}
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct RefreshRunRow {
@@ -22,6 +36,10 @@ pub struct RefreshRunRow {
     pub finished_at: Option<String>,
     pub status: String,
     pub message: Option<String>,
+    pub prices_written: i64,
+    pub fx_rates_written: i64,
+    pub unmapped_instruments: i64,
+    pub failed_items: i64,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<RefreshRunRow>, RepoError> {
@@ -65,11 +83,16 @@ pub async fn finish_run(
     finished_at: &str,
     status: &str,
     message: Option<&str>,
+    counts: RefreshRunCounts,
 ) -> Result<Option<RefreshRunRow>, RepoError> {
     let row = sqlx::query_as::<_, RefreshRunRow>(FINISH_SQL)
         .bind(finished_at)
         .bind(status)
         .bind(message)
+        .bind(counts.prices_written)
+        .bind(counts.fx_rates_written)
+        .bind(counts.unmapped_instruments)
+        .bind(counts.failed_items)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -97,6 +120,12 @@ mod tests {
             "2026-06-16T08:02:00Z",
             "SUCCEEDED",
             Some("refreshed 12 rows"),
+            RefreshRunCounts {
+                prices_written: 12,
+                fx_rates_written: 3,
+                unmapped_instruments: 1,
+                failed_items: 0,
+            },
         )
         .await
         .expect("finish should return a row")
@@ -106,6 +135,10 @@ mod tests {
             finished.finished_at.as_deref(),
             Some("2026-06-16T08:02:00Z")
         );
+        assert_eq!(finished.prices_written, 12);
+        assert_eq!(finished.fx_rates_written, 3);
+        assert_eq!(finished.unmapped_instruments, 1);
+        assert_eq!(finished.failed_items, 0);
 
         let second = start_run(&pool, "MANUAL", "2026-06-16T09:00:00Z")
             .await

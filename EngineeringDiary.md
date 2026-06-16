@@ -527,3 +527,20 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/providers/yahoo.rs`, `backend/src/providers/frankfurter.rs`, `backend/tests/fixtures/market_data/`; addresses: Phase 3.2 provider-boundary review
+
+## 2026-06-16 - Market data refresh service and HTTP endpoints
+Added the Phase 3.3 refresh coordinator, cache-readiness endpoints, manual provider-symbol corrections, and the follow-up review fixes.
+What changed:
+- Extended `AppState` with a cloneable `MarketDataService` handle and wired production startup to construct the live Yahoo/Frankfurter service.
+- Added `backend/src/market_data/refresh.rs` with panic-safe single-flight refresh coordination, launch/manual/backfill run tracking, persisted run counts, target gathering, provider-symbol seeding, price/FX upserts, and readiness snapshots.
+- Added `POST /api/prices/refresh`, `GET /api/prices/status`, and `PUT /api/instruments/{id}/provider-symbols/{provider}` with blank symbol validation.
+- Exposed the in-memory DB helper to integration tests and switched test state construction to fake market-data providers.
+- Added backend API tests for refresh, status, provider-symbol updates, and refresh error handling.
+Observed:
+- `cargo build` passed from `backend/`.
+- `cargo test` passed from `backend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/state.rs`, `backend/src/app.rs`, `backend/src/api/mod.rs`, `backend/src/api/prices.rs`, `backend/src/api/provider_symbols.rs`, `backend/src/market_data/refresh.rs`, `backend/src/lib.rs`, `backend/src/db/mod.rs`; implements: Market Data Service Injection And Single-Flight Refresh, Market Data Refresh Triggering
