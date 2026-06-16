@@ -107,7 +107,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Deliverable:** running unattended on the home PC.
 
 ### Backlog (post-v1, prioritized later)
-Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index benchmark) · stock splits & corporate actions handling · watchlist · CSV export · tax-lot (FIFO) realized-gain report · auth if ever exposed beyond LAN.
+Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index benchmark) · stock splits & corporate actions handling · watchlist · CSV export · tax-lot (FIFO) realized-gain report · command-based undo/redo with a visible activity/stack UI (see `docs/Design.CommandUndo.md`) · auth if ever exposed beyond LAN.
 
 ## 4. Risks & open questions
 
