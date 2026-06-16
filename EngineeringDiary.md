@@ -480,3 +480,21 @@ Observed:
 Open question:
 - "Instrument name" sort resolves to ticker symbol because that is the Instrument column's accessor; sorting by company name would need a different accessor.
 Refs: `frontend/src/components/HoldingsTable.tsx`, `frontend/package.json`.
+
+## 2026-06-16 - Market data persistence foundation
+Added the Phase 3.1 market-data schema and repository layer for provider symbols, cached prices, FX rates, and refresh-run metadata.
+What changed:
+- Added `backend/migrations/0002_create_market_data.sql` with provider-symbol, price, FX, and refresh-run tables plus the expected uniqueness and lookup indexes.
+- Added `backend/src/db/provider_symbols.rs`, `backend/src/db/prices.rs`, `backend/src/db/fx_rates.rs`, and `backend/src/db/market_data_runs.rs` with static SQL upserts and lookup helpers.
+- Extended `backend/src/db/mod.rs` to expose the new repositories.
+- Made provider-symbol reverse lookup return all matching mappings so duplicate provider symbols cannot be silently resolved to one instrument.
+- Typed provider-symbol `enabled` as a Rust `bool`, added row decode helpers for stored price/FX decimals and dates, and constrained `enabled` to 0/1 in the migration.
+- Added migrated in-memory SQLite integration tests covering idempotent upserts, latest/previous lookup boundaries, no-data cases, reverse-symbol ambiguity, and table constraints.
+Observed:
+- `cargo test` passed from `backend/`.
+- `cargo build` passed from `backend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/migrations/0002_create_market_data.sql`, `backend/src/db/provider_symbols.rs`, `backend/src/db/prices.rs`, `backend/src/db/fx_rates.rs`, `backend/src/db/market_data_runs.rs`, `backend/src/db/mod.rs`; implements: Phase 3.1 - Market Data Schema And Repositories.

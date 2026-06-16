@@ -4,8 +4,12 @@ use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
+pub mod fx_rates;
 pub mod import_batches;
 pub mod instruments;
+pub mod market_data_runs;
+pub mod prices;
+pub mod provider_symbols;
 pub mod transactions;
 
 #[cfg(test)]
