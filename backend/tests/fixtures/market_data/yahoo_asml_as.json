@@ -1,0 +1,22 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "EUR",
+          "symbol": "ASML.AS",
+          "gmtoffset": 7200
+        },
+        "timestamp": [1781074800, 1781161200, 1781247600],
+        "indicators": {
+          "quote": [
+            {
+              "close": [1507.199951171875, 1576.0, 1629.5999755859375]
+            }
+          ]
+        }
+      }
+    ],
+    "error": null
+  }
+}

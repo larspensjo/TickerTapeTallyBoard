@@ -5,9 +5,11 @@ edition = "2021"
 
 [dependencies]
 axum = "0.8"
+async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 csv = "1"
 log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 rust_decimal_macros = "1"
 serde = { version = "1", features = ["derive"] }

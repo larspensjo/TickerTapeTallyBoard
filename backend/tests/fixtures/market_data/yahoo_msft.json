@@ -1,0 +1,22 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "USD",
+          "symbol": "MSFT",
+          "gmtoffset": -14400
+        },
+        "timestamp": [1781098200, 1781184600, 1781271000],
+        "indicators": {
+          "quote": [
+            {
+              "close": [397.3599853515625, 390.3399963378906, 390.739990234375]
+            }
+          ]
+        }
+      }
+    ],
+    "error": null
+  }
+}

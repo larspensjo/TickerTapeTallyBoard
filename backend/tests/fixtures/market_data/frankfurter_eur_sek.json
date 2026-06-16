@@ -1,0 +1,20 @@
+[
+  {
+    "date": "2026-06-10",
+    "base": "EUR",
+    "quote": "SEK",
+    "rate": 10.8352
+  },
+  {
+    "date": "2026-06-11",
+    "base": "EUR",
+    "quote": "SEK",
+    "rate": 10.8911
+  },
+  {
+    "date": "2026-06-12",
+    "base": "EUR",
+    "quote": "SEK",
+    "rate": 10.9037
+  }
+]

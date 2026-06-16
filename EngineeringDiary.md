@@ -498,3 +498,32 @@ Observed:
 Open question:
 - None.
 Refs: `backend/migrations/0002_create_market_data.sql`, `backend/src/db/provider_symbols.rs`, `backend/src/db/prices.rs`, `backend/src/db/fx_rates.rs`, `backend/src/db/market_data_runs.rs`, `backend/src/db/mod.rs`; implements: Phase 3.1 - Market Data Schema And Repositories.
+
+## 2026-06-16 - Market data provider boundary
+Added the provider trait boundary plus live Yahoo/Frankfurter clients, fake providers, and fixture-backed parser tests for the market-data layer.
+What changed:
+- Added `PriceProvider` and `FxRateProvider` traits, provider enums, normalized market-data structs, and a shared provider container in `backend/src/providers/mod.rs`.
+- Implemented Yahoo chart and Frankfurter rate clients with pure parser helpers in `backend/src/providers/yahoo.rs` and `backend/src/providers/frankfurter.rs`.
+- Added fake provider implementations for later service tests and recorded synthetic JSON fixtures for `MSFT`, `ASML.AS`, `USD/SEK`, and `EUR/SEK`.
+Observed:
+- `cargo test` passed from `backend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/providers/mod.rs`, `backend/src/providers/yahoo.rs`, `backend/src/providers/frankfurter.rs`, `backend/tests/fixtures/market_data/`; implements: Market Data Provider Dispatch And HTTP Client
+
+## 2026-06-16 - Provider boundary review fixes
+Corrected the Frankfurter parser contract and tightened provider error handling after review feedback.
+What changed:
+- Switched Frankfurter parsing to the real bare-array response shape and updated the FX fixtures to match the live API.
+- Added contextual logging for transport and body-read failures in both live clients so refresh failures are visible in engine logs.
+- Added explicit HTTP client timeouts and a browser-like user agent to the live provider clients.
+- Applied Yahoo `gmtoffset` when converting daily timestamps to dates and kept symbol URLs path-safe.
+Observed:
+- `cargo test` passed from `backend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/providers/yahoo.rs`, `backend/src/providers/frankfurter.rs`, `backend/tests/fixtures/market_data/`; addresses: Phase 3.2 provider-boundary review
