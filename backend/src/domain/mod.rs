@@ -5,10 +5,16 @@
 
 mod position;
 mod transaction;
+mod valuation;
 
 #[allow(unused_imports)]
 pub use position::{derive_position, BaseCostBasis, Position, UnavailableReason};
 #[allow(unused_imports)]
 pub use transaction::{
     validate, LedgerError, LedgerTransaction, ProposedTransaction, TransactionKind, ValidationError,
+};
+#[allow(unused_imports)]
+pub use valuation::{
+    summarize_holdings, value_position, Availability, DataFreshness, FxCandidate, FxSnapshot,
+    PriceCandidate, PriceSnapshot, ValuationReason, ValuationSummary, ValuedHolding,
 };

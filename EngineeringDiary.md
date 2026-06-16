@@ -544,3 +544,21 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/state.rs`, `backend/src/app.rs`, `backend/src/api/mod.rs`, `backend/src/api/prices.rs`, `backend/src/api/provider_symbols.rs`, `backend/src/market_data/refresh.rs`, `backend/src/lib.rs`, `backend/src/db/mod.rs`; implements: Market Data Service Injection And Single-Flight Refresh, Market Data Refresh Triggering
+
+## 2026-06-16 - Pure valuation engine
+Added the phase 3.4 valuation domain so open positions can be valued from cached price and FX snapshots without provider or HTTP coupling.
+What changed:
+- Added `backend/src/domain/valuation.rs` with available/unavailable wrappers, snapshot freshness, row valuation, and portfolio summary aggregation.
+- Exported the valuation types from `backend/src/domain/mod.rs` so later API and UI work can consume them.
+- Limited stale price/FX reasons to latest snapshots while still preserving missing previous close/FX reasons for day-change calculations.
+- Made row and summary day-change percentages use previous market value as the denominator.
+- Guarded zero previous-market-value and zero cost-basis percent cases with explicit unavailable reasons.
+- Added focused unit tests covering USD and EUR FX direction, SEK identity FX, stale pricing, missing price/FX handling, missing previous close/FX, propagated base-cost unavailability, split-adjusted quantity, summary exclusion behavior, zero-denominator handling, and the weekday-only holiday limitation.
+Observed:
+- `cargo test valuation --lib` passed for 15 valuation tests.
+- `cargo test` passed across the full backend suite.
+- `cargo clippy --all-targets -- -D warnings` passed.
+- `cargo fmt` completed successfully.
+Open question:
+- Phase 3.5/3.7 still need to decide whether valuation date should be latest available market date or today before the market close.
+Refs: `backend/src/domain/valuation.rs`, `backend/src/domain/mod.rs`; implements: Phase 3.4 Pure Valuation Engine.
