@@ -454,3 +454,16 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/import/sharesight/plan.rs`; implements: Import Duplicate-Row Warning Semantics.
+
+## 2026-06-16 - Import success card replaces stale preview after commit
+Fixed the Import view rendering the preview block (with an enabled "Commit import" button) alongside the post-commit success summary, and gave the success state explicit next actions.
+What changed:
+- The `committed` reducer action now clears `preview`, so the preview/commit block stops rendering once a batch is committed.
+- The committed success card gained primary "View transactions" and secondary "Import another file" buttons next to the existing "Undo this import"; the former navigates to the board's Transactions view, the latter resets the Import view to the file picker.
+- `ImportView` takes an `onViewTransactions` callback; `App` supplies it by dispatching the board + transactions view selections, keeping navigation ownership in `App`.
+Observed:
+- The Import view stays mounted (toggled via `hidden`), so navigating to Transactions leaves the success card intact and Undo reachable on return; only "Import another file" resets it.
+- `npm run check` and `npm run fmt` pass from `frontend/`.
+Open question:
+- None.
+Refs: `frontend/src/components/ImportView.tsx`, `frontend/src/App.tsx`, `frontend/package.json`.

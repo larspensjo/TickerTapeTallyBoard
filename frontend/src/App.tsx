@@ -92,6 +92,11 @@ export function App() {
   const holdingsCount = holdingsQuery.data?.length ?? 0;
   const transactionsCount = transactionsQuery.data?.length ?? 0;
 
+  function showTransactions() {
+    dispatch({ type: "appViewSelected", appView: "board" });
+    dispatch({ type: "boardViewSelected", boardView: "transactions" });
+  }
+
   async function handleDelete(id: number) {
     setDeleteError(null);
     try {
@@ -319,7 +324,7 @@ export function App() {
         </div>
 
         <div hidden={uiState.appView !== "import"}>
-          <ImportView />
+          <ImportView onViewTransactions={showTransactions} />
         </div>
       </main>
     </div>

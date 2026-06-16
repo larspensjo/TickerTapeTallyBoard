@@ -75,6 +75,7 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         phase: "committed",
+        preview: null,
         result: action.result,
         confirmingDuplicate: false,
         error: null,
@@ -107,7 +108,11 @@ function noteKey(note: ImportRowNote, index: number) {
   return `${note.code}-${note.row ?? "none"}-${index}`;
 }
 
-export function ImportView() {
+interface ImportViewProps {
+  onViewTransactions: () => void;
+}
+
+export function ImportView({ onViewTransactions }: ImportViewProps) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
   const previewImport = usePreviewImport();
@@ -428,16 +433,37 @@ export function ImportView() {
                 <strong className="number">{state.result.counts.splits}</strong>
               </span>
             </div>
-            <button
-              type="button"
-              className="button outline danger"
-              onClick={() => {
-                void onRollback(state.result?.batch_id ?? 0);
-              }}
-              disabled={rollbackImport.isPending}
-            >
-              Undo this import
-            </button>
+            <div className="form-actions">
+              <button
+                type="button"
+                className="button primary"
+                onClick={onViewTransactions}
+                disabled={rollbackImport.isPending}
+              >
+                View transactions
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => {
+                  dispatch({ type: "reset" });
+                  setFileBytes(null);
+                }}
+                disabled={rollbackImport.isPending}
+              >
+                Import another file
+              </button>
+              <button
+                type="button"
+                className="button outline danger"
+                onClick={() => {
+                  void onRollback(state.result?.batch_id ?? 0);
+                }}
+                disabled={rollbackImport.isPending}
+              >
+                Undo this import
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
