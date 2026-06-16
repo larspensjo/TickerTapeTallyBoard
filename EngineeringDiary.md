@@ -441,3 +441,16 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/import/sharesight/parser.rs`, `frontend/src/App.tsx`.
+
+## 2026-06-16 - Narrow import duplicate warning to identical rows
+Replaced the import planner's same-day grouping warning with a strict duplicate-row check.
+What changed:
+- The duplicate group key now includes quantity, price, and value, so only byte-equivalent rows are flagged; the warning code is `duplicate_row` ("identical row appears N times").
+- Two same-day, same-direction trades that differ in quantity or price (legitimate partial fills) no longer raise a warning.
+- Updated the regression tests: identical rows warn; distinct same-day fills stay silent.
+Observed:
+- A real export with two distinct same-day Snowflake buys (different quantity and price) previously raised one `same_day_multiple` warning; under the new rule it produces zero warnings.
+- `cargo test --lib`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` pass from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/import/sharesight/plan.rs`; implements: Import Duplicate-Row Warning Semantics.

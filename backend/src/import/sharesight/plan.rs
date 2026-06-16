@@ -189,7 +189,19 @@ pub fn build_plan(report: &ParsedReport, ctx: &PlanContext) -> ImportPlan {
         }
     }
 
-    let mut groups: BTreeMap<(String, String, String, &'static str), Vec<usize>> = BTreeMap::new();
+    // Flag only byte-equivalent rows (same instrument, date, direction, and
+    // identical quantity/price/value) as likely duplicate export lines.
+    // Distinct same-day fills differ in quantity or price and stay silent.
+    type DuplicateKey = (
+        String,
+        String,
+        String,
+        &'static str,
+        Decimal,
+        Decimal,
+        Decimal,
+    );
+    let mut groups: BTreeMap<DuplicateKey, Vec<usize>> = BTreeMap::new();
     for parsed in &report.rows {
         groups
             .entry((
@@ -197,6 +209,9 @@ pub fn build_plan(report: &ParsedReport, ctx: &PlanContext) -> ImportPlan {
                 parsed.code.to_lowercase(),
                 parsed.trade_date.to_string(),
                 parsed.kind.as_str(),
+                parsed.quantity,
+                parsed.price,
+                parsed.value,
             ))
             .or_default()
             .push(parsed.source_row_number);
@@ -204,8 +219,8 @@ pub fn build_plan(report: &ParsedReport, ctx: &PlanContext) -> ImportPlan {
     for rows in groups.values().filter(|rows| rows.len() > 1) {
         warnings.push(RowNote {
             row: rows.first().copied(),
-            code: "same_day_multiple",
-            message: format!("{} same-day same-type rows kept distinct", rows.len()),
+            code: "duplicate_row",
+            message: format!("identical row appears {} times", rows.len()),
         });
     }
 
@@ -369,16 +384,34 @@ mod tests {
     }
 
     #[test]
-    fn same_day_same_instrument_same_type_warns() {
+    fn identical_rows_warn_as_duplicate() {
         let csv = concat!(
             "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
             "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
             "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"1250,00\",All Trades,\n",
-            "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,2,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"250,00\",All Trades,\n",
+            "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"1250,00\",All Trades,\n",
         );
         let plan = plan_for(csv, PlanContext::default());
-        assert!(plan.warnings.iter().any(|w| {
-            w.code == "same_day_multiple" && w.row == Some(3) && w.message.contains("2")
-        }));
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|w| { w.code == "duplicate_row" && w.row == Some(3) && w.message.contains("2") }));
+    }
+
+    #[test]
+    fn distinct_same_day_fills_do_not_warn() {
+        // Two same-day same-direction buys at different quantity/price are
+        // legitimate partial fills, not duplicates: no warning expected.
+        let csv = concat!(
+            "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
+            "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+            "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"1250,00\",All Trades,\n",
+            "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,2,\"12,55\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"251,00\",All Trades,\n",
+        );
+        let plan = plan_for(csv, PlanContext::default());
+        assert!(
+            !plan.warnings.iter().any(|w| w.code == "duplicate_row"),
+            "distinct fills must not be flagged as duplicates"
+        );
     }
 }
