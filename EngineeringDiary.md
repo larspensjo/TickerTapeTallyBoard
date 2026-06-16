@@ -467,3 +467,16 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/src/components/ImportView.tsx`, `frontend/src/App.tsx`, `frontend/package.json`.
+
+## 2026-06-16 - Holdings table column clarity and default sort
+Clarified the holdings money-column headers, grouped the two per-share averages, and made the table default-sort by instrument.
+What changed:
+- Renamed headers to disambiguate per-share vs total: `Avg cost` -> `Avg cost/share`, `Avg cost (SEK)` -> `Avg cost/share (SEK)`, `Cost basis` -> `Cost basis (total)`.
+- Reordered columns to `Instrument | Qty | Avg cost/share | Avg cost/share (SEK) | Cost basis (total)` so the per-share averages sit together and the total is the rightmost money column.
+- Set the table's default sorting to the instrument column ascending (sorts by ticker symbol, the column's accessor value).
+Observed:
+- Column ids are unchanged, so the `numericColumns` alignment set and the SEK display/`FX missing` branch still apply to the right cells.
+- `npm run check` and `npm run fmt` pass from `frontend/`.
+Open question:
+- "Instrument name" sort resolves to ticker symbol because that is the Instrument column's accessor; sorting by company name would need a different accessor.
+Refs: `frontend/src/components/HoldingsTable.tsx`, `frontend/package.json`.

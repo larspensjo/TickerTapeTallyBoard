@@ -32,18 +32,13 @@ const columns = [
     cell: (info) => info.getValue(),
   }),
   columnHelper.accessor("average_cost_native", {
-    header: "Avg cost",
-    cell: (info) =>
-      `${info.row.original.instrument.currency} ${info.getValue()}`,
-  }),
-  columnHelper.accessor("cost_basis_native", {
-    header: "Cost basis",
+    header: "Avg cost/share",
     cell: (info) =>
       `${info.row.original.instrument.currency} ${info.getValue()}`,
   }),
   columnHelper.display({
     id: "base",
-    header: "Avg cost (SEK)",
+    header: "Avg cost/share (SEK)",
     cell: (info) => {
       const holding = info.row.original;
       if (holding.base.status === "available") {
@@ -62,6 +57,11 @@ const columns = [
       );
     },
   }),
+  columnHelper.accessor("cost_basis_native", {
+    header: "Cost basis (total)",
+    cell: (info) =>
+      `${info.row.original.instrument.currency} ${info.getValue()}`,
+  }),
 ];
 
 const numericColumns = new Set([
@@ -72,7 +72,9 @@ const numericColumns = new Set([
 ]);
 
 export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "instrument", desc: false },
+  ]);
   const table = useReactTable({
     data: holdings,
     columns,
