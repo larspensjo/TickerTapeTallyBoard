@@ -87,7 +87,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - Derived holdings endpoint: current positions, average cost, per-currency cost basis.
 - **Deliverable:** usable manual portfolio tracker (no live prices yet).
 
-### Phase 2 — Sharesight import (~1 week)
+### Phase 2 — Sharesight import ✅ Done (2026-06-15)
 - File upload endpoint + parser (`calamine`/CSV), instrument matching/creation, batch tagging, dry-run preview UI ("N trades, M new instruments, K warnings") before commit, rollback per batch.
 - **Deliverable:** full historical portfolio loaded from Sharesight; spot-check positions against Sharesight's own numbers as acceptance test.
 
