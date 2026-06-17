@@ -1,14 +1,17 @@
 use axum::extract::State;
 use axum::Json;
+use chrono::Local;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::api::error::ApiError;
 use crate::api::instruments::InstrumentResponse;
-use crate::db::instruments::{self, InstrumentRow};
-use crate::db::transactions;
-use crate::domain::{self, BaseCostBasis, Position, UnavailableReason};
+use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
+use crate::domain::{
+    derive_position, value_position, Availability, BaseCostBasis, FxCandidate, Position,
+    PriceCandidate, UnavailableReason, ValuationReason,
+};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -18,6 +21,23 @@ pub struct HoldingResponse {
     pub cost_basis_native: String,
     pub average_cost_native: String,
     pub base: BaseResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valuation: Option<ValuationField>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValuationField {
+    pub market_value_base: AvailabilityResponse<String>,
+    pub unrealized_gain_base: AvailabilityResponse<String>,
+    pub unrealized_gain_percent: AvailabilityResponse<String>,
+    pub day_change_base: AvailabilityResponse<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AvailabilityResponse<T> {
+    Available { value: T },
+    Unavailable { reasons: Vec<String> },
 }
 
 #[derive(Debug, Serialize)]
@@ -40,7 +60,11 @@ pub struct ReasonResponse {
 }
 
 impl HoldingResponse {
-    fn build(instrument: &InstrumentRow, position: &Position) -> Result<Self, ApiError> {
+    fn build(
+        instrument: &instruments::InstrumentRow,
+        position: &Position,
+        valuation: Option<ValuationField>,
+    ) -> Result<Self, ApiError> {
         let average_cost_native = position
             .average_cost_native()
             .ok_or_else(|| ApiError::internal("holding with non-positive quantity"))
@@ -77,6 +101,7 @@ impl HoldingResponse {
             cost_basis_native: money_string(position.cost_basis_native),
             average_cost_native,
             base,
+            valuation,
         })
     }
 }
@@ -96,8 +121,41 @@ fn money_string(value: Decimal) -> String {
     }
 }
 
+fn serialize_availability<T, F>(value: &Availability<T>, f: F) -> AvailabilityResponse<String>
+where
+    F: Fn(&T) -> String,
+{
+    match value {
+        Availability::Available(v) => AvailabilityResponse::Available { value: f(v) },
+        Availability::Unavailable { reasons } => AvailabilityResponse::Unavailable {
+            reasons: reasons.iter().map(serialize_valuation_reason).collect(),
+        },
+    }
+}
+
+fn serialize_valuation_reason(reason: &ValuationReason) -> String {
+    match reason {
+        ValuationReason::MissingPrice => "missing_price".to_string(),
+        ValuationReason::MissingFx => "missing_fx".to_string(),
+        ValuationReason::MissingPreviousClose => "missing_previous_close".to_string(),
+        ValuationReason::MissingPreviousFx => "missing_previous_fx".to_string(),
+        ValuationReason::StalePrice { trading_days } => {
+            format!("stale_price_{}_days", trading_days)
+        }
+        ValuationReason::StaleFx { trading_days } => {
+            format!("stale_fx_{}_days", trading_days)
+        }
+        ValuationReason::ZeroCostBasis => "zero_cost_basis".to_string(),
+        ValuationReason::ZeroPreviousMarketValue => "zero_previous_market_value".to_string(),
+        ValuationReason::BaseCostBasisUnavailable { .. } => {
+            "base_cost_basis_unavailable".to_string()
+        }
+    }
+}
+
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingResponse>>, ApiError> {
-    let instruments = instruments::list(&state.pool).await?;
+    let valuation_date = Local::now().naive_local().date();
+    let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
     let mut ledgers = BTreeMap::new();
 
@@ -110,9 +168,9 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingRespo
 
     let mut holdings = Vec::new();
 
-    for instrument in &instruments {
+    for instrument in &instruments_list {
         let ledger = ledgers.remove(&instrument.id).unwrap_or_default();
-        let position = domain::derive_position(&ledger).map_err(|error| {
+        let position = derive_position(&ledger).map_err(|error| {
             ApiError::internal(format!(
                 "inconsistent stored ledger for instrument {}: {error:?}",
                 instrument.id
@@ -121,7 +179,129 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingRespo
         if position.quantity == 0 {
             continue;
         }
-        holdings.push(HoldingResponse::build(instrument, &position)?);
+
+        // Fetch valuation data if available
+        let valuation = if let Ok(Some(ps_row)) =
+            provider_symbols::find_by_instrument_provider(&state.pool, instrument.id, "YAHOO").await
+        {
+            if ps_row.enabled {
+                let latest = prices::find_latest_on_or_before(
+                    &state.pool,
+                    instrument.id,
+                    "YAHOO",
+                    valuation_date,
+                )
+                .await?
+                .and_then(|row| {
+                    let date = row.date_value().ok()?;
+                    let close = row.close_decimal().ok()?;
+                    Some(PriceCandidate {
+                        date,
+                        close,
+                        currency: row.currency,
+                    })
+                });
+
+                let previous = if let Some(ref latest) = latest {
+                    prices::find_previous_before(&state.pool, instrument.id, "YAHOO", latest.date)
+                        .await?
+                        .and_then(|row| {
+                            let date = row.date_value().ok()?;
+                            let close = row.close_decimal().ok()?;
+                            Some(PriceCandidate {
+                                date,
+                                close,
+                                currency: row.currency,
+                            })
+                        })
+                } else {
+                    None
+                };
+
+                // Fetch FX rates for non-SEK instruments
+                let (latest_fx, previous_fx) = if instrument.currency.eq_ignore_ascii_case("SEK") {
+                    (None, None)
+                } else {
+                    let latest = fx_rates::find_latest_on_or_before(
+                        &state.pool,
+                        &instrument.currency,
+                        "SEK",
+                        "YAHOO",
+                        valuation_date,
+                    )
+                    .await?
+                    .and_then(|row| {
+                        let date = row.date_value().ok()?;
+                        let rate = row.rate_decimal().ok()?;
+                        Some(FxCandidate {
+                            date,
+                            rate,
+                            base: row.base,
+                            quote: row.quote,
+                        })
+                    });
+
+                    let previous = if let Some(ref latest) = latest {
+                        fx_rates::find_previous_before(
+                            &state.pool,
+                            &instrument.currency,
+                            "SEK",
+                            "YAHOO",
+                            latest.date,
+                        )
+                        .await?
+                        .and_then(|row| {
+                            let date = row.date_value().ok()?;
+                            let rate = row.rate_decimal().ok()?;
+                            Some(FxCandidate {
+                                date,
+                                rate,
+                                base: row.base,
+                                quote: row.quote,
+                            })
+                        })
+                    } else {
+                        None
+                    };
+
+                    (latest, previous)
+                };
+
+                let valued_holding = value_position(
+                    &position,
+                    &instrument.currency,
+                    valuation_date,
+                    latest,
+                    previous,
+                    latest_fx,
+                    previous_fx,
+                );
+
+                Some(ValuationField {
+                    market_value_base: serialize_availability(
+                        &valued_holding.market_value_base,
+                        |v| money_string(*v),
+                    ),
+                    unrealized_gain_base: serialize_availability(
+                        &valued_holding.unrealized_gain_base,
+                        |v| money_string(*v),
+                    ),
+                    unrealized_gain_percent: serialize_availability(
+                        &valued_holding.unrealized_gain_percent,
+                        |v| format!("{:.2}", v),
+                    ),
+                    day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
+                        money_string(*v)
+                    }),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        holdings.push(HoldingResponse::build(instrument, &position, valuation)?);
     }
 
     Ok(Json(holdings))
