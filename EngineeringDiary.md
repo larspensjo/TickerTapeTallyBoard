@@ -562,3 +562,21 @@ Observed:
 Open question:
 - Phase 3.5/3.7 still need to decide whether valuation date should be latest available market date or today before the market close.
 Refs: `backend/src/domain/valuation.rs`, `backend/src/domain/mod.rs`; implements: Phase 3.4 Pure Valuation Engine.
+
+## 2026-06-17 - Gains and valuation API endpoints
+Added Phase 3.5 gains and valuation API endpoints, connecting the valuation domain to the frontend.
+What changed:
+- Added `GET /api/gains` endpoint that fetches all instruments, derives positions, fetches market data (prices/FX) from the database, calls `value_position()`, aggregates with `summarize_holdings()`, and returns JSON-serialized valuations with per-instrument rows and portfolio summary.
+- Extended `GET /api/holdings` to include optional `valuation` field containing market value, unrealized gain, day change, and their percent equivalents, keeping all existing fields stable for backward compatibility.
+- Serialized `Availability<T>` and `ValuationReason` types to JSON tagged unions with stable reason codes.
+- Bumped backend version to `0.4.0` and frontend version to `0.5.0` to reflect the new visible API.
+- Added registration of `/api/gains` route in `backend/src/api/mod.rs` and created a new `backend/src/api/gains.rs` module.
+- Added a basic integration test for empty portfolio on the gains endpoint.
+Observed:
+- All 135 backend tests pass, including the new empty-portfolio gains test.
+- `cargo clippy --all-targets -- -D warnings` passed without warnings after fixing redundant closure formatting.
+- `cargo fmt` completed successfully.
+- `npm run check` and `npm run build` pass on the frontend (no frontend changes in this phase).
+Open question:
+- Frontend integration with the new gains endpoint and valuation data in holdings is deferred to Phase 3.6.
+Refs: `backend/src/api/gains.rs`, `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `backend/Cargo.toml`, `frontend/package.json`; implements: Phase 3.5 - Gains And Holdings API.

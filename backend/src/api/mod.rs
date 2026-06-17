@@ -1,5 +1,6 @@
 mod cors;
 mod error;
+mod gains;
 mod health;
 mod holdings;
 mod import;
@@ -56,6 +57,7 @@ fn api_router() -> Router<AppState> {
         .route("/prices/refresh", post(prices::refresh))
         .route("/prices/status", get(prices::status))
         .route("/holdings", get(holdings::list))
+        .route("/gains", get(gains::list))
         .route(
             "/instruments",
             get(instruments::list).post(instruments::create),
