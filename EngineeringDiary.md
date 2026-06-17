@@ -631,3 +631,17 @@ Observed:
 Open question:
 - None.
 Refs: `backend/migrations/0003_add_instrument_isin.sql`, `backend/migrations/0004_widen_import_batch_source.sql`, `backend/src/db/instruments.rs`, `backend/src/api/import.rs`, `backend/tests/import_api.rs`.
+
+## 2026-06-17 - Shared import decimal normalization
+Extracted the CSV decimal normalization used by the Sharesight importer into a shared import text helper.
+What changed:
+- Added `backend/src/import/text.rs` with `normalize_decimal` and focused unit coverage for comma decimals, Unicode minus, and NBSP stripping.
+- Exposed the helper from `backend/src/import/mod.rs`.
+- Switched the Sharesight parser to call the shared helper and removed its private normalization functions.
+Observed:
+- `cargo test --lib import::sharesight::parser` passed.
+- `cargo test --lib import::text` passed.
+- `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/import/text.rs`, `backend/src/import/mod.rs`, `backend/src/import/sharesight/parser.rs`.

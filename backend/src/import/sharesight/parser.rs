@@ -287,7 +287,7 @@ fn decimal_field(
     row_number: usize,
 ) -> Result<Decimal, ParseError> {
     let raw = field(record, index, label, row_number)?;
-    let normalized = normalize_decimal(raw);
+    let normalized = crate::import::text::normalize_decimal(raw);
     if normalized.is_empty() {
         return Err(ParseError::row(
             row_number,
@@ -312,7 +312,7 @@ fn optional_decimal_field(
     row_number: usize,
 ) -> Result<Option<Decimal>, ParseError> {
     let raw = field(record, index, label, row_number)?;
-    let normalized = normalize_decimal(raw);
+    let normalized = crate::import::text::normalize_decimal(raw);
     if normalized.is_empty() {
         return Ok(None);
     }
@@ -354,17 +354,6 @@ fn field<'a>(
             format!("missing field {label} at index {index}"),
         )
     })
-}
-
-fn normalize_decimal(value: &str) -> String {
-    normalize_text(value)
-        .replace('\u{2212}', "-")
-        .replace([','], ".")
-        .replace([' ', '\u{00a0}', '\u{202f}'], "")
-}
-
-fn normalize_text(value: &str) -> &str {
-    value.trim()
 }
 
 pub fn sanitize_report_title(title: &str) -> String {
