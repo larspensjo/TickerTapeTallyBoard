@@ -3,6 +3,9 @@ use csv::{ReaderBuilder, StringRecord};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
+use crate::import::core::outcome::ParseError;
+use crate::import::text::normalize_decimal;
+
 const HEADER_MARKER: &str = "Market";
 const REPORT_TITLE_MARKER: &str = "All Trades Report between";
 
@@ -60,43 +63,6 @@ impl ParsedKind {
         }
     }
 }
-
-/// A parse-stage failure with optional row context and a stable code.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParseError {
-    pub row: Option<usize>,
-    pub code: &'static str,
-    pub message: String,
-}
-
-impl ParseError {
-    pub fn header(message: impl Into<String>) -> Self {
-        Self {
-            row: None,
-            code: "header_not_found",
-            message: message.into(),
-        }
-    }
-
-    pub fn row(row: usize, code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            row: Some(row),
-            code,
-            message: message.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.row {
-            Some(row) => write!(f, "row {row}: {} ({})", self.message, self.code),
-            None => write!(f, "{} ({})", self.message, self.code),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
 
 pub fn parse_report(bytes: &[u8]) -> Result<ParsedReport, ParseError> {
     let mut reader = ReaderBuilder::new()
@@ -287,7 +253,7 @@ fn decimal_field(
     row_number: usize,
 ) -> Result<Decimal, ParseError> {
     let raw = field(record, index, label, row_number)?;
-    let normalized = crate::import::text::normalize_decimal(raw);
+    let normalized = normalize_decimal(raw);
     if normalized.is_empty() {
         return Err(ParseError::row(
             row_number,
@@ -312,7 +278,7 @@ fn optional_decimal_field(
     row_number: usize,
 ) -> Result<Option<Decimal>, ParseError> {
     let raw = field(record, index, label, row_number)?;
-    let normalized = crate::import::text::normalize_decimal(raw);
+    let normalized = normalize_decimal(raw);
     if normalized.is_empty() {
         return Ok(None);
     }

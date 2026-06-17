@@ -2,28 +2,8 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
 use crate::domain::{ProposedTransaction, TransactionKind};
+use crate::import::core::outcome::{InstrumentKey, MappedRow};
 use crate::import::sharesight::parser::{ParsedKind, ParsedRow};
-
-/// Instrument identity + display fields from one row.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstrumentKey {
-    pub exchange: String,
-    pub symbol: String,
-    pub name: String,
-    pub currency: String,
-}
-
-/// A row mapped to a proposed ledger transaction plus audit/warning context.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MappedRow {
-    pub source_row_number: usize,
-    pub kind: ParsedKind,
-    pub instrument: InstrumentKey,
-    pub proposed: ProposedTransaction,
-    pub source_value: Decimal,
-    /// True when a Buy/Sell had a blank or non-positive Exchange Rate.
-    pub fx_warning: bool,
-}
 
 /// A mapping-stage failure (parse-level errors are handled by the parser).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +19,7 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
         symbol: row.code.trim().to_string(),
         name: row.name.trim().to_string(),
         currency: row.instrument_currency.trim().to_string(),
+        isin: None,
     };
 
     let kind = match row.kind {
@@ -55,7 +36,6 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
             let brokerage_base = sek_brokerage(row)?;
             return Ok(MappedRow {
                 source_row_number: row.source_row_number,
-                kind: row.kind,
                 instrument,
                 proposed: ProposedTransaction {
                     kind,
@@ -66,7 +46,9 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
                     fx_rate_to_base,
                     brokerage_base,
                 },
-                source_value: row.value,
+                source_value: Some(row.value),
+                source_currency: Some("SEK".to_string()),
+                note: non_empty_comment(row),
                 fx_warning,
             });
         }
@@ -83,10 +65,11 @@ pub fn map_row(row: &ParsedRow) -> Result<MappedRow, MapError> {
 
     Ok(MappedRow {
         source_row_number: row.source_row_number,
-        kind: row.kind,
         instrument,
         proposed,
-        source_value: row.value,
+        source_value: Some(row.value),
+        source_currency: None,
+        note: non_empty_comment(row),
         fx_warning: false,
     })
 }
@@ -140,6 +123,12 @@ fn sek_brokerage(row: &ParsedRow) -> Result<Option<Decimal>, MapError> {
     Ok(Some(row.brokerage))
 }
 
+/// The trimmed `Comments` cell as an optional note.
+fn non_empty_comment(row: &ParsedRow) -> Option<String> {
+    let trimmed = row.comments.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{map_row, MapError};
@@ -181,7 +170,7 @@ mod tests {
         assert_eq!(mapped.proposed.price, Some(dec!(12.50)));
         assert_eq!(mapped.proposed.fx_rate_to_base, Some(dec!(10)));
         assert_eq!(mapped.proposed.brokerage_base, Some(dec!(9.60)));
-        assert_eq!(mapped.source_value, dec!(1259.60));
+        assert_eq!(mapped.source_value, Some(dec!(1259.60)));
         assert!(!mapped.fx_warning);
     }
 

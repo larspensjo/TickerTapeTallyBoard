@@ -88,6 +88,22 @@ async fn preview_returns_counts_and_writes_nothing() {
 }
 
 #[tokio::test]
+async fn preview_reports_assets_and_extended_counts() {
+    let state = test_state().await;
+    let (status, body) = send_bytes(&state, "/api/import/sharesight/preview", SYNTHETIC).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["counts"]["dividends"], 0);
+    assert_eq!(body["counts"]["skipped"], 0);
+
+    let assets = body["assets"].as_array().expect("assets array");
+    assert_eq!(assets.len(), 2);
+    assert!(assets
+        .iter()
+        .all(|asset| asset["default_selected"] == Value::Bool(true)));
+}
+
+#[tokio::test]
 async fn preview_returns_plan_shaped_parse_errors() {
     let state = test_state().await;
     let (status, body) = send_bytes(&state, "/api/import/sharesight/preview", MALFORMED).await;
@@ -195,6 +211,34 @@ async fn hard_error_is_rejected_before_any_write() {
 
     let transactions = db::transactions::list(&state.pool).await.expect("list");
     assert!(transactions.is_empty());
+
+    let batches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batches")
+        .fetch_one(&state.pool)
+        .await
+        .expect("count batches");
+    assert_eq!(batches, 0);
+}
+
+#[tokio::test]
+async fn standalone_imported_split_is_rejected_without_creating_an_instrument() {
+    let state = test_state().await;
+    let split_only = concat!(
+        "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
+        "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+        "NASDAQ,MSFT,Microsoft,Split,12/06/2026,10,\"0,00\",USD,\"0,00\",\"0,00\",SEK,,\"0,00\",All Trades,\n",
+    );
+
+    let (status, body) = send_bytes(
+        &state,
+        "/api/import/sharesight/commit",
+        split_only.as_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "split_without_position");
+
+    let instruments = db::instruments::list(&state.pool).await.expect("list");
+    assert!(instruments.is_empty());
 
     let batches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batches")
         .fetch_one(&state.pool)

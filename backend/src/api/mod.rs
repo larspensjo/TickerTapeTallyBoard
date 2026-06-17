@@ -23,6 +23,8 @@ use tower_http::services::ServeDir;
 
 use crate::state::AppState;
 
+pub use error::ApiError;
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(root::handler))
@@ -49,8 +51,12 @@ pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: App
 fn api_router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
-        .route("/import/sharesight/preview", post(import::preview))
-        .route("/import/sharesight/commit", post(import::commit))
+        .route(
+            "/import/sharesight/preview",
+            post(import::sharesight_preview),
+        )
+        .route("/import/sharesight/commit", post(import::sharesight_commit))
+        .route("/import/rollback/{batch_id}", post(import::rollback))
         .route(
             "/import/sharesight/rollback/{batch_id}",
             post(import::rollback),

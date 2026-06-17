@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use axum::{
     body::Bytes,
@@ -8,23 +8,26 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
-use crate::db::instruments::NewInstrument;
-use crate::db::transactions::NewImportTransaction;
+use crate::api::ApiError;
 use crate::db::{import_batches, instruments, transactions};
 use crate::domain;
-use crate::import::sharesight::mapper::{map_row, InstrumentKey};
-use crate::import::sharesight::parser::{parse_report, ParseError, ParsedKind, ParsedReport};
-use crate::import::sharesight::plan::{
-    build_plan, ExistingInstrument, ImportPlan, PlanContext, RowNote,
+use crate::import::core::outcome::{
+    InstrumentKey, MappedRow, ParseError, PreparedImport, RowNote, RowOutcome,
 };
-use crate::import::{now_iso8601, raw_file_hash};
+use crate::import::core::plan::{
+    build_plan, AssetGroup, ExistingInstrument, ImportPlan, PlanContext,
+};
+use crate::import::core::writer::write_batch;
+use crate::import::raw_file_hash;
+use crate::import::sharesight::adapter::to_prepared as sharesight_prepared;
+use crate::import::sharesight::parser::parse_report;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct ImportPreview {
     pub metadata: Option<PreviewMetadata>,
     pub counts: PreviewCounts,
+    pub assets: Vec<AssetGroupDto>,
     pub new_instruments: Vec<NewInstrumentDto>,
     pub warnings: Vec<RowNoteDto>,
     pub errors: Vec<RowNoteDto>,
@@ -44,9 +47,27 @@ pub struct PreviewCounts {
     pub buys: usize,
     pub sells: usize,
     pub splits: usize,
+    pub dividends: usize,
     pub new_instruments: usize,
+    pub skipped: usize,
     pub warnings: usize,
     pub errors: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AssetGroupDto {
+    pub asset_key: String,
+    pub name: String,
+    pub currency: String,
+    pub buys: usize,
+    pub sells: usize,
+    pub splits: usize,
+    pub dividends: usize,
+    pub default_selected: bool,
+    pub skipped_reason: Option<String>,
+    pub warnings: Vec<RowNoteDto>,
+    pub errors: Vec<RowNoteDto>,
+    pub is_new_instrument: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +76,7 @@ pub struct NewInstrumentDto {
     pub symbol: String,
     pub name: String,
     pub currency: String,
+    pub isin: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +96,7 @@ pub struct CommitParams {
 pub struct ImportResult {
     pub batch_id: i64,
     pub counts: PreviewCounts,
+    pub warnings: Vec<RowNoteDto>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,92 +105,19 @@ pub struct RollbackResult {
     pub removed: u64,
 }
 
-pub async fn preview(
+pub async fn sharesight_preview(
     State(state): State<AppState>,
     bytes: Bytes,
 ) -> Result<Json<ImportPreview>, ApiError> {
-    let hash = raw_file_hash(&bytes);
-    let duplicate_of_batch_id = import_batches::find_by_hash(&state.pool, &hash)
-        .await?
-        .map(|batch| batch.id);
-
-    let report = match parse_report(&bytes) {
-        Ok(report) => report,
-        Err(error) => return Ok(Json(parse_error_preview(error, duplicate_of_batch_id))),
-    };
-
-    let ctx = load_plan_context(&state).await?;
-    let plan = build_plan(&report, &ctx);
-
-    Ok(Json(ImportPreview {
-        metadata: Some(PreviewMetadata {
-            title: report.metadata.title.clone(),
-            date_from: report.metadata.date_from.to_string(),
-            date_to: report.metadata.date_to.to_string(),
-        }),
-        counts: counts_dto(&plan),
-        new_instruments: plan
-            .new_instruments
-            .iter()
-            .map(new_instrument_dto)
-            .collect(),
-        warnings: plan.warnings.iter().map(row_note_dto).collect(),
-        errors: plan.errors.iter().map(row_note_dto).collect(),
-        duplicate_of_batch_id,
-    }))
+    preview_source(&state, &bytes, parse_sharesight).await
 }
 
-pub async fn commit(
+pub async fn sharesight_commit(
     State(state): State<AppState>,
     Query(params): Query<CommitParams>,
     bytes: Bytes,
 ) -> Result<Json<ImportResult>, ApiError> {
-    let hash = raw_file_hash(&bytes);
-    let report = match parse_report(&bytes) {
-        Ok(report) => report,
-        Err(error) => return Err(ApiError::bad_request(error.code, error.message)),
-    };
-
-    let ctx = load_plan_context(&state).await?;
-    let plan = build_plan(&report, &ctx);
-    if !plan.errors.is_empty() {
-        let first = &plan.errors[0];
-        return Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            first.code,
-            first.message.clone(),
-        )
-        .with_details(serde_json::json!({
-            "errors": plan
-                .errors
-                .iter()
-                .map(|error| serde_json::json!({
-                    "row": error.row,
-                    "code": error.code,
-                    "message": error.message,
-                }))
-                .collect::<Vec<_>>()
-        })));
-    }
-
-    if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
-        if !params.allow_duplicate {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "duplicate_import",
-                format!("file already imported as batch {}", existing.id),
-            )
-            .with_details(serde_json::json!({
-                "duplicate_of_batch_id": existing.id
-            })));
-        }
-    }
-
-    let batch_id = write_batch(&state, &report, &hash).await?;
-    Ok(Json(ImportResult {
-        batch_id,
-        counts: counts_dto(&plan),
-    }))
+    commit_source(&state, &bytes, "SHARESIGHT", &params, parse_sharesight).await
 }
 
 pub async fn rollback(
@@ -203,6 +153,77 @@ pub async fn rollback(
     Ok(Json(RollbackResult { batch_id, removed }))
 }
 
+fn parse_sharesight(bytes: &[u8]) -> Result<PreparedImport, ParseError> {
+    parse_report(bytes).map(|report| sharesight_prepared(&report))
+}
+
+async fn preview_source(
+    state: &AppState,
+    bytes: &[u8],
+    parse: fn(&[u8]) -> Result<PreparedImport, ParseError>,
+) -> Result<Json<ImportPreview>, ApiError> {
+    let hash = raw_file_hash(bytes);
+    let duplicate_of_batch_id = import_batches::find_by_hash(&state.pool, &hash)
+        .await?
+        .map(|batch| batch.id);
+
+    let prepared = match parse(bytes) {
+        Ok(prepared) => prepared,
+        Err(error) => return Ok(Json(parse_error_preview(error, duplicate_of_batch_id))),
+    };
+
+    let ctx = load_plan_context(state).await?;
+    let plan = build_plan(&prepared, &ctx);
+
+    Ok(Json(ImportPreview {
+        metadata: Some(PreviewMetadata {
+            title: prepared.header.title.clone(),
+            date_from: prepared.header.date_from.to_string(),
+            date_to: prepared.header.date_to.to_string(),
+        }),
+        counts: counts_dto(&plan),
+        assets: plan.assets.iter().map(asset_group_dto).collect(),
+        new_instruments: plan
+            .new_instruments
+            .iter()
+            .map(new_instrument_dto)
+            .collect(),
+        warnings: plan.warnings.iter().map(row_note_dto).collect(),
+        errors: plan.errors.iter().map(row_note_dto).collect(),
+        duplicate_of_batch_id,
+    }))
+}
+
+async fn commit_source(
+    state: &AppState,
+    bytes: &[u8],
+    source: &str,
+    params: &CommitParams,
+    parse: fn(&[u8]) -> Result<PreparedImport, ParseError>,
+) -> Result<Json<ImportResult>, ApiError> {
+    let hash = raw_file_hash(bytes);
+    let prepared =
+        parse(bytes).map_err(|error| ApiError::bad_request(error.code, error.message))?;
+    let ctx = load_plan_context(state).await?;
+    let plan = build_plan(&prepared, &ctx);
+    reject_on_errors(&plan)?;
+
+    if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
+        if !params.allow_duplicate {
+            return Err(duplicate_conflict(existing.id));
+        }
+    }
+
+    let mapped = mapped_rows(&prepared);
+    let batch_id = write_batch(state, source, &hash, &mapped).await?;
+
+    Ok(Json(ImportResult {
+        batch_id,
+        counts: counts_dto(&plan),
+        warnings: Vec::new(),
+    }))
+}
+
 fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) -> ImportPreview {
     ImportPreview {
         metadata: None,
@@ -210,6 +231,7 @@ fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) ->
             errors: 1,
             ..Default::default()
         },
+        assets: Vec::new(),
         new_instruments: Vec::new(),
         warnings: Vec::new(),
         errors: vec![RowNoteDto {
@@ -232,6 +254,7 @@ pub(crate) async fn load_plan_context(state: &AppState) -> Result<PlanContext, A
             exchange: row.exchange.clone(),
             symbol: row.symbol.clone(),
             currency: row.currency.clone(),
+            isin: row.isin.clone(),
         });
         existing_ledgers.insert(
             row.id,
@@ -246,92 +269,50 @@ pub(crate) async fn load_plan_context(state: &AppState) -> Result<PlanContext, A
     })
 }
 
-async fn write_batch(state: &AppState, report: &ParsedReport, hash: &str) -> Result<i64, ApiError> {
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
-
-    let batch_id =
-        import_batches::insert_in_tx(&mut tx, "SHARESIGHT", &now_iso8601(), hash).await?;
-
-    let mut instrument_ids: BTreeMap<(String, String), i64> = BTreeMap::new();
-    let mut affected: BTreeSet<i64> = BTreeSet::new();
-
-    for parsed in &report.rows {
-        // Re-map during the write so the transaction path never trusts preview-only state.
-        let mapped = map_row(parsed).map_err(|error| {
-            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.code, error.message)
-        })?;
-
-        let key = (
-            mapped.instrument.exchange.to_lowercase(),
-            mapped.instrument.symbol.to_lowercase(),
-        );
-
-        let instrument_id = match instrument_ids.get(&key) {
-            Some(id) => *id,
-            None => {
-                let (row, _created) = instruments::upsert_in_tx(
-                    &mut tx,
-                    &NewInstrument {
-                        symbol: mapped.instrument.symbol.clone(),
-                        exchange: mapped.instrument.exchange.clone(),
-                        name: mapped.instrument.name.clone(),
-                        kind: "STOCK".to_string(),
-                        currency: mapped.instrument.currency.clone(),
-                        isin: None,
-                    },
-                )
-                .await?;
-                instrument_ids.insert(key, row.id);
-                row.id
-            }
-        };
-
-        affected.insert(instrument_id);
-
-        let signed = domain::validate(&mapped.proposed).map_err(ApiError::from)?;
-        let brokerage_currency = mapped.proposed.brokerage_base.map(|_| "SEK".to_string());
-        let source_currency =
-            matches!(mapped.kind, ParsedKind::Buy | ParsedKind::Sell).then(|| "SEK".to_string());
-
-        transactions::insert_in_tx(
-            &mut tx,
-            &NewImportTransaction {
-                instrument_id,
-                kind: mapped.proposed.kind,
-                trade_date: mapped.proposed.trade_date,
-                quantity: signed,
-                price: mapped.proposed.price,
-                currency: mapped.proposed.currency.clone(),
-                fx_rate_to_base: mapped.proposed.fx_rate_to_base,
-                brokerage: mapped.proposed.brokerage_base,
-                brokerage_currency,
-                source_value: Some(mapped.source_value),
-                source_currency,
-                note: non_empty(&parsed.comments),
-                import_batch_id: batch_id,
-            },
-        )
-        .await?;
-    }
-
-    for instrument_id in affected {
-        let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, instrument_id).await?;
-        domain::derive_position(&ledger).map_err(ApiError::from)?;
-    }
-
-    tx.commit()
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
-    Ok(batch_id)
+fn mapped_rows(prepared: &PreparedImport) -> Vec<MappedRow> {
+    prepared
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            RowOutcome::Mapped(mapped) => Some(mapped.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
-fn non_empty(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+fn reject_on_errors(plan: &ImportPlan) -> Result<(), ApiError> {
+    if plan.errors.is_empty() {
+        return Ok(());
+    }
+
+    let first = &plan.errors[0];
+    Err(ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        first.code,
+        first.message.clone(),
+    )
+    .with_details(serde_json::json!({
+        "errors": plan
+            .errors
+            .iter()
+            .map(|error| serde_json::json!({
+                "row": error.row,
+                "code": error.code,
+                "message": error.message,
+            }))
+            .collect::<Vec<_>>()
+    })))
+}
+
+fn duplicate_conflict(batch_id: i64) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "duplicate_import",
+        format!("file already imported as batch {batch_id}"),
+    )
+    .with_details(serde_json::json!({
+        "duplicate_of_batch_id": batch_id
+    }))
 }
 
 fn counts_dto(plan: &ImportPlan) -> PreviewCounts {
@@ -340,9 +321,28 @@ fn counts_dto(plan: &ImportPlan) -> PreviewCounts {
         buys: plan.counts.buys,
         sells: plan.counts.sells,
         splits: plan.counts.splits,
+        dividends: plan.counts.dividends,
         new_instruments: plan.counts.new_instruments,
+        skipped: plan.counts.skipped,
         warnings: plan.counts.warnings,
         errors: plan.counts.errors,
+    }
+}
+
+fn asset_group_dto(group: &AssetGroup) -> AssetGroupDto {
+    AssetGroupDto {
+        asset_key: group.asset_key.clone(),
+        name: group.name.clone(),
+        currency: group.currency.clone(),
+        buys: group.buys,
+        sells: group.sells,
+        splits: group.splits,
+        dividends: group.dividends,
+        default_selected: group.default_selected,
+        skipped_reason: group.skipped_reason.clone(),
+        warnings: group.warnings.iter().map(row_note_dto).collect(),
+        errors: group.errors.iter().map(row_note_dto).collect(),
+        is_new_instrument: group.is_new_instrument,
     }
 }
 
@@ -352,6 +352,7 @@ fn new_instrument_dto(key: &InstrumentKey) -> NewInstrumentDto {
         symbol: key.symbol.clone(),
         name: key.name.clone(),
         currency: key.currency.clone(),
+        isin: key.isin.clone(),
     }
 }
 

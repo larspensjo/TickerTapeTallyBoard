@@ -330,7 +330,7 @@ async fn update_isin(pool: &SqlitePool, id: i64, isin: &str) -> Result<Instrumen
     Ok(row)
 }
 
-async fn update_isin_in_tx(
+pub async fn update_isin_in_tx(
     conn: &mut SqliteConnection,
     id: i64,
     isin: &str,
