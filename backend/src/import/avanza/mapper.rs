@@ -1,0 +1,1 @@
+//! Avanza to PreparedImport mapping.
