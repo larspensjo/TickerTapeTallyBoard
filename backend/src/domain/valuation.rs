@@ -1,7 +1,6 @@
+use super::{BaseCostBasis, Position, UnavailableReason};
 use chrono::{Datelike, NaiveDate, Weekday};
 use rust_decimal::Decimal;
-
-use super::{BaseCostBasis, Position, UnavailableReason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataFreshness {
@@ -115,6 +114,8 @@ pub struct ValuedHolding {
     pub quantity: i64,
     pub cost_basis_native: Decimal,
     pub cost_basis_base: Availability<Decimal>,
+    pub price_effect_base: Availability<Decimal>,
+    pub fx_effect_base: Availability<Decimal>,
     pub latest_price: Availability<PriceSnapshot>,
     pub previous_price: Availability<PriceSnapshot>,
     pub latest_fx: Availability<FxSnapshot>,
@@ -132,6 +133,8 @@ pub struct ValuedHolding {
 pub struct ValuationSummary {
     pub market_value_base: Availability<Decimal>,
     pub cost_basis_base: Availability<Decimal>,
+    pub price_effect_base: Availability<Decimal>,
+    pub fx_effect_base: Availability<Decimal>,
     pub unrealized_gain_base: Availability<Decimal>,
     pub unrealized_gain_percent: Availability<Decimal>,
     pub day_change_base: Availability<Decimal>,
@@ -191,6 +194,13 @@ pub fn value_position(
         },
     };
 
+    let fee_component_base = match &position.base {
+        BaseCostBasis::Available {
+            fee_component_base, ..
+        } => Some(*fee_component_base),
+        BaseCostBasis::Unavailable { .. } => None,
+    };
+
     let market_value_native = match latest_price.as_ref() {
         Some(price) => Availability::available(price.close * Decimal::from(position.quantity)),
         None => Availability::unavailable(ValuationReason::MissingPrice),
@@ -246,6 +256,48 @@ pub fn value_position(
         },
     };
 
+    let effect_reasons = effect_reasons(
+        &market_value_native,
+        &cost_basis_base,
+        &latest_fx,
+        position.cost_basis_native,
+    );
+
+    let price_effect_base = match (
+        market_value_native.as_ref(),
+        cost_basis_base.as_ref(),
+        latest_fx.as_ref(),
+        fee_component_base,
+    ) {
+        (Some(native_value), Some(_), Some(fx), Some(fee_component_base))
+            if position.cost_basis_native != Decimal::ZERO =>
+        {
+            Availability::available(
+                (*native_value - position.cost_basis_native) * fx.rate - fee_component_base,
+            )
+        }
+        _ => Availability::Unavailable {
+            reasons: effect_reasons.clone(),
+        },
+    };
+
+    let fx_effect_base = match (
+        market_value_native.as_ref(),
+        cost_basis_base.as_ref(),
+        latest_fx.as_ref(),
+        fee_component_base,
+    ) {
+        (Some(_native_value), Some(cost_basis_base), Some(fx), Some(fee_component_base))
+            if position.cost_basis_native != Decimal::ZERO =>
+        {
+            let gross_base = *cost_basis_base - fee_component_base;
+            Availability::available(position.cost_basis_native * fx.rate - gross_base)
+        }
+        _ => Availability::Unavailable {
+            reasons: effect_reasons,
+        },
+    };
+
     let day_change_base = match (
         latest_price.as_ref(),
         previous_price.as_ref(),
@@ -297,6 +349,8 @@ pub fn value_position(
     append_amount_reasons(&mut reasons, &market_value_native);
     append_amount_reasons(&mut reasons, &market_value_base);
     append_amount_reasons(&mut reasons, &previous_market_value_base);
+    append_amount_reasons(&mut reasons, &price_effect_base);
+    append_amount_reasons(&mut reasons, &fx_effect_base);
     append_amount_reasons(&mut reasons, &unrealized_gain_base);
     append_amount_reasons(&mut reasons, &unrealized_gain_percent);
     append_amount_reasons(&mut reasons, &day_change_base);
@@ -308,6 +362,8 @@ pub fn value_position(
         quantity: position.quantity,
         cost_basis_native: position.cost_basis_native,
         cost_basis_base,
+        price_effect_base,
+        fx_effect_base,
         latest_price,
         previous_price,
         latest_fx,
@@ -325,9 +381,12 @@ pub fn value_position(
 pub fn summarize_holdings(rows: &[ValuedHolding]) -> ValuationSummary {
     let mut market_value_base = Decimal::ZERO;
     let mut cost_basis_base = Decimal::ZERO;
+    let mut price_effect_base = Decimal::ZERO;
+    let mut fx_effect_base = Decimal::ZERO;
     let mut day_change_base = Decimal::ZERO;
     let mut previous_market_value_base = Decimal::ZERO;
     let mut included_rows = 0usize;
+    let mut effect_rows = 0usize;
     let mut day_change_rows = 0usize;
     let mut excluded_rows = 0usize;
 
@@ -337,6 +396,13 @@ pub fn summarize_holdings(rows: &[ValuedHolding]) -> ValuationSummary {
                 included_rows += 1;
                 market_value_base += *market_value;
                 cost_basis_base += *cost_basis;
+                if let (Some(price_effect), Some(fx_effect)) =
+                    (row.price_effect_base.as_ref(), row.fx_effect_base.as_ref())
+                {
+                    price_effect_base += *price_effect;
+                    fx_effect_base += *fx_effect;
+                    effect_rows += 1;
+                }
                 if let Some(day_change) = row.day_change_base.as_ref() {
                     day_change_base += *day_change;
                     previous_market_value_base += *market_value - *day_change;
@@ -354,6 +420,16 @@ pub fn summarize_holdings(rows: &[ValuedHolding]) -> ValuationSummary {
     };
     let cost_basis_base = if included_rows > 0 {
         Availability::available(cost_basis_base)
+    } else {
+        Availability::unavailable_empty()
+    };
+    let price_effect_base = if effect_rows > 0 {
+        Availability::available(price_effect_base)
+    } else {
+        Availability::unavailable_empty()
+    };
+    let fx_effect_base = if effect_rows > 0 {
+        Availability::available(fx_effect_base)
     } else {
         Availability::unavailable_empty()
     };
@@ -386,6 +462,8 @@ pub fn summarize_holdings(rows: &[ValuedHolding]) -> ValuationSummary {
     ValuationSummary {
         market_value_base,
         cost_basis_base,
+        price_effect_base,
+        fx_effect_base,
         unrealized_gain_base,
         unrealized_gain_percent,
         day_change_base,
@@ -494,6 +572,23 @@ fn unavailable_or_first(
     } else {
         Availability::Unavailable { reasons }
     }
+}
+
+fn effect_reasons(
+    market_value_native: &Availability<Decimal>,
+    cost_basis_base: &Availability<Decimal>,
+    latest_fx: &Availability<FxSnapshot>,
+    cost_basis_native: Decimal,
+) -> Vec<ValuationReason> {
+    let mut reasons = Vec::new();
+    reasons.extend(market_value_native.reasons());
+    reasons.extend(cost_basis_base.reasons());
+    reasons.extend(latest_fx.reasons());
+    if cost_basis_native == Decimal::ZERO {
+        reasons.push(ValuationReason::ZeroCostBasis);
+    }
+    dedup_reasons(&mut reasons);
+    reasons
 }
 
 fn append_snapshot_reasons(
@@ -644,6 +739,8 @@ mod tests {
             value.unrealized_gain_base,
             Availability::available(dec!(1550))
         );
+        assert_eq!(value.price_effect_base, Availability::available(dec!(1050)));
+        assert_eq!(value.fx_effect_base, Availability::available(dec!(500)));
         assert_eq!(
             value
                 .unrealized_gain_percent
@@ -721,7 +818,7 @@ mod tests {
 
     #[test]
     fn sek_positions_use_identity_fx() {
-        let pos = position(&[buy(1, d(2026, 6, 1), 4, dec!(20), None, "SEK")]);
+        let pos = position(&[buy(1, d(2026, 6, 1), 4, dec!(20), Some(dec!(1)), "SEK")]);
 
         let value = value_position(
             &pos,
@@ -735,6 +832,8 @@ mod tests {
 
         assert_eq!(value.market_value_base, Availability::available(dec!(84)));
         assert_eq!(value.day_change_base, Availability::available(dec!(8)));
+        assert_eq!(value.price_effect_base, Availability::available(dec!(4)));
+        assert_eq!(value.fx_effect_base, Availability::available(dec!(0)));
         match value.latest_fx {
             Availability::Available(snapshot) => {
                 assert_eq!(snapshot.rate, Decimal::ONE);
@@ -797,6 +896,18 @@ mod tests {
                 reasons: vec![ValuationReason::MissingFx]
             }
         );
+        assert_eq!(
+            value.price_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::MissingFx]
+            }
+        );
+        assert_eq!(
+            value.fx_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::MissingFx]
+            }
+        );
         assert!(value.reasons.contains(&ValuationReason::MissingFx));
     }
 
@@ -829,6 +940,22 @@ mod tests {
             value.unrealized_gain_base,
             Availability::Unavailable { .. }
         ));
+        assert_eq!(
+            value.price_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::BaseCostBasisUnavailable {
+                    reasons: vec![UnavailableReason::MissingFx { transaction_id: 2 }],
+                }]
+            }
+        );
+        assert_eq!(
+            value.fx_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::BaseCostBasisUnavailable {
+                    reasons: vec![UnavailableReason::MissingFx { transaction_id: 2 }],
+                }]
+            }
+        );
     }
 
     #[test]
@@ -933,12 +1060,14 @@ mod tests {
 
     #[test]
     fn zero_cost_basis_makes_gain_percent_unavailable() {
-        let mut pos = position(&[buy(1, d(2026, 6, 1), 1, dec!(10), Some(dec!(1)), "SEK")]);
-        pos.base = BaseCostBasis::Available {
-            cost_basis_base: Decimal::ZERO,
-            fee_component_base: Decimal::ZERO,
+        let pos = Position {
+            quantity: 1,
+            cost_basis_native: Decimal::ZERO,
+            base: BaseCostBasis::Available {
+                cost_basis_base: Decimal::ZERO,
+                fee_component_base: Decimal::ZERO,
+            },
         };
-
         let value = value_position(
             &pos,
             "SEK",
@@ -955,8 +1084,132 @@ mod tests {
                 reasons: vec![ValuationReason::ZeroCostBasis]
             }
         );
+        assert_eq!(
+            value.price_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::ZeroCostBasis]
+            }
+        );
+        assert_eq!(
+            value.fx_effect_base,
+            Availability::Unavailable {
+                reasons: vec![ValuationReason::ZeroCostBasis]
+            }
+        );
     }
 
+    #[test]
+    fn brokerage_lands_in_price_effect_when_price_and_fx_are_unchanged() {
+        let mut tx = buy(1, d(2026, 6, 1), 10, dec!(100), Some(dec!(10)), "USD");
+        tx.brokerage_base = dec!(25);
+        let pos = position(&[tx]);
+
+        let value = value_position(
+            &pos,
+            "USD",
+            d(2026, 6, 16),
+            Some(price(d(2026, 6, 16), dec!(100), "USD")),
+            Some(price(d(2026, 6, 13), dec!(100), "USD")),
+            Some(fx(d(2026, 6, 16), dec!(10), "USD", "SEK")),
+            Some(fx(d(2026, 6, 13), dec!(10), "USD", "SEK")),
+        );
+
+        assert_eq!(value.cost_basis_base, Availability::available(dec!(10025)));
+        assert_eq!(value.price_effect_base, Availability::available(dec!(-25)));
+        assert_eq!(value.fx_effect_base, Availability::available(dec!(0)));
+        assert_eq!(
+            value.unrealized_gain_base,
+            Availability::available(dec!(-25))
+        );
+    }
+
+    #[test]
+    fn multi_lot_buys_at_different_fx_rates_split_gain_across_price_and_fx() {
+        let pos = position(&[
+            buy(1, d(2026, 6, 1), 10, dec!(100), Some(dec!(10)), "USD"),
+            buy(2, d(2026, 6, 2), 10, dec!(100), Some(dec!(12)), "USD"),
+        ]);
+
+        let value = value_position(
+            &pos,
+            "USD",
+            d(2026, 6, 16),
+            Some(price(d(2026, 6, 16), dec!(120), "USD")),
+            Some(price(d(2026, 6, 13), dec!(100), "USD")),
+            Some(fx(d(2026, 6, 16), dec!(13), "USD", "SEK")),
+            Some(fx(d(2026, 6, 13), dec!(12), "USD", "SEK")),
+        );
+
+        assert_eq!(value.cost_basis_base, Availability::available(dec!(22000)));
+        assert_eq!(
+            value.market_value_base,
+            Availability::available(dec!(31200))
+        );
+        assert_eq!(
+            value.unrealized_gain_base,
+            Availability::available(dec!(9200))
+        );
+        assert_eq!(value.price_effect_base, Availability::available(dec!(5200)));
+        assert_eq!(value.fx_effect_base, Availability::available(dec!(4000)));
+    }
+
+    #[test]
+    fn summary_attribution_sums_match_row_effects_and_total_gain() {
+        let usd = value_position(
+            &position(&[buy(1, d(2026, 6, 1), 10, dec!(100), Some(dec!(10)), "USD")]),
+            "USD",
+            d(2026, 6, 16),
+            Some(price(d(2026, 6, 16), dec!(110), "USD")),
+            Some(price(d(2026, 6, 13), dec!(100), "USD")),
+            Some(fx(d(2026, 6, 16), dec!(11), "USD", "SEK")),
+            Some(fx(d(2026, 6, 13), dec!(10), "USD", "SEK")),
+        );
+        let sek = value_position(
+            &position(&[buy(2, d(2026, 6, 1), 5, dec!(20), Some(dec!(1)), "SEK")]),
+            "SEK",
+            d(2026, 6, 16),
+            Some(price(d(2026, 6, 16), dec!(30), "SEK")),
+            Some(price(d(2026, 6, 13), dec!(25), "SEK")),
+            None,
+            None,
+        );
+
+        let summary = summarize_holdings(&[usd.clone(), sek.clone()]);
+
+        assert_eq!(
+            summary.market_value_base,
+            Availability::available(dec!(12250))
+        );
+        assert_eq!(
+            summary.cost_basis_base,
+            Availability::available(dec!(10100))
+        );
+        assert_eq!(
+            summary.price_effect_base,
+            Availability::available(dec!(1150))
+        );
+        assert_eq!(summary.fx_effect_base, Availability::available(dec!(1000)));
+        assert_eq!(
+            summary.unrealized_gain_base,
+            Availability::available(dec!(2150))
+        );
+        assert_eq!(
+            *summary.price_effect_base.as_ref().expect("price effect")
+                + *summary.fx_effect_base.as_ref().expect("fx effect"),
+            *summary.unrealized_gain_base.as_ref().expect("gain")
+        );
+
+        assert_eq!(
+            *usd.price_effect_base.as_ref().expect("usd price effect")
+                + *usd.fx_effect_base.as_ref().expect("usd fx effect"),
+            *usd.unrealized_gain_base.as_ref().expect("usd gain")
+        );
+        assert_eq!(
+            *sek.price_effect_base.as_ref().expect("sek price effect")
+                + *sek.fx_effect_base.as_ref().expect("sek fx effect"),
+            *sek.unrealized_gain_base.as_ref().expect("sek gain")
+        );
+    }
     #[test]
     fn weekday_staleness_counts_public_holidays_as_trading_days_for_now() {
         assert_eq!(
@@ -1023,5 +1276,10 @@ mod tests {
             summary.unrealized_gain_base,
             Availability::available(dec!(500))
         );
+        assert_eq!(
+            summary.price_effect_base,
+            Availability::available(dec!(500))
+        );
+        assert_eq!(summary.fx_effect_base, Availability::available(dec!(0)));
     }
 }
