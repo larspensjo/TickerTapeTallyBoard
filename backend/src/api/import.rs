@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::{
     body::Bytes,
@@ -15,7 +15,8 @@ use crate::import::core::outcome::{
     InstrumentKey, MappedRow, ParseError, PreparedImport, RowNote, RowOutcome,
 };
 use crate::import::core::plan::{
-    build_plan, AssetGroup, ExistingInstrument, ImportPlan, PlanContext,
+    build_plan, exclude_assets, known_asset_keys, AssetGroup, ExistingInstrument, ImportPlan,
+    PlanContext,
 };
 use crate::import::core::writer::write_batch;
 use crate::import::raw_file_hash;
@@ -90,6 +91,8 @@ pub struct RowNoteDto {
 pub struct CommitParams {
     #[serde(default)]
     pub allow_duplicate: bool,
+    #[serde(default)]
+    pub exclude: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,8 +207,22 @@ async fn commit_source(
     let hash = raw_file_hash(bytes);
     let prepared =
         parse(bytes).map_err(|error| ApiError::bad_request(error.code, error.message))?;
+    let exclude: BTreeSet<String> = params
+        .exclude
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let known = known_asset_keys(&prepared);
+    let unknown: Vec<String> = exclude.difference(&known).cloned().collect();
+
+    let effective = exclude_assets(&prepared, &exclude);
     let ctx = load_plan_context(state).await?;
-    let plan = build_plan(&prepared, &ctx);
+    let plan = build_plan(&effective, &ctx);
     reject_on_errors(&plan)?;
 
     if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
@@ -214,13 +231,29 @@ async fn commit_source(
         }
     }
 
-    let mapped = mapped_rows(&prepared);
+    let mapped: Vec<MappedRow> = effective
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            RowOutcome::Mapped(mapped) => Some(mapped.clone()),
+            _ => None,
+        })
+        .collect();
     let batch_id = write_batch(state, source, &hash, &mapped).await?;
+
+    let warnings = unknown
+        .into_iter()
+        .map(|key| RowNoteDto {
+            row: None,
+            code: "unknown_exclude_key",
+            message: format!("exclude key {key:?} matched no asset"),
+        })
+        .collect();
 
     Ok(Json(ImportResult {
         batch_id,
-        counts: counts_dto(&plan),
-        warnings: Vec::new(),
+        counts: effective_counts(&plan, &mapped),
+        warnings,
     }))
 }
 
@@ -267,17 +300,6 @@ pub(crate) async fn load_plan_context(state: &AppState) -> Result<PlanContext, A
         existing_ledgers,
         max_existing_id: transactions::max_id(&state.pool).await?,
     })
-}
-
-fn mapped_rows(prepared: &PreparedImport) -> Vec<MappedRow> {
-    prepared
-        .outcomes
-        .iter()
-        .filter_map(|outcome| match outcome {
-            RowOutcome::Mapped(mapped) => Some(mapped.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn reject_on_errors(plan: &ImportPlan) -> Result<(), ApiError> {
@@ -329,6 +351,24 @@ fn counts_dto(plan: &ImportPlan) -> PreviewCounts {
     }
 }
 
+fn effective_counts(plan: &ImportPlan, mapped: &[MappedRow]) -> PreviewCounts {
+    let mut counts = counts_dto(plan);
+    counts.rows = mapped.len();
+    counts.buys = kind_count(mapped, domain::TransactionKind::Buy);
+    counts.sells = kind_count(mapped, domain::TransactionKind::Sell);
+    counts.splits = kind_count(mapped, domain::TransactionKind::Split);
+    // Dividends are deferred and never appear in mapped rows, so use the retained asset groups.
+    counts.dividends = plan.assets.iter().map(|asset| asset.dividends).sum();
+    counts
+}
+
+fn kind_count(mapped: &[MappedRow], kind: domain::TransactionKind) -> usize {
+    mapped
+        .iter()
+        .filter(|row| row.proposed.kind == kind)
+        .count()
+}
+
 fn asset_group_dto(group: &AssetGroup) -> AssetGroupDto {
     AssetGroupDto {
         asset_key: group.asset_key.clone(),
@@ -361,5 +401,44 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
         row: note.row,
         code: note.code,
         message: note.message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_counts, AssetGroup, ImportPlan};
+    use crate::import::core::plan::PlanCounts;
+
+    #[test]
+    fn effective_counts_dividends_come_from_retained_assets() {
+        let plan = ImportPlan {
+            counts: PlanCounts {
+                rows: 2,
+                dividends: 2,
+                ..Default::default()
+            },
+            new_instruments: Vec::new(),
+            assets: vec![AssetGroup {
+                asset_key: "retained".to_string(),
+                name: "Retained".to_string(),
+                currency: "SEK".to_string(),
+                buys: 0,
+                sells: 0,
+                splits: 0,
+                dividends: 1,
+                default_selected: true,
+                skipped_reason: None,
+                warnings: Vec::new(),
+                errors: Vec::new(),
+                is_new_instrument: false,
+            }],
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        let counts = effective_counts(&plan, &[]);
+
+        assert_eq!(counts.rows, 0);
+        assert_eq!(counts.dividends, 1);
     }
 }

@@ -6,6 +6,12 @@ use tower::ServiceExt;
 
 const SYNTHETIC: &[u8] = include_bytes!("fixtures/sharesight_synthetic.csv");
 const MALFORMED: &[u8] = b"not,a,sharesight,report\n";
+const TWO_ASSETS_ONE_BAD: &str = concat!(
+    "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
+    "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+    "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"1250,00\",All Trades,\n",
+    "XETR,ASML,ASML Holding,Sell,12/06/2026,−4,\"600,00\",EUR,\"0,00\",\"0,00\",SEK,\"0,100000\",\"−2400,00\",All Trades,\n",
+);
 
 async fn test_state() -> AppState {
     AppState::for_tests().await
@@ -148,6 +154,77 @@ async fn import_batches_accepts_avanza_source() {
     .expect("AVANZA source should be accepted");
 
     assert!(batch_id >= 1);
+}
+
+#[tokio::test]
+async fn commit_excludes_a_bad_asset_and_writes_the_rest() {
+    let state = test_state().await;
+
+    let (blocked, _) = send_bytes(
+        &state,
+        "/api/import/sharesight/commit",
+        TWO_ASSETS_ONE_BAD.as_bytes(),
+    )
+    .await;
+    assert_eq!(blocked, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (ok, body) = send_bytes(
+        &state,
+        "/api/import/sharesight/commit?exclude=xetr:asml",
+        TWO_ASSETS_ONE_BAD.as_bytes(),
+    )
+    .await;
+    assert_eq!(ok, StatusCode::OK);
+    assert_eq!(body["counts"]["rows"], 1);
+    assert_eq!(body["counts"]["buys"], 1);
+
+    let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
+    assert_eq!(holdings.as_array().expect("array").len(), 1);
+}
+
+#[tokio::test]
+async fn unknown_exclude_key_warns_but_commits() {
+    let state = test_state().await;
+    let (ok, body) = send_bytes(
+        &state,
+        "/api/import/sharesight/commit?exclude=nope:none",
+        SYNTHETIC,
+    )
+    .await;
+
+    assert_eq!(ok, StatusCode::OK);
+    let warnings = body["warnings"].as_array().expect("warnings array");
+    assert!(warnings
+        .iter()
+        .any(|warning| warning["code"] == "unknown_exclude_key"));
+}
+
+#[tokio::test]
+async fn commit_excludes_an_asset_with_a_mapper_stage_error() {
+    let state = test_state().await;
+    let csv = concat!(
+        "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
+        "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+        "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"0,00\",SEK,\"0,100000\",\"1250,00\",All Trades,\n",
+        "XETR,ASML,ASML Holding,Buy,12/06/2026,3,\"600,00\",EUR,\"0,00\",\"5,00\",EUR,\"0,100000\",\"1805,00\",All Trades,\n",
+    );
+
+    let (blocked, blocked_body) =
+        send_bytes(&state, "/api/import/sharesight/commit", csv.as_bytes()).await;
+    assert_eq!(blocked, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(blocked_body["error"]["code"], "non_sek_brokerage");
+
+    let (ok, body) = send_bytes(
+        &state,
+        "/api/import/sharesight/commit?exclude=xetr:asml",
+        csv.as_bytes(),
+    )
+    .await;
+    assert_eq!(ok, StatusCode::OK);
+    assert_eq!(body["counts"]["rows"], 1);
+
+    let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
+    assert_eq!(holdings.as_array().expect("array").len(), 1);
 }
 
 #[tokio::test]

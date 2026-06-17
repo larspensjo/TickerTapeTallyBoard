@@ -167,6 +167,47 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
     }
 }
 
+/// Remove every outcome for any asset whose key is in `exclude`.
+///
+/// Mapped rows are filtered by their instrument asset key, while Skip/Error
+/// outcomes are filtered by their carried asset key when present. Rows without
+/// an asset key stay in place because the caller cannot reliably exclude them.
+pub fn exclude_assets(prepared: &PreparedImport, exclude: &BTreeSet<String>) -> PreparedImport {
+    let outcomes = prepared
+        .outcomes
+        .iter()
+        .filter(|outcome| match outcome {
+            RowOutcome::Mapped(mapped) => !exclude.contains(&mapped.instrument.asset_key()),
+            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
+                asset_key.as_ref().is_none_or(|key| !exclude.contains(key))
+            }
+        })
+        .cloned()
+        .collect();
+
+    PreparedImport {
+        header: prepared.header.clone(),
+        counts: prepared.counts,
+        outcomes,
+    }
+}
+
+/// Asset keys named by the import, including keys that only appear on a Skip or
+/// Error outcome. This lets commit validate `exclude` against the full set of
+/// assets the file knows about.
+pub fn known_asset_keys(prepared: &PreparedImport) -> BTreeSet<String> {
+    prepared
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            RowOutcome::Mapped(mapped) => Some(mapped.instrument.asset_key()),
+            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
+                asset_key.clone()
+            }
+        })
+        .collect()
+}
+
 fn asset_group_mut<'a>(
     assets: &'a mut BTreeMap<String, AssetGroup>,
     asset_order: &mut Vec<String>,
