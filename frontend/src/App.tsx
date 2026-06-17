@@ -8,14 +8,11 @@ import {
   useGains,
   useHoldings,
   useInstruments,
+  usePriceStatus,
   useRefreshPrices,
   useTransactions,
 } from "./api/queries";
-import type {
-  MoneyValue,
-  PercentValue,
-  RefreshPricesResult,
-} from "./api/types";
+import type { MoneyValue, PercentValue, RefreshRunSummary } from "./api/types";
 import { AddTransactionForm } from "./components/AddTransactionForm";
 import { GainsTable } from "./components/GainsTable";
 import { HoldingsTable } from "./components/HoldingsTable";
@@ -91,7 +88,7 @@ function summaryPercent(value: PercentValue | undefined) {
   return <SummaryAvailabilityValue value={value} suffix="%" />;
 }
 
-function refreshResultNeedsWarning(result: RefreshPricesResult): boolean {
+function priceRefreshNeedsWarning(result: RefreshRunSummary): boolean {
   return (
     result.status === "partial" ||
     result.status === "failed" ||
@@ -100,26 +97,40 @@ function refreshResultNeedsWarning(result: RefreshPricesResult): boolean {
   );
 }
 
-function refreshResultLabel(result: RefreshPricesResult): string {
+function priceRefreshLabel(result: RefreshRunSummary): string {
+  if (result.status === "running") {
+    return "Refreshing prices";
+  }
+
   if (result.status === "failed") {
     return "Price refresh failed";
   }
 
-  if (refreshResultNeedsWarning(result)) {
+  if (result.status === "partial") {
     return "Price refresh partial";
   }
 
-  return "Prices refreshed";
+  return result.trigger === "launch"
+    ? "Launch refresh complete"
+    : "Prices refreshed";
 }
 
-function refreshResultTitle(result: RefreshPricesResult): string {
+function priceRefreshTitle(result: RefreshRunSummary): string {
   const parts = [
+    `run ${result.run_id}`,
+    `trigger ${result.trigger}`,
+    `mode ${result.mode}`,
     `status ${result.status}`,
     `${result.prices_written} prices`,
     `${result.fx_rates_written} FX`,
     `${result.unmapped_instruments} unmapped`,
     `${result.failed_items} failed`,
+    `started ${result.started_at}`,
   ];
+
+  if (result.finished_at) {
+    parts.push(`finished ${result.finished_at}`);
+  }
 
   if (result.message) {
     parts.push(result.message);
@@ -143,6 +154,7 @@ export function App() {
   const transactionsQuery = useTransactions();
   const holdingsQuery = useHoldings();
   const gainsQuery = useGains();
+  const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const deleteTransaction = useDeleteTransaction();
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -152,6 +164,9 @@ export function App() {
   const transactionsCount = transactionsQuery.data?.length ?? 0;
   const gainsSummary = gainsQuery.data?.summary;
   const totalValue = gainsSummary?.market_value_base;
+  const refreshSummary = priceStatusQuery.data?.latest_run;
+  const pricesRefreshing =
+    refreshPrices.isPending || priceStatusQuery.data?.refreshing === true;
 
   function showTransactions() {
     dispatch({ type: "appViewSelected", appView: "board" });
@@ -229,9 +244,9 @@ export function App() {
                   aria-hidden="true"
                   className={
                     healthQuery.isFetching ||
-                    holdingsQuery.isFetching ||
-                    instrumentsQuery.isFetching ||
-                    transactionsQuery.isFetching
+                      holdingsQuery.isFetching ||
+                      instrumentsQuery.isFetching ||
+                      transactionsQuery.isFetching
                       ? "spin"
                       : undefined
                   }
@@ -316,29 +331,33 @@ export function App() {
           <span className="status-chip">Manual entry</span>
           <span className="status-chip">SEK base</span>
           <span className="status-chip">UI {frontendVersion}</span>
-          {refreshPrices.isPending ? (
+          {priceStatusQuery.isPending ? (
+            <span className="status-chip">Checking prices</span>
+          ) : pricesRefreshing ? (
             <span className="status-chip warning">
               <RefreshCw aria-hidden="true" className="spin" size={12} />
               Refreshing prices
             </span>
-          ) : null}
+          ) : refreshSummary ? (
+            <span
+              className={
+                priceRefreshNeedsWarning(refreshSummary)
+                  ? "status-chip warning"
+                  : "status-chip"
+              }
+              title={priceRefreshTitle(refreshSummary)}
+            >
+              {priceRefreshLabel(refreshSummary)}
+            </span>
+          ) : (
+            <span className="status-chip">No price refresh yet</span>
+          )}
           {refreshPrices.isError ? (
             <span
               className="status-chip warning"
               title={refreshPrices.error.message}
             >
               Price refresh failed
-            </span>
-          ) : refreshPrices.data ? (
-            <span
-              className={
-                refreshResultNeedsWarning(refreshPrices.data)
-                  ? "status-chip warning"
-                  : "status-chip"
-              }
-              title={refreshResultTitle(refreshPrices.data)}
-            >
-              {refreshResultLabel(refreshPrices.data)}
             </span>
           ) : null}
           <span className="status-chip">

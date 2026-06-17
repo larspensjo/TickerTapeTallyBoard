@@ -120,6 +120,10 @@ impl MarketDataService {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
+            crate::engine_info!(
+                "market data refresh already running; returning current status trigger={trigger:?} mode={:?}",
+                request.mode
+            );
             return self.running_response(pool).await;
         }
 
@@ -134,6 +138,11 @@ impl MarketDataService {
         let mut summary =
             RefreshRunSummary::running(run.id, trigger, request.mode, started_at.clone());
         flight.activate(summary.clone());
+        crate::engine_info!(
+            "market data refresh started run_id={} trigger={trigger:?} mode={:?}",
+            run.id,
+            request.mode
+        );
 
         let outcome = self.execute_refresh(pool, &request).await;
         let (status, message) = match &outcome {
@@ -175,6 +184,15 @@ impl MarketDataService {
         summary.finished_at = Some(finished_at);
         summary.message = message;
         finish_result?;
+        crate::engine_info!(
+            "market data refresh finished run_id={} trigger={trigger:?} mode={:?} status={status:?} prices_written={} fx_rates_written={} unmapped_instruments={} failed_items={}",
+            run.id,
+            request.mode,
+            summary.prices_written,
+            summary.fx_rates_written,
+            summary.unmapped_instruments,
+            summary.failed_items
+        );
         drop(flight);
 
         match outcome {

@@ -631,3 +631,22 @@ Observed:
 Open question:
 - None.
 Refs: `backend/migrations/0003_add_instrument_isin.sql`, `backend/migrations/0004_widen_import_batch_source.sql`, `backend/src/db/instruments.rs`, `backend/src/api/import.rs`, `backend/tests/import_api.rs`.
+
+## 2026-06-17 - Launch refresh and status surfacing
+Added startup-triggered market-data refresh plumbing and surfaced persisted refresh state in the board UI.
+What changed:
+- Added `TTTB_MARKET_DATA_REFRESH_ENABLED` and `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED` config flags with boolean parsing, defaults that keep launch refresh enabled, and README documentation.
+- Started a background launch refresh from backend startup through the existing market-data service, and logged refresh start/end/status in the service layer.
+- Added a persisted price-status query in the frontend so the status strip can show checking, refreshing, last-run, and error states for market data without polling continuously while idle.
+- Updated the local start script to choose an actually free frontend port and pass `--strictPort`, avoiding stale Vite servers with stale API proxy targets.
+- Bumped the backend and frontend package versions to reflect the visible behavior change.
+Observed:
+- `cargo test` passed from `backend/`.
+- `cargo build` passed from `backend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+- `scripts/start.ps1` parsed successfully through the PowerShell parser.
+- `npm run check`, `npm run fmt`, and `npm run build` passed from `frontend/`.
+Open question:
+- None.
+Refs: `backend/src/app.rs`, `backend/src/config.rs`, `backend/src/market_data/refresh.rs`, `frontend/src/App.tsx`, `frontend/src/api/queries.ts`, `frontend/src/api/types.ts`, `scripts/start.ps1`, `README.md`, `backend/Cargo.toml`, `frontend/package.json`; implements: Market Data Refresh Triggering.

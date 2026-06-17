@@ -69,6 +69,8 @@ Configuration:
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
 - `TTTB_DATABASE_URL`: backend SQLite database URL
+- `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
+- `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
 - `TTTB_PRODUCTION_DATABASE_URL`: startup-script production database URL
 - `TTTB_LOCAL_DATABASE_URL`: startup-script local test database URL
 

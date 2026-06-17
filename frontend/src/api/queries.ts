@@ -7,6 +7,7 @@ import type {
   ImportResult,
   Instrument,
   InstrumentType,
+  PriceStatusResponse,
   RefreshPricesInput,
   RefreshPricesResult,
   RollbackResult,
@@ -39,6 +40,15 @@ export function useGains() {
   return useQuery({
     queryKey: ["gains"],
     queryFn: () => apiGet<GainsResponse>("/api/gains"),
+  });
+}
+
+export function usePriceStatus() {
+  return useQuery({
+    queryKey: ["price-status"],
+    queryFn: () => apiGet<PriceStatusResponse>("/api/prices/status"),
+    refetchInterval: (query) => (query.state.data?.refreshing ? 2000 : false),
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -109,6 +119,7 @@ export function useRefreshPrices() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
       void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      void queryClient.invalidateQueries({ queryKey: ["price-status"] });
     },
   });
 }

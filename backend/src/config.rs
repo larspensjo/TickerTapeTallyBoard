@@ -12,6 +12,8 @@ const DEFAULT_DATABASE_URL: &str = "sqlite://tttb-ledger.sqlite";
 const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
 const HOST_ENV: &str = "TTTB_HOST";
 const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
+const MARKET_DATA_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_REFRESH_ENABLED";
+const MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED";
 const PORT_ENV: &str = "TTTB_PORT";
 const HOSTING_PORT_ENV: &str = "PORT";
 const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
@@ -22,6 +24,8 @@ pub struct AppConfig {
     pub port: u16,
     pub database_url: String,
     pub static_assets_dir: PathBuf,
+    pub market_data_refresh_enabled: bool,
+    pub launch_refresh_enabled: bool,
 }
 
 impl AppConfig {
@@ -43,6 +47,16 @@ impl AppConfig {
         let database_url =
             read_optional(DATABASE_URL_ENV)?.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned());
 
+        let market_data_refresh_enabled = read_optional(MARKET_DATA_REFRESH_ENABLED_ENV)?
+            .map(|value| parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, &value))
+            .transpose()?
+            .unwrap_or(true);
+
+        let launch_refresh_enabled = read_optional(MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV)?
+            .map(|value| parse_bool(MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, &value))
+            .transpose()?
+            .unwrap_or(true);
+
         let static_assets_dir = read_optional(STATIC_ASSETS_DIR_ENV)?
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_STATIC_ASSETS_DIR));
@@ -52,6 +66,8 @@ impl AppConfig {
             port,
             database_url,
             static_assets_dir,
+            market_data_refresh_enabled,
+            launch_refresh_enabled,
         })
     }
 
@@ -75,6 +91,8 @@ impl Default for AppConfig {
             port: DEFAULT_PORT,
             database_url: DEFAULT_DATABASE_URL.to_owned(),
             static_assets_dir: PathBuf::from(DEFAULT_STATIC_ASSETS_DIR),
+            market_data_refresh_enabled: true,
+            launch_refresh_enabled: true,
         }
     }
 }
@@ -138,6 +156,18 @@ fn parse_port(variable: &'static str, value: &str) -> Result<u16, ConfigError> {
     })
 }
 
+fn parse_bool(variable: &'static str, value: &str) -> Result<bool, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError {
+            variable,
+            value: value.to_owned(),
+            message: "must be a boolean value",
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +191,8 @@ mod tests {
             config.static_assets_dir,
             PathBuf::from(DEFAULT_STATIC_ASSETS_DIR)
         );
+        assert!(config.market_data_refresh_enabled);
+        assert!(config.launch_refresh_enabled);
     }
 
     #[test]
@@ -168,6 +200,8 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, None),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, Some("9090")),
             (HOSTING_PORT_ENV, Some("3000")),
             (STATIC_ASSETS_DIR_ENV, None),
@@ -184,6 +218,8 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, Some("0.0.0.0")),
             (DATABASE_URL_ENV, None),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, Some("3000")),
             (STATIC_ASSETS_DIR_ENV, None),
@@ -203,6 +239,8 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, None),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, None),
             (STATIC_ASSETS_DIR_ENV, Some("C:/tttb/static")),
@@ -218,6 +256,8 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, Some("sqlite:///tmp/tttb.sqlite")),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
             (HOSTING_PORT_ENV, None),
             (STATIC_ASSETS_DIR_ENV, None),
@@ -266,6 +306,34 @@ mod tests {
         assert_eq!(error.variable, PORT_ENV);
         assert_eq!(error.value, "70000");
         assert_eq!(error.message, "must be a TCP port number");
+    }
+
+    #[test]
+    fn parse_bool_rejects_invalid_values() {
+        let error = parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, "sometimes")
+            .expect_err("invalid boolean value should fail");
+
+        assert_eq!(error.variable, MARKET_DATA_REFRESH_ENABLED_ENV);
+        assert_eq!(error.value, "sometimes");
+        assert_eq!(error.message, "must be a boolean value");
+    }
+
+    #[test]
+    fn from_env_uses_refresh_flags() {
+        let _guard = TestEnv::new(&[
+            (HOST_ENV, None),
+            (DATABASE_URL_ENV, None),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, Some("false")),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, Some("1")),
+            (PORT_ENV, None),
+            (HOSTING_PORT_ENV, None),
+            (STATIC_ASSETS_DIR_ENV, None),
+        ]);
+
+        let config = AppConfig::from_env().expect("config should load");
+
+        assert!(!config.market_data_refresh_enabled);
+        assert!(config.launch_refresh_enabled);
     }
 
     struct TestEnv {

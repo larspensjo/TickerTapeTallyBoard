@@ -36,15 +36,15 @@ export interface Transaction {
 
 export type HoldingBase =
   | {
-      status: "available";
-      cost_basis_base: string;
-      average_cost_base: string;
-      fee_component_base: string;
-    }
+    status: "available";
+    cost_basis_base: string;
+    average_cost_base: string;
+    fee_component_base: string;
+  }
   | {
-      status: "unavailable";
-      reasons: { code: string; transaction_id: number }[];
-    };
+    status: "unavailable";
+    reasons: { code: string; transaction_id: number }[];
+  };
 
 export interface Holding {
   instrument: Instrument;
@@ -108,6 +108,49 @@ export interface GainsResponse {
   base_currency: string;
   summary: GainsSummary;
   rows: GainsRow[];
+}
+
+export interface RefreshRunSummary {
+  run_id: number;
+  trigger: RefreshTrigger;
+  mode: RefreshMode;
+  status: RefreshRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  message: string | null;
+  prices_written: number;
+  fx_rates_written: number;
+  unmapped_instruments: number;
+  failed_items: number;
+}
+
+export type PriceSnapshotStatus = "available" | "missing" | "unmapped";
+
+export interface PriceSnapshotState {
+  status: PriceSnapshotStatus;
+  date: string | null;
+  value: string | null;
+  provider: string | null;
+  provider_symbol: string | null;
+  reason: string | null;
+}
+
+export interface PriceStatusInstrument {
+  instrument_id: number;
+  exchange: string;
+  symbol: string;
+  currency: string;
+  mapping_enabled: boolean;
+  provider_symbol: string | null;
+  open_quantity: number;
+  latest_price: PriceSnapshotState;
+  latest_fx: PriceSnapshotState;
+}
+
+export interface PriceStatusResponse {
+  refreshing: boolean;
+  latest_run: RefreshRunSummary | null;
+  instruments: PriceStatusInstrument[];
 }
 
 export type RefreshMode = "latest" | "backfill";

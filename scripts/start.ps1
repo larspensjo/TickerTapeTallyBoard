@@ -142,6 +142,21 @@ function Resolve-BackendPort {
     throw "No free backend port was found starting at $PreferredPort."
 }
 
+function Resolve-FrontendPort {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PreferredPort
+    )
+
+    for ($port = $PreferredPort; $port -le 65535; $port++) {
+        if (Test-PortAvailable -Port $port) {
+            return $port
+        }
+    }
+
+    throw "No free frontend port was found starting at $PreferredPort."
+}
+
 function ConvertTo-SqliteUrl {
     param(
         [Parameter(Mandatory = $true)]
@@ -248,12 +263,16 @@ if ($BuildOnly) {
 }
 
 $Database = Resolve-DatabaseUrl
-$BackendPort = Resolve-BackendPort -PreferredPort 8080 -FrontendPort $FrontendPort
+$ResolvedFrontendPort = Resolve-FrontendPort -PreferredPort $FrontendPort
+$BackendPort = Resolve-BackendPort -PreferredPort 8080 -FrontendPort $ResolvedFrontendPort
 
 Write-Host ""
 Write-Host "==> Start application" -ForegroundColor Cyan
 Write-Host "Backend:  http://127.0.0.1:$BackendPort/"
-Write-Host "Frontend: http://127.0.0.1:$FrontendPort/"
+Write-Host "Frontend: http://127.0.0.1:$ResolvedFrontendPort/"
+if ($ResolvedFrontendPort -ne $FrontendPort) {
+    Write-Host "Preferred frontend port $FrontendPort was busy; using $ResolvedFrontendPort instead." -ForegroundColor Yellow
+}
 Write-Host "Database: $($Database.Mode) ($($Database.Url))"
 Write-Host "Press Ctrl+C to stop both processes."
 Write-Host ""
@@ -296,7 +315,7 @@ try {
 
     $frontendProcess = Start-Process `
         -FilePath $NpmCommand.Source `
-        -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $FrontendPort) `
+        -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $ResolvedFrontendPort, "--strictPort") `
         -WorkingDirectory $FrontendDir `
         -RedirectStandardOutput $FrontendStdout `
         -RedirectStandardError $FrontendStderr `
@@ -304,7 +323,7 @@ try {
         -WindowStyle Hidden
 
     Wait-Url "http://127.0.0.1:$BackendPort/"
-    Wait-Url "http://127.0.0.1:$FrontendPort/"
+    Wait-Url "http://127.0.0.1:$ResolvedFrontendPort/"
     Write-Host "Application is running." -ForegroundColor Green
     Write-Host ""
 
