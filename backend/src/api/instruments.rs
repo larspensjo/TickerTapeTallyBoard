@@ -92,6 +92,7 @@ pub async fn create(
         name: body.name.trim().to_owned(),
         kind: body.kind.as_db_str().to_owned(),
         currency: body.currency.trim().to_owned(),
+        isin: None,
     };
     if new.symbol.is_empty()
         || new.exchange.is_empty()

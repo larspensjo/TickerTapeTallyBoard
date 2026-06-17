@@ -281,6 +281,7 @@ async fn write_batch(state: &AppState, report: &ParsedReport, hash: &str) -> Res
                         name: mapped.instrument.name.clone(),
                         kind: "STOCK".to_string(),
                         currency: mapped.instrument.currency.clone(),
+                        isin: None,
                     },
                 )
                 .await?;

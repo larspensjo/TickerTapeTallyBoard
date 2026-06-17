@@ -617,3 +617,17 @@ Observed:
 Open question:
 - None.
 Refs: `frontend/src/App.tsx`, `frontend/src/api/queries.ts`, `frontend/src/api/types.ts`, `frontend/src/components/GainsTable.tsx`, `frontend/src/components/HoldingsTable.tsx`, `frontend/src/components/valuationDisplay.tsx`, `frontend/src/styles.css`, `frontend/vite.config.ts`, `scripts/start.ps1`.
+## 2026-06-17 - Avanza import schema and instrument identity
+Added the Phase 1 schema and repository work for ISIN-aware instruments and AVANZA batch sources.
+What changed:
+- Added migrations for `instruments.isin` plus a widened `import_batches.source` CHECK that accepts `AVANZA`.
+- Extended the instrument repository with `isin` fields, `find_by_isin` helpers, and ISIN-aware upsert/backfill behavior.
+- Updated current `NewInstrument` construction sites to supply `isin: None` where appropriate and added an AVANZA source regression in the import API tests.
+Observed:
+- `cargo build` passed from `backend/`.
+- `cargo test --lib db::instruments` passed.
+- `cargo test --test import_api` passed, including the new AVANZA source acceptance test.
+- `cargo clippy --all-targets -- -D warnings` and `cargo fmt` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/migrations/0003_add_instrument_isin.sql`, `backend/migrations/0004_widen_import_batch_source.sql`, `backend/src/db/instruments.rs`, `backend/src/api/import.rs`, `backend/tests/import_api.rs`.

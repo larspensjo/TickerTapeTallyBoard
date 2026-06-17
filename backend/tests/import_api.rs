@@ -120,6 +120,21 @@ async fn preview_reports_duplicate_batch_when_hash_exists() {
 }
 
 #[tokio::test]
+async fn import_batches_accepts_avanza_source() {
+    let state = test_state().await;
+    let batch_id: i64 = sqlx::query_scalar(
+        "INSERT INTO import_batches (source, imported_at, raw_file_hash) VALUES ('AVANZA', ?, ?) RETURNING id",
+    )
+    .bind("2026-06-16T00:00:00Z")
+    .bind("deadbeef")
+    .fetch_one(&state.pool)
+    .await
+    .expect("AVANZA source should be accepted");
+
+    assert!(batch_id >= 1);
+}
+
+#[tokio::test]
 async fn commit_writes_one_atomic_batch() {
     let state = test_state().await;
     let (status, body) = send_bytes(&state, "/api/import/sharesight/commit", SYNTHETIC).await;

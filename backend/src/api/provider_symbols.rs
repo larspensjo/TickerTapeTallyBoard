@@ -153,6 +153,7 @@ mod tests {
                 name: "Microsoft".to_owned(),
                 kind: "STOCK".to_owned(),
                 currency: "USD".to_owned(),
+                isin: None,
             },
         )
         .await

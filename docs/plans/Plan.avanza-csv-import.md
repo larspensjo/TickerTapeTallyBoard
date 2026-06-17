@@ -1,7 +1,5 @@
 # Avanza CSV Import Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Import an Avanza "AllTradesReport" CSV into the existing ledger by reusing the pure domain validator and the established preview → commit → rollback flow, behind a source-neutral shared import core.
 
 **Architecture:** Option A — shared core, per-source parser + mapper. Each source's parser+mapper turns bytes into source-neutral *row outcomes* (`Mapped`, `Skip`, `Error`) plus a small header; the shared planner and writer consume those outcomes. Instrument identity becomes ISIN-aware. A whole-asset deselect/exclude path lets the user drop problematic assets at commit time.

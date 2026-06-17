@@ -1061,6 +1061,7 @@ mod tests {
                 name: symbol.to_owned(),
                 kind: "STOCK".to_owned(),
                 currency: currency.to_owned(),
+                isin: None,
             },
         )
         .await
