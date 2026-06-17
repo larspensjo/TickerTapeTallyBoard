@@ -244,9 +244,9 @@ export function App() {
                   aria-hidden="true"
                   className={
                     healthQuery.isFetching ||
-                      holdingsQuery.isFetching ||
-                      instrumentsQuery.isFetching ||
-                      transactionsQuery.isFetching
+                    holdingsQuery.isFetching ||
+                    instrumentsQuery.isFetching ||
+                    transactionsQuery.isFetching
                       ? "spin"
                       : undefined
                   }

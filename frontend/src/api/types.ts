@@ -36,15 +36,15 @@ export interface Transaction {
 
 export type HoldingBase =
   | {
-    status: "available";
-    cost_basis_base: string;
-    average_cost_base: string;
-    fee_component_base: string;
-  }
+      status: "available";
+      cost_basis_base: string;
+      average_cost_base: string;
+      fee_component_base: string;
+    }
   | {
-    status: "unavailable";
-    reasons: { code: string; transaction_id: number }[];
-  };
+      status: "unavailable";
+      reasons: { code: string; transaction_id: number }[];
+    };
 
 export interface Holding {
   instrument: Instrument;
@@ -80,6 +80,8 @@ export interface GainsSummary {
   cost_basis_base: MoneyValue;
   unrealized_gain_base: MoneyValue;
   unrealized_gain_percent: PercentValue;
+  price_effect_base: MoneyValue;
+  fx_effect_base: MoneyValue;
   day_change_base: MoneyValue;
   day_change_percent: PercentValue;
   excluded_rows: number;
@@ -98,6 +100,8 @@ export interface GainsRow {
   market_value_base: MoneyValue;
   unrealized_gain_base: MoneyValue;
   unrealized_gain_percent: PercentValue;
+  price_effect_base: MoneyValue;
+  fx_effect_base: MoneyValue;
   day_change_base: MoneyValue;
   day_change_percent: PercentValue;
   reasons: string[];

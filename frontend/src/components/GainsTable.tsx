@@ -9,12 +9,11 @@ import {
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { GainsRow } from "../api/types";
+import type { AvailabilityValue, GainsRow } from "../api/types";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
   freshnessLabel,
-  freshnessTone,
   reasonLabel,
   reasonSummary,
 } from "./valuationDisplay";
@@ -27,15 +26,12 @@ interface RowView {
 const columnHelper = createColumnHelper<RowView>();
 
 const numericColumns = new Set([
-  "quantity",
-  "cost_basis_native",
   "cost_basis_base",
-  "market_value_native",
   "market_value_base",
   "unrealized_gain_base",
-  "unrealized_gain_percent",
+  "price_effect_base",
+  "fx_effect_base",
   "day_change_base",
-  "day_change_percent",
 ]);
 
 function snapshotStatus(freshness: string): string {
@@ -46,8 +42,20 @@ function snapshotStatus(freshness: string): string {
   return freshnessLabel(freshness);
 }
 
-function snapshotIsWarning(freshness: string): boolean {
-  return freshnessTone(freshness) === "warning";
+function stackedMetricCell(
+  value: AvailabilityValue<string>,
+  percent: AvailabilityValue<string>,
+) {
+  return (
+    <div className="metric-stack">
+      <AvailabilityValueCell value={value} prefix="SEK " tone="signed" />
+      {value.status === "available" ? (
+        <span className="metric-subtle">
+          <AvailabilityValueCell value={percent} suffix="%" tone="signed" />
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function latestStatusLabel(row: GainsRow): string {
@@ -85,50 +93,6 @@ const columns = [
       );
     },
   }),
-  columnHelper.accessor((row) => row.gain.quantity, {
-    id: "quantity",
-    header: "Qty",
-    cell: (info) => info.getValue(),
-  }),
-  columnHelper.accessor((row) => row.gain.latest_price, {
-    id: "latest_price",
-    header: "Latest close",
-    cell: (info) => {
-      const snapshot = info.getValue();
-      if (!snapshot) {
-        return (
-          <span className="status-chip warning" title="Missing price">
-            Missing price
-          </span>
-        );
-      }
-
-      return (
-        <div className="metric-stack">
-          <span className="number">
-            {snapshot.currency} {snapshot.close}
-          </span>
-          <span className="metric-subtle">{snapshot.date}</span>
-          {snapshotIsWarning(snapshot.freshness) ? (
-            <span className="status-chip warning">
-              {snapshotStatus(snapshot.freshness)}
-            </span>
-          ) : null}
-        </div>
-      );
-    },
-  }),
-  columnHelper.accessor((row) => row.gain.market_value_native, {
-    id: "market_value_native",
-    header: "Market value",
-    sortingFn: availabilitySortRows,
-    cell: (info) => (
-      <AvailabilityValueCell
-        value={info.getValue()}
-        prefix={`${info.row.original.gain.instrument.currency} `}
-      />
-    ),
-  }),
   columnHelper.accessor((row) => row.gain.cost_basis_base, {
     id: "cost_basis_base",
     header: "Cost basis (SEK)",
@@ -147,7 +111,17 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.unrealized_gain_base, {
     id: "unrealized_gain_base",
-    header: "Unrealized gain",
+    header: "Total gain + %",
+    sortingFn: availabilitySortRows,
+    cell: (info) =>
+      stackedMetricCell(
+        info.getValue(),
+        info.row.original.gain.unrealized_gain_percent,
+      ),
+  }),
+  columnHelper.accessor((row) => row.gain.price_effect_base, {
+    id: "price_effect_base",
+    header: "Price effect",
     sortingFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell
@@ -157,33 +131,27 @@ const columns = [
       />
     ),
   }),
-  columnHelper.accessor((row) => row.gain.unrealized_gain_percent, {
-    id: "unrealized_gain_percent",
-    header: "Gain %",
+  columnHelper.accessor((row) => row.gain.fx_effect_base, {
+    id: "fx_effect_base",
+    header: "FX effect",
     sortingFn: availabilitySortRows,
     cell: (info) => (
-      <AvailabilityValueCell value={info.getValue()} suffix="%" tone="signed" />
+      <AvailabilityValueCell
+        value={info.getValue()}
+        prefix="SEK "
+        tone="signed"
+      />
     ),
   }),
   columnHelper.accessor((row) => row.gain.day_change_base, {
     id: "day_change_base",
-    header: "Day change",
+    header: "Day change + %",
     sortingFn: availabilitySortRows,
-    cell: (info) => (
-      <AvailabilityValueCell
-        value={info.getValue()}
-        prefix="SEK "
-        tone="signed"
-      />
-    ),
-  }),
-  columnHelper.accessor((row) => row.gain.day_change_percent, {
-    id: "day_change_percent",
-    header: "Day %",
-    sortingFn: availabilitySortRows,
-    cell: (info) => (
-      <AvailabilityValueCell value={info.getValue()} suffix="%" tone="signed" />
-    ),
+    cell: (info) =>
+      stackedMetricCell(
+        info.getValue(),
+        info.row.original.gain.day_change_percent,
+      ),
   }),
   columnHelper.display({
     id: "status",
@@ -229,20 +197,8 @@ export function GainsTable({ rows }: { rows: GainsRow[] }) {
             gain.instrument.name,
             gain.instrument.exchange,
             gain.instrument.currency,
-            gain.quantity.toString(),
-            gain.cost_basis_native,
             gain.cost_basis_base.status === "available"
               ? gain.cost_basis_base.value
-              : "",
-            gain.latest_price?.date ?? "",
-            gain.latest_price?.currency ?? "",
-            gain.latest_price?.close ?? "",
-            gain.latest_fx?.date ?? "",
-            gain.latest_fx?.base ?? "",
-            gain.latest_fx?.quote ?? "",
-            gain.latest_fx?.rate ?? "",
-            gain.market_value_native.status === "available"
-              ? gain.market_value_native.value
               : "",
             gain.market_value_base.status === "available"
               ? gain.market_value_base.value
@@ -252,6 +208,12 @@ export function GainsTable({ rows }: { rows: GainsRow[] }) {
               : "",
             gain.unrealized_gain_percent.status === "available"
               ? gain.unrealized_gain_percent.value
+              : "",
+            gain.price_effect_base.status === "available"
+              ? gain.price_effect_base.value
+              : "",
+            gain.fx_effect_base.status === "available"
+              ? gain.fx_effect_base.value
               : "",
             gain.day_change_base.status === "available"
               ? gain.day_change_base.value
