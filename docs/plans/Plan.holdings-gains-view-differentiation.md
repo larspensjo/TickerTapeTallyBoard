@@ -225,8 +225,6 @@ weight.
 - Bump `frontend/package.json` version.
 - Apply any small CSS refinements needed in `frontend/src/styles.css` so the new
   table columns stay readable on the existing dark theme.
-- Add an `EngineeringDiary.md` entry for the implemented application change. Do
-  not reference this plan from the diary entry.
 - Archive this plan after implementation by moving it to `docs/plans/archive/`,
   creating that directory when the first implemented plan is archived.
 

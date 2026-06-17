@@ -27,6 +27,8 @@ pub struct GainsResponse {
 pub struct SummaryResponse {
     pub market_value_base: AvailabilityResponse,
     pub cost_basis_base: AvailabilityResponse,
+    pub price_effect_base: AvailabilityResponse,
+    pub fx_effect_base: AvailabilityResponse,
     pub unrealized_gain_base: AvailabilityResponse,
     pub unrealized_gain_percent: AvailabilityResponse,
     pub day_change_base: AvailabilityResponse,
@@ -40,6 +42,8 @@ pub struct GainRow {
     pub quantity: i64,
     pub cost_basis_native: String,
     pub cost_basis_base: AvailabilityResponse,
+    pub price_effect_base: AvailabilityResponse,
+    pub fx_effect_base: AvailabilityResponse,
     pub latest_price: Option<PriceSnapshotResponse>,
     pub previous_price: Option<PriceSnapshotResponse>,
     pub latest_fx: Option<FxSnapshotResponse>,
@@ -103,6 +107,12 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
             cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
                 money_string(*v)
             }),
+            price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
+                money_string(*v)
+            }),
+            fx_effect_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
+                money_string(*v)
+            }),
             latest_price: valued_holding
                 .latest_price
                 .as_ref()
@@ -156,6 +166,10 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
                 money_string(*v)
             }),
             cost_basis_base: serialize_availability(&summary.cost_basis_base, |v| money_string(*v)),
+            price_effect_base: serialize_availability(&summary.price_effect_base, |v| {
+                money_string(*v)
+            }),
+            fx_effect_base: serialize_availability(&summary.fx_effect_base, |v| money_string(*v)),
             unrealized_gain_base: serialize_availability(&summary.unrealized_gain_base, |v| {
                 money_string(*v)
             }),
@@ -255,6 +269,8 @@ mod tests {
         assert_eq!(row["quantity"], 10);
         assert_eq!(row["cost_basis_native"], "1000.00");
         assert_available(&row["cost_basis_base"], "10000.00");
+        assert_available(&row["price_effect_base"], "2200.00");
+        assert_available(&row["fx_effect_base"], "1000.00");
         assert_eq!(row["latest_price"]["close"], "120.00");
         assert_eq!(row["latest_fx"]["rate"], "11");
         assert_eq!(row["latest_fx"]["quote"], BASE_CURRENCY);
@@ -267,7 +283,34 @@ mod tests {
 
         assert_available(&body["summary"]["market_value_base"], "13200.00");
         assert_available(&body["summary"]["cost_basis_base"], "10000.00");
+        assert_available(&body["summary"]["price_effect_base"], "2200.00");
+        assert_available(&body["summary"]["fx_effect_base"], "1000.00");
         assert_available(&body["summary"]["unrealized_gain_base"], "3200.00");
+    }
+
+    #[tokio::test]
+    async fn gains_unavailable_attribution_serializes_reason_arrays() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+        let trade_date = (Local::now().naive_local().date() - Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":trade_date,
+                   "quantity":10,"price":"100","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+
+        let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let row = &body["rows"][0];
+        assert_unavailable(&row["price_effect_base"], &["missing_price", "missing_fx"]);
+        assert_unavailable(&row["fx_effect_base"], &["missing_price", "missing_fx"]);
     }
 
     async fn instrument(state: &AppState, symbol: &str, exchange: &str, currency: &str) -> i64 {
@@ -341,5 +384,16 @@ mod tests {
     fn assert_available(value: &serde_json::Value, expected: &str) {
         assert_eq!(value["status"], "available");
         assert_eq!(value["value"], expected);
+    }
+
+    fn assert_unavailable(value: &serde_json::Value, expected: &[&str]) {
+        assert_eq!(value["status"], "unavailable");
+        let reasons = value["reasons"]
+            .as_array()
+            .expect("unavailable reasons array")
+            .iter()
+            .map(|reason| reason.as_str().expect("reason string"))
+            .collect::<Vec<_>>();
+        assert_eq!(reasons, expected);
     }
 }
