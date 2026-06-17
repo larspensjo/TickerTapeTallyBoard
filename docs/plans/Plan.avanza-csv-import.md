@@ -13,7 +13,6 @@
 - Design spec: `docs/superpowers/specs/Design.avanza-csv-import.md`. Read it before starting.
 - Backend build/test from `backend/`: `cargo build`, `cargo test`, then `cargo clippy --all-targets -- -D warnings` and `cargo fmt`.
 - Frontend from `frontend/`: `npm run check` then `npm run fmt`.
-- Per repo workflow (`Agents.md`): add an `EngineeringDiary.md` entry per logical change as you implement; a `docs/DecisionLog.md` entry is added in Phase 10 (it may be added during planning). Diary entries must stand alone and must not reference this plan.
 - Each phase ends green (build + tests + clippy + fmt) and is independently committable.
 
 ## Open Questions / Decisions to confirm
@@ -46,7 +45,7 @@ A second review (`docs/reviews/Review.avanza-csv-import-plan.md`) is folded into
 - **One shared `ParseError`.** A single `ParseError` lives in `core::outcome`; both the Sharesight and Avanza parsers use it, dropping the Phase 8 normalization adapter (Phases 3, 6, 8).
 - **Commit counts are uniform.** Phase 5 replaces `commit_source`'s body, so *every* commit reports `effective_counts` (rows actually written); an empty `exclude` makes `effective == prepared`. Preview keeps source-level counts (Phases 4, 5).
 - **Writer error paths log.** `write_batch` logs identity conflicts, `split_without_position`, and ledger failures via `engine_logging` with the batch source + ISIN/symbol, since the central `ApiError` logger only logs `5xx` (Phase 4).
-- **Split-never-creates-instrument is a deliberate behavior change** for a standalone Sharesight split; called out in the Phase 4 diary/commit.
+- **Split-never-creates-instrument is a deliberate behavior change** for a standalone Sharesight split; called out in the Phase 4 commit.
 - **No-ops (verified, no change):** `TransactionKind::as_db_str` and its `PartialEq`/`Eq` derives already exist (`backend/src/domain/transaction.rs`); the seven `NewInstrument` sites are re-verified by `grep` at implementation time (Phase 1 Task 1.3).
 
 ## File map
@@ -70,7 +69,7 @@ Modified:
 - `frontend/src/api/{types.ts,queries.ts}` — extended counts, source toggle, exclude, shared rollback.
 - `frontend/src/components/ImportView.tsx` — source toggle + asset checkboxes + exclude.
 - `frontend/package.json` — version bump.
-- `docs/DecisionLog.md`, `docs/Design.HighLevel.md`, `EngineeringDiary.md`.
+- `docs/DecisionLog.md`, `docs/Design.HighLevel.md``.
 
 ---
 
@@ -329,8 +328,6 @@ Expected: clean.
 git add backend/migrations backend/src/db/instruments.rs backend/src/api backend/src/db backend/src/market_data backend/tests/import_api.rs
 git commit -m "feat(import): ISIN instrument identity and AVANZA batch source"
 ```
-
-Add an `EngineeringDiary.md` entry for the schema + repository change.
 
 ---
 
@@ -1675,8 +1672,6 @@ git add backend/src/import backend/src/api backend/src/db/instruments.rs backend
 git commit -m "refactor(import): source-neutral planner/writer with asset grouping"
 ```
 
-Add a single `EngineeringDiary.md` entry covering the shared-core refactor (planner + writer + API). Call out one deliberate behavior change: a standalone split (no same-batch buy/sell and no existing position) no longer creates an instrument — the shared writer routes splits through `resolve_split_instrument`, which errors with `split_without_position` instead of the old Sharesight `upsert`-for-all-rows path that could create an orphan instrument before `derive_position` rejected it. Net effect is unchanged (the import still fails) but it fails earlier and leaves no orphan.
-
 ---
 
 ## Phase 5 — Whole-asset exclusion at commit
@@ -2674,8 +2669,6 @@ git add backend/src/api backend/tests
 git commit -m "feat(import): Avanza preview/commit routes and fixture tests"
 ```
 
-Add an `EngineeringDiary.md` entry for the Avanza endpoints.
-
 ---
 
 ## Phase 9 — Frontend: source toggle, asset checkboxes, exclude, shared rollback, versions
@@ -2845,8 +2838,6 @@ git add frontend backend/Cargo.toml
 git commit -m "feat(import): Avanza source toggle, asset deselect, shared rollback"
 ```
 
-Add an `EngineeringDiary.md` entry for the frontend import changes (and version bump).
-
 ---
 
 ## Phase 10 — Documentation: decisions + deferred-dividend TODO
@@ -2878,8 +2869,6 @@ git add docs/DecisionLog.md docs/Design.HighLevel.md
 git commit -m "docs: record Avanza import decisions and dividend TODO"
 ```
 
-> No `EngineeringDiary.md` entry is needed for doc-only meta changes (per its instructions).
-
 ---
 
 ## Final verification
@@ -2891,6 +2880,6 @@ git commit -m "docs: record Avanza import decisions and dividend TODO"
 
 ## Self-review against the spec
 
-Mapping of spec sections → phases: Data model & migrations → P1; shared decimal helper + `InstrumentKey.isin` → P2/P3; generalized `build_plan`/`write_batch`, persist `source_currency` from row, ISIN-aware identity, `instrument_identity_conflict` → P3/P4; Avanza parser → P6; Avanza mapper (buy/sell FX, dividend skip, split netting, fractional skip, instrument synthesis) → P7; unsettled rows → P7 (FX rules) + P8 (persisted native `source_currency` test); deselect-assets flow + `dividends`/`skipped` counts + per-asset warnings/errors → P4/P5/P9; API routes + shared rollback → P4/P8; frontend toggle + checkboxes → P9; DecisionLog + Design.HighLevel TODO + EngineeringDiary + version bumps → P9/P10. Testing matrix from the spec is distributed across the per-phase tests.
+Mapping of spec sections → phases: Data model & migrations → P1; shared decimal helper + `InstrumentKey.isin` → P2/P3; generalized `build_plan`/`write_batch`, persist `source_currency` from row, ISIN-aware identity, `instrument_identity_conflict` → P3/P4; Avanza parser → P6; Avanza mapper (buy/sell FX, dividend skip, split netting, fractional skip, instrument synthesis) → P7; unsettled rows → P7 (FX rules) + P8 (persisted native `source_currency` test); deselect-assets flow + `dividends`/`skipped` counts + per-asset warnings/errors → P4/P5/P9; API routes + shared rollback → P4/P8; frontend toggle + checkboxes → P9; DecisionLog + Design.HighLevel TODO + version bumps → P9/P10. Testing matrix from the spec is distributed across the per-phase tests.
 
 Plan-review findings (`docs/reviews/Review.avanza-csv-import-plan.md`) folded in: mapper-stage asset errors are excludable via `asset_key` on `Skip`/`Error` outcomes + a regression test (P3/P5); symbol-only `AVANZA` `isin=NULL` rows are backfilled in place with a guard against a different-ISIN collision + a regression test (P4/P8); all seven `NewInstrument` construction sites are updated (P1); Phases 3–4 are one explicit commit boundary; `ImportResult.warnings` exists from P4; the duplicate-row key includes direction (P4).

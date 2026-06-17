@@ -6,7 +6,6 @@ project has agreed to do going forward.
 ## How to use
 ### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
-- Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
 - Reversals of prior decisions get their own entry referencing the original.
 - Keep entries concise and reference concrete artifacts.
 - New entries go to the end of the file.
