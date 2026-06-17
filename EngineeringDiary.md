@@ -16,6 +16,7 @@ experiments, or decisions.
 - Don't reference planning documents. Entries shall stand on their own, even after plans are archived.
 - There is no need for entries when meta documents are created. E.g. plans or ideas. Only changes to the application.
 - Do not modify older entries if they were commited.
+- Re-use the last entry when reviewing code.
 
 ## Entry Template
 ```
