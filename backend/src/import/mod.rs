@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 
 pub mod sharesight;
+pub mod text;
 
 /// Lowercase hex SHA-256 of the raw file bytes, used as `raw_file_hash`.
 pub fn raw_file_hash(bytes: &[u8]) -> String {
