@@ -1,6 +1,13 @@
 export type TransactionType = "Buy" | "Sell" | "Split" | "Dividend";
 export type InstrumentType = "Stock" | "Etf" | "Fund";
 
+export type AvailabilityValue<T> =
+  | { status: "available"; value: T }
+  | { status: "unavailable"; reasons: string[] };
+
+export type MoneyValue = AvailabilityValue<string>;
+export type PercentValue = AvailabilityValue<string>;
+
 export interface Instrument {
   id: number;
   symbol: string;
@@ -45,6 +52,98 @@ export interface Holding {
   cost_basis_native: string;
   average_cost_native: string;
   base: HoldingBase;
+  valuation?: {
+    market_value_base: MoneyValue;
+    unrealized_gain_base: MoneyValue;
+    unrealized_gain_percent: PercentValue;
+    day_change_base: MoneyValue;
+  } | null;
+}
+
+export interface PriceSnapshot {
+  date: string;
+  close: string;
+  currency: string;
+  freshness: string;
+}
+
+export interface FxSnapshot {
+  date: string;
+  rate: string;
+  base: string;
+  quote: string;
+  freshness: string;
+}
+
+export interface GainsSummary {
+  market_value_base: MoneyValue;
+  cost_basis_base: MoneyValue;
+  unrealized_gain_base: MoneyValue;
+  unrealized_gain_percent: PercentValue;
+  day_change_base: MoneyValue;
+  day_change_percent: PercentValue;
+  excluded_rows: number;
+}
+
+export interface GainsRow {
+  instrument: Instrument;
+  quantity: number;
+  cost_basis_native: string;
+  cost_basis_base: MoneyValue;
+  latest_price: PriceSnapshot | null;
+  previous_price: PriceSnapshot | null;
+  latest_fx: FxSnapshot | null;
+  previous_fx: FxSnapshot | null;
+  market_value_native: MoneyValue;
+  market_value_base: MoneyValue;
+  unrealized_gain_base: MoneyValue;
+  unrealized_gain_percent: PercentValue;
+  day_change_base: MoneyValue;
+  day_change_percent: PercentValue;
+  reasons: string[];
+}
+
+export interface GainsResponse {
+  as_of_date: string;
+  base_currency: string;
+  summary: GainsSummary;
+  rows: GainsRow[];
+}
+
+export type RefreshMode = "latest" | "backfill";
+export type RefreshTrigger = "manual" | "backfill" | "launch";
+export type RefreshRunStatus = "running" | "succeeded" | "partial" | "failed";
+export type RefreshItemKind = "price" | "fx";
+export type RefreshItemStatus = "fetched" | "missing" | "failed" | "unmapped";
+
+export interface RefreshPricesInput {
+  mode: RefreshMode;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface RefreshItem {
+  kind: RefreshItemKind;
+  instrument_id: number | null;
+  symbol_or_pair: string;
+  status: RefreshItemStatus;
+  reason: string | null;
+  rows_written: number;
+}
+
+export interface RefreshPricesResult {
+  run_id: number;
+  trigger: RefreshTrigger;
+  mode: RefreshMode;
+  status: RefreshRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  message: string | null;
+  prices_written: number;
+  fx_rates_written: number;
+  unmapped_instruments: number;
+  failed_items: number;
+  items: RefreshItem[];
 }
 
 export interface ApiErrorBody {

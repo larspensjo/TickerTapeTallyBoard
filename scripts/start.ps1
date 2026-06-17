@@ -92,6 +92,56 @@ function Wait-Url {
     throw "Timed out waiting for $Url."
 }
 
+function Test-PortAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    # Local-dev preflight only; the backend bind remains the source of truth.
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+    try {
+        $listener.Start()
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Resolve-BackendPort {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PreferredPort,
+        [Parameter(Mandatory = $true)]
+        [int]$FrontendPort
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($env:TTTB_PORT)) {
+        $explicitPort = [int]$env:TTTB_PORT
+        if ($explicitPort -eq $FrontendPort) {
+            throw "TTTB_PORT ($explicitPort) must not match the frontend port ($FrontendPort)."
+        }
+
+        return $explicitPort
+    }
+
+    for ($port = $PreferredPort; $port -le 65535; $port++) {
+        if ($port -eq $FrontendPort) {
+            continue
+        }
+
+        if (Test-PortAvailable -Port $port) {
+            return $port
+        }
+    }
+
+    throw "No free backend port was found starting at $PreferredPort."
+}
+
 function ConvertTo-SqliteUrl {
     param(
         [Parameter(Mandatory = $true)]
@@ -126,7 +176,7 @@ function Resolve-DatabaseUrl {
 
         return @{
             Mode = "production"
-            Url = ConvertTo-SqliteUrl $candidate
+            Url  = ConvertTo-SqliteUrl $candidate
         }
     }
 
@@ -142,7 +192,7 @@ function Resolve-DatabaseUrl {
 
     return @{
         Mode = "local test"
-        Url = ConvertTo-SqliteUrl $candidate
+        Url  = ConvertTo-SqliteUrl $candidate
     }
 }
 
@@ -198,10 +248,11 @@ if ($BuildOnly) {
 }
 
 $Database = Resolve-DatabaseUrl
+$BackendPort = Resolve-BackendPort -PreferredPort 8080 -FrontendPort $FrontendPort
 
 Write-Host ""
 Write-Host "==> Start application" -ForegroundColor Cyan
-Write-Host "Backend:  http://127.0.0.1:8080/"
+Write-Host "Backend:  http://127.0.0.1:$BackendPort/"
 Write-Host "Frontend: http://127.0.0.1:$FrontendPort/"
 Write-Host "Database: $($Database.Mode) ($($Database.Url))"
 Write-Host "Press Ctrl+C to stop both processes."
@@ -227,7 +278,9 @@ $FrontendStderr = Join-Path $LogDir "frontend.err.log"
 Remove-Item $BackendStdout, $BackendStderr, $FrontendStdout, $FrontendStderr -ErrorAction SilentlyContinue
 
 $PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
+$PreviousBackendPort = $env:TTTB_PORT
 $env:TTTB_DATABASE_URL = $Database.Url
+$env:TTTB_PORT = $BackendPort
 
 $backendProcess = $null
 $frontendProcess = $null
@@ -250,7 +303,7 @@ try {
         -PassThru `
         -WindowStyle Hidden
 
-    Wait-Url "http://127.0.0.1:8080/"
+    Wait-Url "http://127.0.0.1:$BackendPort/"
     Wait-Url "http://127.0.0.1:$FrontendPort/"
     Write-Host "Application is running." -ForegroundColor Green
     Write-Host ""
@@ -285,5 +338,12 @@ finally {
     }
     else {
         $env:TTTB_DATABASE_URL = $PreviousDatabaseUrl
+    }
+
+    if ($null -eq $PreviousBackendPort) {
+        Remove-Item Env:\TTTB_PORT -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TTTB_PORT = $PreviousBackendPort
     }
 }

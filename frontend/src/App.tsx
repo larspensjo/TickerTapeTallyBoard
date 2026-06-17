@@ -5,18 +5,30 @@ import { type ReactNode, useReducer, useState } from "react";
 import packageJson from "../package.json";
 import {
   useDeleteTransaction,
+  useGains,
   useHoldings,
   useInstruments,
+  useRefreshPrices,
   useTransactions,
 } from "./api/queries";
+import type {
+  MoneyValue,
+  PercentValue,
+  RefreshPricesResult,
+} from "./api/types";
 import { AddTransactionForm } from "./components/AddTransactionForm";
+import { GainsTable } from "./components/GainsTable";
 import { HoldingsTable } from "./components/HoldingsTable";
 import { ImportView } from "./components/ImportView";
 import { TransactionsTable } from "./components/TransactionsTable";
+import {
+  isAvailable,
+  SummaryAvailabilityValue,
+} from "./components/valuationDisplay";
 
 const frontendVersion = packageJson.version;
 
-type BoardView = "holdings" | "transactions";
+type BoardView = "holdings" | "gains" | "transactions";
 type AppView = "board" | "import";
 
 interface UiState {
@@ -71,6 +83,51 @@ function healthLabel(healthQuery: UseQueryResult<HealthResponse, Error>) {
   return `API ${healthQuery.data.status}`;
 }
 
+function summaryMoney(value: MoneyValue | undefined) {
+  return <SummaryAvailabilityValue value={value} prefix="SEK " />;
+}
+
+function summaryPercent(value: PercentValue | undefined) {
+  return <SummaryAvailabilityValue value={value} suffix="%" />;
+}
+
+function refreshResultNeedsWarning(result: RefreshPricesResult): boolean {
+  return (
+    result.status === "partial" ||
+    result.status === "failed" ||
+    result.failed_items > 0 ||
+    result.unmapped_instruments > 0
+  );
+}
+
+function refreshResultLabel(result: RefreshPricesResult): string {
+  if (result.status === "failed") {
+    return "Price refresh failed";
+  }
+
+  if (refreshResultNeedsWarning(result)) {
+    return "Price refresh partial";
+  }
+
+  return "Prices refreshed";
+}
+
+function refreshResultTitle(result: RefreshPricesResult): string {
+  const parts = [
+    `status ${result.status}`,
+    `${result.prices_written} prices`,
+    `${result.fx_rates_written} FX`,
+    `${result.unmapped_instruments} unmapped`,
+    `${result.failed_items} failed`,
+  ];
+
+  if (result.message) {
+    parts.push(result.message);
+  }
+
+  return parts.join(", ");
+}
+
 export function App() {
   const [uiState, dispatch] = useReducer(uiReducer, {
     appView: "board",
@@ -85,12 +142,16 @@ export function App() {
   const instrumentsQuery = useInstruments();
   const transactionsQuery = useTransactions();
   const holdingsQuery = useHoldings();
+  const gainsQuery = useGains();
+  const refreshPrices = useRefreshPrices();
   const deleteTransaction = useDeleteTransaction();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const instruments = instrumentsQuery.data ?? [];
   const holdingsCount = holdingsQuery.data?.length ?? 0;
   const transactionsCount = transactionsQuery.data?.length ?? 0;
+  const gainsSummary = gainsQuery.data?.summary;
+  const totalValue = gainsSummary?.market_value_base;
 
   function showTransactions() {
     dispatch({ type: "appViewSelected", appView: "board" });
@@ -179,6 +240,19 @@ export function App() {
                 <span>Refresh</span>
               </button>
               <button
+                className="button secondary"
+                type="button"
+                onClick={() => refreshPrices.mutate({ mode: "latest" })}
+                disabled={refreshPrices.isPending}
+              >
+                <RefreshCw
+                  aria-hidden="true"
+                  className={refreshPrices.isPending ? "spin" : undefined}
+                  size={16}
+                />
+                <span>Refresh prices</span>
+              </button>
+              <button
                 className="button primary"
                 type="button"
                 onClick={() =>
@@ -197,12 +271,33 @@ export function App() {
         <section className="totals-band" aria-label="Portfolio summary">
           <div>
             <p className="eyebrow">Portfolio</p>
-            <strong className="total-value">{holdingsCount} holdings</strong>
+            <strong className="total-value">
+              {isAvailable(totalValue)
+                ? `SEK ${totalValue.value}`
+                : `${holdingsCount} holdings`}
+            </strong>
           </div>
           <div className="summary-metrics">
             <span>
               Holdings <strong className="number">{holdingsCount}</strong>
             </span>
+            {gainsSummary ? (
+              <>
+                <span>
+                  Unrealized {summaryMoney(gainsSummary.unrealized_gain_base)}{" "}
+                  {summaryPercent(gainsSummary.unrealized_gain_percent)}
+                </span>
+                <span>
+                  Day {summaryMoney(gainsSummary.day_change_base)}{" "}
+                  {summaryPercent(gainsSummary.day_change_percent)}
+                </span>
+                {gainsSummary.excluded_rows ? (
+                  <span className="status-chip warning">
+                    {gainsSummary.excluded_rows} missing
+                  </span>
+                ) : null}
+              </>
+            ) : null}
             <span>
               Transactions{" "}
               <strong className="number">{transactionsCount}</strong>
@@ -221,6 +316,31 @@ export function App() {
           <span className="status-chip">Manual entry</span>
           <span className="status-chip">SEK base</span>
           <span className="status-chip">UI {frontendVersion}</span>
+          {refreshPrices.isPending ? (
+            <span className="status-chip warning">
+              <RefreshCw aria-hidden="true" className="spin" size={12} />
+              Refreshing prices
+            </span>
+          ) : null}
+          {refreshPrices.isError ? (
+            <span
+              className="status-chip warning"
+              title={refreshPrices.error.message}
+            >
+              Price refresh failed
+            </span>
+          ) : refreshPrices.data ? (
+            <span
+              className={
+                refreshResultNeedsWarning(refreshPrices.data)
+                  ? "status-chip warning"
+                  : "status-chip"
+              }
+              title={refreshResultTitle(refreshPrices.data)}
+            >
+              {refreshResultLabel(refreshPrices.data)}
+            </span>
+          ) : null}
           <span className="status-chip">
             API{" "}
             {healthQuery.data?.version ??
@@ -270,6 +390,21 @@ export function App() {
                   </button>
                   <button
                     className={
+                      uiState.boardView === "gains" ? "active" : undefined
+                    }
+                    type="button"
+                    aria-pressed={uiState.boardView === "gains"}
+                    onClick={() =>
+                      dispatch({
+                        type: "boardViewSelected",
+                        boardView: "gains",
+                      })
+                    }
+                  >
+                    Gains
+                  </button>
+                  <button
+                    className={
                       uiState.boardView === "transactions"
                         ? "active"
                         : undefined
@@ -297,6 +432,16 @@ export function App() {
                   emptyMessage="No holdings yet. Add a Buy to get started."
                 >
                   <HoldingsTable holdings={holdingsQuery.data ?? []} />
+                </BoardSection>
+              ) : uiState.boardView === "gains" ? (
+                <BoardSection
+                  isPending={gainsQuery.isPending}
+                  isError={gainsQuery.isError}
+                  isEmpty={(gainsQuery.data?.rows.length ?? 0) === 0}
+                  onRetry={() => void gainsQuery.refetch()}
+                  emptyMessage="No valued holdings yet. Add a Buy and refresh prices."
+                >
+                  <GainsTable rows={gainsQuery.data?.rows ?? []} />
                 </BoardSection>
               ) : (
                 <BoardSection

@@ -9,8 +9,80 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import type { Holding } from "../api/types";
+import {
+  AvailabilityValueCell,
+  availabilitySortRows,
+  isAvailable,
+  reasonSummary,
+  unavailableValue,
+} from "./valuationDisplay";
 
 const columnHelper = createColumnHelper<Holding>();
+
+function valuationUnavailableReasons(holding: Holding): string[] {
+  return [
+    ...(holding.valuation?.market_value_base.status === "unavailable"
+      ? holding.valuation.market_value_base.reasons
+      : []),
+    ...(holding.valuation?.unrealized_gain_base.status === "unavailable"
+      ? holding.valuation.unrealized_gain_base.reasons
+      : []),
+    ...(holding.valuation?.unrealized_gain_percent.status === "unavailable"
+      ? holding.valuation.unrealized_gain_percent.reasons
+      : []),
+    ...(holding.valuation?.day_change_base.status === "unavailable"
+      ? holding.valuation.day_change_base.reasons
+      : []),
+  ];
+}
+
+function valuationSummaryCell(holding: Holding) {
+  const valuation = holding.valuation;
+  if (!valuation || !isAvailable(valuation.market_value_base)) {
+    const reasons = valuation ? valuationUnavailableReasons(holding) : [];
+    return (
+      <span
+        className="status-chip warning"
+        title={reasons.length > 0 ? reasonSummary(reasons) : undefined}
+      >
+        Valuation missing
+      </span>
+    );
+  }
+
+  return (
+    <div className="metric-stack">
+      <AvailabilityValueCell
+        value={valuation.market_value_base}
+        prefix="SEK "
+      />
+      <span className="metric-subtle">
+        P&amp;L{" "}
+        <AvailabilityValueCell
+          value={valuation.unrealized_gain_base}
+          prefix="SEK "
+          tone="signed"
+          unavailableLabel="Missing"
+        />{" "}
+        <AvailabilityValueCell
+          value={valuation.unrealized_gain_percent}
+          suffix="%"
+          tone="signed"
+          unavailableLabel="Missing"
+        />
+      </span>
+      <span className="metric-subtle">
+        Day{" "}
+        <AvailabilityValueCell
+          value={valuation.day_change_base}
+          prefix="SEK "
+          tone="signed"
+          unavailableLabel="Missing"
+        />
+      </span>
+    </div>
+  );
+}
 
 const columns = [
   columnHelper.accessor((row) => row.instrument.symbol, {
@@ -36,39 +108,29 @@ const columns = [
     cell: (info) =>
       `${info.row.original.instrument.currency} ${info.getValue()}`,
   }),
-  columnHelper.display({
-    id: "base",
-    header: "Avg cost/share (SEK)",
-    cell: (info) => {
-      const holding = info.row.original;
-      if (holding.base.status === "available") {
-        return (
-          <span className="number">SEK {holding.base.average_cost_base}</span>
-        );
-      }
-
-      const title = holding.base.reasons
-        .map((reason) => `${reason.code} @ ${reason.transaction_id}`)
-        .join(", ");
-      return (
-        <span className="status-chip warning" title={title}>
-          FX missing
-        </span>
-      );
-    },
-  }),
   columnHelper.accessor("cost_basis_native", {
     header: "Cost basis (total)",
     cell: (info) =>
       `${info.row.original.instrument.currency} ${info.getValue()}`,
   }),
+  columnHelper.accessor(
+    (row) =>
+      row.valuation?.market_value_base ??
+      unavailableValue("valuation_unavailable"),
+    {
+      id: "valuation_summary",
+      header: "Value / P&L",
+      sortingFn: availabilitySortRows,
+      cell: (info) => valuationSummaryCell(info.row.original),
+    },
+  ),
 ];
 
 const numericColumns = new Set([
+  "valuation_summary",
   "quantity",
   "average_cost_native",
   "cost_basis_native",
-  "base",
 ]);
 
 export function HoldingsTable({ holdings }: { holdings: Holding[] }) {

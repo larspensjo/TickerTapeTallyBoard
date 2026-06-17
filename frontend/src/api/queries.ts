@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend, apiSendBytes } from "./client";
 import type {
+  GainsResponse,
   Holding,
   ImportPreview,
   ImportResult,
   Instrument,
   InstrumentType,
+  RefreshPricesInput,
+  RefreshPricesResult,
   RollbackResult,
   Transaction,
   TransactionType,
@@ -29,6 +32,13 @@ export function useHoldings() {
   return useQuery({
     queryKey: ["holdings"],
     queryFn: () => apiGet<Holding[]>("/api/holdings"),
+  });
+}
+
+export function useGains() {
+  return useQuery({
+    queryKey: ["gains"],
+    queryFn: () => apiGet<GainsResponse>("/api/gains"),
   });
 }
 
@@ -86,6 +96,19 @@ export function useDeleteTransaction() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+    },
+  });
+}
+
+export function useRefreshPrices() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: RefreshPricesInput = { mode: "latest" }) =>
+      apiSend<RefreshPricesResult>("POST", "/api/prices/refresh", input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["gains"] });
     },
   });
 }

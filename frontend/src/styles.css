@@ -400,6 +400,10 @@ table {
   border-collapse: collapse;
 }
 
+.gains-table table {
+  min-width: 1180px;
+}
+
 th,
 td {
   height: 36px;
@@ -477,6 +481,23 @@ tbody tr:last-child td {
 
 .instrument-cell.compact em {
   grid-column: auto;
+}
+
+.metric-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.metric-subtle {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-subtle .number {
+  font-size: inherit;
 }
 
 .side-panel {

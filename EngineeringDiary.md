@@ -595,3 +595,25 @@ Observed:
 Open question:
 - None.
 Refs: `backend/src/api/valuation.rs`, `backend/src/api/gains.rs`, `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `EngineeringDiary.md`.
+
+## 2026-06-17 - Frontend gains board view
+Added the Phase 3.6 frontend board view for gains, along with market-data refresh wiring, additive valuation display in holdings, and local startup polish.
+What changed:
+- Added frontend API contracts for gains, holdings valuation, and market-data refresh payloads in `frontend/src/api/types.ts`, plus React Query hooks for `useGains()` and `useRefreshPrices()`.
+- Added a new `GainsTable` component with sortable valuation columns, freshness chips, a filter box, and a compact status column.
+- Extended the board shell in `frontend/src/App.tsx` to switch between Holdings, Gains, and Transactions, show gains-driven portfolio summary metrics, trigger a manual `Refresh prices` mutation, and surface failed, partial, and successful refresh outcomes.
+- Added additive valuation columns to the holdings table, consolidated valuation availability sorting/rendering into a shared TSX helper, and kept signed green/red coloring limited to gain and day-change values.
+- Collapsed Holdings valuation into a compact `Value / P&L` overview so Gains remains the detailed valuation explanation table.
+- Kept market value and cost-basis cells in neutral numeric styling in both Holdings and Gains views.
+- Added small CSS adjustments for the wider gains table and metric stacks.
+- Updated the local start flow so the Vite proxy follows the selected backend port and documented that port probing is only a development preflight before the backend performs the real bind.
+Observed:
+- `npm run fmt` passed from `frontend/`.
+- `npm run check` passed from `frontend/`.
+- `npm run build` passed from `frontend/`.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+- `cargo fmt` passed from `backend/`.
+- `scripts/start.ps1 -SkipInstall -SkipBuild -BuildOnly` completed successfully.
+Open question:
+- None.
+Refs: `frontend/src/App.tsx`, `frontend/src/api/queries.ts`, `frontend/src/api/types.ts`, `frontend/src/components/GainsTable.tsx`, `frontend/src/components/HoldingsTable.tsx`, `frontend/src/components/valuationDisplay.tsx`, `frontend/src/styles.css`, `frontend/vite.config.ts`, `scripts/start.ps1`.
