@@ -9,6 +9,7 @@ mod prices;
 mod provider_symbols;
 mod root;
 mod transactions;
+mod valuation;
 
 use axum::{
     extract::State,

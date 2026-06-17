@@ -581,3 +581,17 @@ Observed:
 Open question:
 - Frontend integration with the new gains endpoint and valuation data in holdings is deferred to Phase 3.6.
 Refs: `backend/src/api/gains.rs`, `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `backend/Cargo.toml`, `frontend/package.json`; implements: Phase 3.5 - Gains And Holdings API.
+
+## 2026-06-17 - Gains API review follow-up
+Removed duplicated valuation API wiring and made the holdings valuation overlay fail consistently on database errors.
+What changed:
+- Added a shared `backend/src/api/valuation.rs` helper for valuation input loading, base/provider constants, money formatting, freshness snapshots, and availability/reason serialization.
+- Updated both `GET /api/gains` and `GET /api/holdings` to use the shared helper instead of maintaining separate price/FX lookup paths.
+- Switched API valuation FX reads to the cached Frankfurter provider and added a populated gains endpoint regression test covering price, FX, summary, gain, and day-change serialization.
+Observed:
+- `cargo fmt` passed from `backend/`.
+- `cargo test` passed from `backend/` with 136 unit tests, 13 integration tests, and doc tests.
+- `cargo clippy --all-targets -- -D warnings` passed from `backend/`.
+Open question:
+- None.
+Refs: `backend/src/api/valuation.rs`, `backend/src/api/gains.rs`, `backend/src/api/holdings.rs`, `backend/src/api/mod.rs`, `EngineeringDiary.md`.
