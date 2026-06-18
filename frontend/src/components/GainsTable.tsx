@@ -50,6 +50,15 @@ function stackedMetricCell(
   );
 }
 
+function stackedHeader(label: string, detail: string) {
+  return (
+    <span className="column-header-stack">
+      <span>{label}</span>
+      <span className="column-header-detail">{detail}</span>
+    </span>
+  );
+}
+
 interface LatestStatus {
   label: string;
   title?: string;
@@ -118,19 +127,19 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.cost_basis_base, {
     id: "cost_basis_base",
-    header: "Cost basis (SEK)",
+    header: () => stackedHeader("Cost basis", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.market_value_base, {
     id: "market_value_base",
-    header: "Market value (SEK)",
+    header: () => stackedHeader("Market value", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.unrealized_gain_base, {
     id: "unrealized_gain_base",
-    header: "Total gain (SEK) + %",
+    header: () => stackedHeader("Total gain", "SEK + %"),
     sortingFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
@@ -140,7 +149,7 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.price_effect_base, {
     id: "price_effect_base",
-    header: "Price effect (SEK)",
+    header: () => stackedHeader("Price effect", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
@@ -148,7 +157,7 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.fx_effect_base, {
     id: "fx_effect_base",
-    header: "FX effect (SEK)",
+    header: () => stackedHeader("FX effect", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
@@ -156,7 +165,7 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.day_change_base, {
     id: "day_change_base",
-    header: "Today (SEK) + %",
+    header: () => stackedHeader("Today", "SEK + %"),
     sortingFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(

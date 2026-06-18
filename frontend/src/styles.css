@@ -487,10 +487,6 @@ th {
   text-transform: uppercase;
 }
 
-th.sortable {
-  white-space: nowrap;
-}
-
 td {
   color: var(--text-secondary);
   font-size: 0.8125rem;
@@ -695,7 +691,7 @@ tbody tr:last-child td {
 
 .sort-button {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-1);
   padding: 0;
   background: transparent;
@@ -708,8 +704,28 @@ tbody tr:last-child td {
   cursor: pointer;
 }
 
+.sort-button svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.column-header-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.column-header-detail {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+}
+
 th.number-head .sort-button {
   margin-left: auto;
+  text-align: right;
 }
 
 .board-state {
