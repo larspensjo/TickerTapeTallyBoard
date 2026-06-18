@@ -591,16 +591,21 @@ impl MarketDataService {
         instruments: &[crate::db::instruments::InstrumentRow],
     ) -> Result<(), MarketDataError> {
         for instrument in instruments {
-            if provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
-                .await?
-                .is_some()
-            {
-                continue;
-            }
+            let existing_mapping =
+                provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
+                    .await?;
+            let known_seed = yahoo_seed_for_known_isin(instrument.isin.as_deref())
+                .or_else(|| yahoo_seed_for_known_isin(Some(&instrument.symbol)));
 
-            let seed = match yahoo_seed_for_exchange(&instrument.exchange, &instrument.symbol) {
-                Some(seed) => Some(seed),
-                None => self.yahoo_seed_from_search(instrument).await,
+            let seed = match existing_mapping {
+                Some(mapping) if mapping.enabled => None,
+                Some(_) => known_seed,
+                None => match known_seed
+                    .or_else(|| yahoo_seed_for_exchange(&instrument.exchange, &instrument.symbol))
+                {
+                    Some(seed) => Some(seed),
+                    None => self.yahoo_seed_from_search(instrument).await,
+                },
             };
 
             let Some(seed) = seed else {
@@ -1133,6 +1138,21 @@ fn yahoo_seed_for_exchange(exchange: &str, symbol: &str) -> Option<YahooSeed> {
     }
 }
 
+fn yahoo_seed_for_known_isin(isin: Option<&str>) -> Option<YahooSeed> {
+    let normalized = isin?.trim().to_ascii_uppercase();
+    let provider_symbol = match normalized.as_str() {
+        "IE00B0M63391" => "IQQK.DE",
+        "US02079K3059" => "GOOGL",
+        "US8740391003" => "TSM",
+        _ => return None,
+    };
+
+    Some(YahooSeed {
+        provider_symbol: provider_symbol.to_owned(),
+        enabled: true,
+    })
+}
+
 fn group_transactions(
     rows: Vec<crate::db::transactions::TransactionRow>,
 ) -> BTreeMap<i64, Vec<crate::db::transactions::TransactionRow>> {
@@ -1425,6 +1445,124 @@ mod tests {
             .expect("mapping should exist");
         assert!(mapping.enabled);
         assert_eq!(mapping.provider_symbol, "MSFT");
+    }
+
+    #[tokio::test]
+    async fn avanza_known_isins_seed_yahoo_mappings_without_search() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "IQQK.DE".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(115),
+            currency: "EUR".to_owned(),
+        }]));
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "GOOGL".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(245),
+            currency: "USD".to_owned(),
+        }]));
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "TSM".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(243),
+            currency: "USD".to_owned(),
+        }]));
+
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "EUR".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            rate: dec!(11),
+        }]));
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "USD".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            rate: dec!(10),
+        }]));
+
+        let symbol_search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+        let pool = db::memory_pool().await.expect("memory pool");
+        let service = MarketDataService::with_symbol_search_providers(
+            price_provider,
+            fx_provider,
+            symbol_search.clone(),
+        );
+
+        let korea =
+            instrument_with_isin(&pool, "IE00B0M63391", "AVANZA", "EUR", "IE00B0M63391").await;
+        let alphabet =
+            instrument_with_isin(&pool, "US02079K3059", "AVANZA", "USD", "US02079K3059").await;
+        let tsm =
+            instrument_with_isin(&pool, "US8740391003", "AVANZA", "USD", "US8740391003").await;
+        provider_symbols::upsert(
+            &pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: korea,
+                provider: YAHOO_PROVIDER.to_owned(),
+                provider_symbol: "IDKO.L".to_owned(),
+                currency: Some("EUR".to_owned()),
+                enabled: false,
+                created_at: now_iso8601(),
+                updated_at: now_iso8601(),
+            },
+        )
+        .await
+        .expect("stale mapping should insert");
+        provider_symbols::upsert(
+            &pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: tsm,
+                provider: YAHOO_PROVIDER.to_owned(),
+                provider_symbol: "TSMN.MX".to_owned(),
+                currency: Some("USD".to_owned()),
+                enabled: false,
+                created_at: now_iso8601(),
+                updated_at: now_iso8601(),
+            },
+        )
+        .await
+        .expect("stale mapping should insert");
+        buy(&pool, korea, "2026-06-01", 10, "100", "EUR", Some("11")).await;
+        buy(&pool, alphabet, "2026-06-01", 10, "100", "USD", Some("10")).await;
+        buy(&pool, tsm, "2026-06-01", 10, "100", "USD", Some("10")).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 3);
+        assert_eq!(response.fx_rates_written, 2);
+        assert_eq!(response.unmapped_instruments, 0);
+        assert!(symbol_search.calls().is_empty());
+
+        let cases = [(korea, "IQQK.DE"), (alphabet, "GOOGL"), (tsm, "TSM")];
+        for (instrument_id, expected_symbol) in cases {
+            let mapping =
+                provider_symbols::find_by_instrument_provider(&pool, instrument_id, YAHOO_PROVIDER)
+                    .await
+                    .expect("mapping lookup should succeed")
+                    .expect("mapping should exist");
+            assert!(mapping.enabled);
+            assert_eq!(mapping.provider_symbol, expected_symbol);
+        }
     }
 
     #[tokio::test]
