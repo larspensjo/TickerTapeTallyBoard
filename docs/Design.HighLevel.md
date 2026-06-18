@@ -93,7 +93,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - File upload endpoint + parser (`calamine`/CSV), instrument matching/creation, batch tagging, dry-run preview UI ("N trades, M new instruments, K warnings") before commit, rollback per batch.
 - **Deliverable:** full historical portfolio loaded from Sharesight; spot-check positions against Sharesight's own numbers as acceptance test.
 
-### Phase 3 — Prices, FX & valuation (~1–2 weeks)
+### Phase 3 — Prices, FX & valuation ✅ Done (2026-06-18)
 - `PriceProvider` trait + chosen implementation; FX rate fetching; SQLite caching; daily scheduled job + manual refresh.
 - Holdings view gains market value, unrealized P&L, day change — all in base currency with native-currency detail.
 - Backfill historical prices for charting.
