@@ -34,21 +34,13 @@ const numericColumns = new Set([
   "day_change_base",
 ]);
 
-function snapshotStatus(freshness: string): string {
-  if (freshness === "fresh") {
-    return "Fresh";
-  }
-
-  return freshnessLabel(freshness);
-}
-
 function stackedMetricCell(
   value: AvailabilityValue<string>,
   percent: AvailabilityValue<string>,
 ) {
   return (
     <div className="metric-stack">
-      <AvailabilityValueCell value={value} prefix="SEK " tone="signed" />
+      <AvailabilityValueCell value={value} tone="signed" />
       {value.status === "available" ? (
         <span className="metric-subtle">
           <AvailabilityValueCell value={percent} suffix="%" tone="signed" />
@@ -58,24 +50,55 @@ function stackedMetricCell(
   );
 }
 
-function latestStatusLabel(row: GainsRow): string {
+interface LatestStatus {
+  label: string;
+  title?: string;
+  visible: boolean;
+}
+
+function staleStatusLabel(kind: "price" | "fx", freshness: string): string {
+  const prefix = kind === "price" ? "Stale price" : "Stale FX";
+
+  if (
+    freshness.startsWith("minor_stale_") ||
+    freshness.startsWith("warning_stale_")
+  ) {
+    return prefix;
+  }
+
+  return freshnessLabel(freshness);
+}
+
+function latestStatus(row: GainsRow): LatestStatus {
   const reasonCodes = row.reasons.map(reasonLabel);
 
   if (reasonCodes.length > 0) {
-    return reasonCodes[0];
+    return {
+      label: reasonCodes[0],
+      title: reasonSummary(row.reasons),
+      visible: true,
+    };
   }
 
   const priceFreshness = row.latest_price?.freshness;
   if (priceFreshness && priceFreshness !== "fresh") {
-    return snapshotStatus(priceFreshness);
+    return {
+      label: staleStatusLabel("price", priceFreshness),
+      title: freshnessLabel(priceFreshness),
+      visible: true,
+    };
   }
 
   const fxFreshness = row.latest_fx?.freshness;
   if (fxFreshness && fxFreshness !== "fresh") {
-    return snapshotStatus(fxFreshness);
+    return {
+      label: staleStatusLabel("fx", fxFreshness),
+      title: freshnessLabel(fxFreshness),
+      visible: true,
+    };
   }
 
-  return "Fresh";
+  return { label: "Fresh", visible: false };
 }
 
 const columns = [
@@ -97,21 +120,17 @@ const columns = [
     id: "cost_basis_base",
     header: "Cost basis (SEK)",
     sortingFn: availabilitySortRows,
-    cell: (info) => (
-      <AvailabilityValueCell value={info.getValue()} prefix="SEK " />
-    ),
+    cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.market_value_base, {
     id: "market_value_base",
     header: "Market value (SEK)",
     sortingFn: availabilitySortRows,
-    cell: (info) => (
-      <AvailabilityValueCell value={info.getValue()} prefix="SEK " />
-    ),
+    cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.unrealized_gain_base, {
     id: "unrealized_gain_base",
-    header: "Total gain + %",
+    header: "Total gain (SEK) + %",
     sortingFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
@@ -121,31 +140,23 @@ const columns = [
   }),
   columnHelper.accessor((row) => row.gain.price_effect_base, {
     id: "price_effect_base",
-    header: "Price effect",
+    header: "Price effect (SEK)",
     sortingFn: availabilitySortRows,
     cell: (info) => (
-      <AvailabilityValueCell
-        value={info.getValue()}
-        prefix="SEK "
-        tone="signed"
-      />
+      <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
   }),
   columnHelper.accessor((row) => row.gain.fx_effect_base, {
     id: "fx_effect_base",
-    header: "FX effect",
+    header: "FX effect (SEK)",
     sortingFn: availabilitySortRows,
     cell: (info) => (
-      <AvailabilityValueCell
-        value={info.getValue()}
-        prefix="SEK "
-        tone="signed"
-      />
+      <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
   }),
   columnHelper.accessor((row) => row.gain.day_change_base, {
     id: "day_change_base",
-    header: "Day change + %",
+    header: "Today (SEK) + %",
     sortingFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
@@ -158,16 +169,15 @@ const columns = [
     header: "Status",
     cell: (info) => {
       const { gain } = info.row.original;
-      const status = latestStatusLabel(gain);
-      const title =
-        gain.reasons.length > 0 ? reasonSummary(gain.reasons) : undefined;
+      const status = latestStatus(gain);
+
+      if (!status.visible) {
+        return <span className="status-empty" title={status.label} />;
+      }
 
       return (
-        <span
-          className={status === "Fresh" ? "status-chip" : "status-chip warning"}
-          title={title}
-        >
-          {status}
+        <span className="status-chip compact warning" title={status.title}>
+          {status.label}
         </span>
       );
     },

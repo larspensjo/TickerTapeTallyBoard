@@ -340,6 +340,18 @@ h2 {
   color: var(--warning);
 }
 
+.status-chip.compact {
+  min-height: 20px;
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
+.status-empty {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+}
+
 .board-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
@@ -417,7 +429,41 @@ table {
 }
 
 .gains-table table {
-  min-width: 1240px;
+  min-width: 1040px;
+  table-layout: fixed;
+}
+
+.gains-table th:first-child,
+.gains-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  background: var(--surface-1);
+}
+
+.gains-table th:first-child {
+  z-index: 2;
+}
+
+.gains-table tbody tr:hover td:first-child {
+  background: var(--surface-2);
+}
+
+.gains-table th:nth-child(7),
+.gains-table td:nth-child(7) {
+  width: 150px;
+  min-width: 150px;
+}
+
+.gains-table th:last-child,
+.gains-table td:last-child {
+  width: 150px;
+  min-width: 150px;
+  padding-right: var(--space-5);
+  text-align: left;
 }
 
 .asset-table table {
