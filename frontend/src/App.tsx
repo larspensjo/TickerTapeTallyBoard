@@ -19,6 +19,7 @@ import { HoldingsTable } from "./components/HoldingsTable";
 import { ImportView } from "./components/ImportView";
 import { TransactionsTable } from "./components/TransactionsTable";
 import {
+  formatGroupedNumber,
   isAvailable,
   SummaryAvailabilityValue,
 } from "./components/valuationDisplay";
@@ -121,10 +122,10 @@ function priceRefreshTitle(result: RefreshRunSummary): string {
     `trigger ${result.trigger}`,
     `mode ${result.mode}`,
     `status ${result.status}`,
-    `${result.prices_written} prices`,
-    `${result.fx_rates_written} FX`,
-    `${result.unmapped_instruments} unmapped`,
-    `${result.failed_items} failed`,
+    `${formatGroupedNumber(result.prices_written)} prices`,
+    `${formatGroupedNumber(result.fx_rates_written)} FX`,
+    `${formatGroupedNumber(result.unmapped_instruments)} unmapped`,
+    `${formatGroupedNumber(result.failed_items)} failed`,
     `started ${result.started_at}`,
   ];
 
@@ -288,13 +289,16 @@ export function App() {
             <p className="eyebrow">Portfolio</p>
             <strong className="total-value">
               {isAvailable(totalValue)
-                ? `SEK ${totalValue.value}`
-                : `${holdingsCount} holdings`}
+                ? `SEK ${formatGroupedNumber(totalValue.value)}`
+                : `${formatGroupedNumber(holdingsCount)} holdings`}
             </strong>
           </div>
           <div className="summary-metrics">
             <span>
-              Holdings <strong className="number">{holdingsCount}</strong>
+              Holdings{" "}
+              <strong className="number">
+                {formatGroupedNumber(holdingsCount)}
+              </strong>
             </span>
             {gainsSummary ? (
               <>
@@ -308,14 +312,16 @@ export function App() {
                 </span>
                 {gainsSummary.excluded_rows ? (
                   <span className="status-chip warning">
-                    {gainsSummary.excluded_rows} missing
+                    {formatGroupedNumber(gainsSummary.excluded_rows)} missing
                   </span>
                 ) : null}
               </>
             ) : null}
             <span>
               Transactions{" "}
-              <strong className="number">{transactionsCount}</strong>
+              <strong className="number">
+                {formatGroupedNumber(transactionsCount)}
+              </strong>
             </span>
           </div>
         </section>

@@ -50,6 +50,38 @@ export function signedTone(value: string): "up" | "down" | "flat" {
   return parsed > 0 ? "up" : "down";
 }
 
+export function formatGroupedNumber(value: string | number): string {
+  const rawValue = String(value).trim();
+  const match = rawValue.match(/^([+-]?)(\d+)(\.\d+)?$/);
+
+  if (!match) {
+    return rawValue;
+  }
+
+  const [, sign, integerPart, fractionalPart = ""] = match;
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  return `${sign}${groupedInteger}${fractionalPart}`;
+}
+
+export function FormattedNumber({
+  value,
+  prefix = "",
+  suffix = "",
+}: {
+  value: string | number;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <>
+      {prefix ? <span className="number-prefix">{prefix.trim()}</span> : null}
+      {formatGroupedNumber(value)}
+      {suffix}
+    </>
+  );
+}
+
 function numberClass(value: string, tone: ValueTone): string {
   return tone === "signed" ? `number ${signedTone(value)}` : "number";
 }
@@ -70,9 +102,7 @@ export function AvailabilityValueCell({
   if (value.status === "available") {
     return (
       <span className={numberClass(value.value, tone)}>
-        {prefix}
-        {value.value}
-        {suffix}
+        <FormattedNumber value={value.value} prefix={prefix} suffix={suffix} />
       </span>
     );
   }
@@ -112,9 +142,7 @@ export function SummaryAvailabilityValue({
 
   return (
     <strong className={numberClass(value.value, tone)}>
-      {prefix}
-      {value.value}
-      {suffix}
+      <FormattedNumber value={value.value} prefix={prefix} suffix={suffix} />
     </strong>
   );
 }

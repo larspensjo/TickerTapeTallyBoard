@@ -13,6 +13,7 @@ import type {
   ImportRowNote,
   ImportSource,
 } from "../api/types";
+import { formatGroupedNumber } from "./valuationDisplay";
 
 type Phase =
   | "idle"
@@ -378,7 +379,9 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
         {preview && state.phase !== "previewing" ? (
           <>
             <section className="board-state muted import-summary">
-              <p className="total-value">{preview.counts.rows} trades</p>
+              <p className="total-value">
+                {formatGroupedNumber(preview.counts.rows)} trades
+              </p>
               <ImportCountsMetrics counts={preview.counts} />
               {preview.metadata ? (
                 <span className="status-chip">{preview.metadata.title}</span>
@@ -448,7 +451,10 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                                     ) : null}
                                     {asset.errors.length > 0 ? (
                                       <span className="asset-badge warning">
-                                        {asset.errors.length} error
+                                        {formatGroupedNumber(
+                                          asset.errors.length,
+                                        )}{" "}
+                                        error
                                         {asset.errors.length === 1 ? "" : "s"}
                                       </span>
                                     ) : null}
@@ -457,10 +463,18 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                               </div>
                             </td>
                             <td>{asset.currency}</td>
-                            <td className="number">{asset.buys}</td>
-                            <td className="number">{asset.sells}</td>
-                            <td className="number">{asset.splits}</td>
-                            <td className="number">{asset.dividends}</td>
+                            <td className="number">
+                              {formatGroupedNumber(asset.buys)}
+                            </td>
+                            <td className="number">
+                              {formatGroupedNumber(asset.sells)}
+                            </td>
+                            <td className="number">
+                              {formatGroupedNumber(asset.splits)}
+                            </td>
+                            <td className="number">
+                              {formatGroupedNumber(asset.dividends)}
+                            </td>
                           </tr>
                         );
                       })}
@@ -579,7 +593,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
           <>
             <div className="board-state">
               <p className="total-value">
-                Imported batch {state.result.batch_id}
+                Imported batch {formatGroupedNumber(state.result.batch_id)}
               </p>
               <ImportCountsMetrics counts={state.result.counts} showRows />
               <div className="form-actions">
@@ -638,33 +652,49 @@ function ImportCountsMetrics({
     <div className="summary-metrics">
       {showRows ? (
         <span>
-          Rows <strong className="number">{counts.rows}</strong>
+          Rows{" "}
+          <strong className="number">{formatGroupedNumber(counts.rows)}</strong>
         </span>
       ) : null}
       <span>
-        Buys <strong className="number">{counts.buys}</strong>
+        Buys{" "}
+        <strong className="number">{formatGroupedNumber(counts.buys)}</strong>
       </span>
       <span>
-        Sells <strong className="number">{counts.sells}</strong>
+        Sells{" "}
+        <strong className="number">{formatGroupedNumber(counts.sells)}</strong>
       </span>
       <span>
-        Splits <strong className="number">{counts.splits}</strong>
+        Splits{" "}
+        <strong className="number">{formatGroupedNumber(counts.splits)}</strong>
       </span>
       <span>
-        Dividends <strong className="number">{counts.dividends}</strong>
+        Dividends{" "}
+        <strong className="number">
+          {formatGroupedNumber(counts.dividends)}
+        </strong>
       </span>
       <span>
         New instruments{" "}
-        <strong className="number">{counts.new_instruments}</strong>
+        <strong className="number">
+          {formatGroupedNumber(counts.new_instruments)}
+        </strong>
       </span>
       <span>
-        Skipped <strong className="number">{counts.skipped}</strong>
+        Skipped{" "}
+        <strong className="number">
+          {formatGroupedNumber(counts.skipped)}
+        </strong>
       </span>
       <span>
-        Warnings <strong className="number">{counts.warnings}</strong>
+        Warnings{" "}
+        <strong className="number">
+          {formatGroupedNumber(counts.warnings)}
+        </strong>
       </span>
       <span>
-        Errors <strong className="number">{counts.errors}</strong>
+        Errors{" "}
+        <strong className="number">{formatGroupedNumber(counts.errors)}</strong>
       </span>
     </div>
   );
@@ -692,7 +722,9 @@ function ImportNoteSection({
           <tbody>
             {notes.map((note, index) => (
               <tr key={noteKey(note, index)}>
-                <td>{note.row ?? "-"}</td>
+                <td>
+                  {note.row == null ? "-" : formatGroupedNumber(note.row)}
+                </td>
                 <td>{note.code}</td>
                 <td>{note.message}</td>
               </tr>

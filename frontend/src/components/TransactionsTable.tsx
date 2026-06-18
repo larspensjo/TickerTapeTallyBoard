@@ -10,6 +10,7 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Instrument, Transaction } from "../api/types";
+import { FormattedNumber, formatGroupedNumber } from "./valuationDisplay";
 
 interface Row {
   transaction: Transaction;
@@ -99,14 +100,18 @@ export function TransactionsTable({
       columnHelper.accessor((row) => row.transaction.quantity, {
         id: "quantity",
         header: "Qty",
-        cell: (info) => info.getValue(),
+        cell: (info) => formatGroupedNumber(info.getValue()),
       }),
       columnHelper.accessor((row) => row.transaction.price ?? "", {
         id: "price",
         header: "Price",
         cell: (info) => {
           const { price, currency } = info.row.original.transaction;
-          return price ? `${currency ?? ""} ${price}`.trim() : "-";
+          return price ? (
+            <FormattedNumber value={price} prefix={currency ?? ""} />
+          ) : (
+            "-"
+          );
         },
       }),
       columnHelper.display({

@@ -12,6 +12,8 @@ import type { AvailabilityValue, Holding } from "../api/types";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
+  FormattedNumber,
+  formatGroupedNumber,
   isAvailable,
   reasonSummary,
   unavailableValue,
@@ -56,9 +58,7 @@ function currentValueCell(holding: Holding) {
     return valuationMissingChip(holding);
   }
 
-  return (
-    <AvailabilityValueCell value={valuation.market_value_base} prefix="SEK " />
-  );
+  return <AvailabilityValueCell value={valuation.market_value_base} />;
 }
 
 function pnlHintCell(holding: Holding) {
@@ -149,7 +149,7 @@ function computePortfolioPercentages(
 
 function portfolioPercentageCell(value: PortfolioPercentage) {
   if (value.status === "available") {
-    return <span className="number">{value.value}%</span>;
+    return <span className="number">{formatGroupedNumber(value.value)}%</span>;
   }
 
   return (
@@ -177,17 +177,25 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
     }),
     columnHelper.accessor("quantity", {
       header: "Qty",
-      cell: (info) => info.getValue(),
+      cell: (info) => formatGroupedNumber(info.getValue()),
     }),
     columnHelper.accessor("average_cost_native", {
       header: "Avg cost/share",
-      cell: (info) =>
-        `${info.row.original.instrument.currency} ${info.getValue()}`,
+      cell: (info) => (
+        <FormattedNumber
+          value={info.getValue()}
+          prefix={info.row.original.instrument.currency}
+        />
+      ),
     }),
     columnHelper.accessor("cost_basis_native", {
       header: "Cost basis",
-      cell: (info) =>
-        `${info.row.original.instrument.currency} ${info.getValue()}`,
+      cell: (info) => (
+        <FormattedNumber
+          value={info.getValue()}
+          prefix={info.row.original.instrument.currency}
+        />
+      ),
     }),
     columnHelper.accessor(
       (row) =>
@@ -211,11 +219,6 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
         cell: (info) => portfolioPercentageCell(info.getValue()),
       },
     ),
-    columnHelper.accessor((row) => row.instrument.currency, {
-      id: "currency",
-      header: "Currency",
-      cell: (info) => info.getValue(),
-    }),
     columnHelper.display({
       id: "pnl_hint",
       header: "P&L hint",
