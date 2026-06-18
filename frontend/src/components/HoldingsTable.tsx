@@ -33,9 +33,6 @@ function valuationUnavailableReasons(holding: Holding): string[] {
     ...(holding.valuation?.unrealized_gain_percent.status === "unavailable"
       ? holding.valuation.unrealized_gain_percent.reasons
       : []),
-    ...(holding.valuation?.day_change_base.status === "unavailable"
-      ? holding.valuation.day_change_base.reasons
-      : []),
   ];
 }
 
@@ -80,15 +77,6 @@ function pnlHintCell(holding: Holding) {
         <AvailabilityValueCell
           value={valuation.unrealized_gain_percent}
           suffix="%"
-          tone="signed"
-          unavailableLabel="Missing"
-        />
-      </span>
-      <span className="metric-subtle">
-        Day{" "}
-        <AvailabilityValueCell
-          value={valuation.day_change_base}
-          prefix="SEK "
           tone="signed"
           unavailableLabel="Missing"
         />
