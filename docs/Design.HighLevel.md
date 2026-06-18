@@ -67,6 +67,8 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
 ### Sharesight import
 Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date, type (buy/sell/adjustment), quantity, price, fees, exchange rate, and trade value. Importer parses the export (convert XLS→CSV or parse XLS directly via `calamine` crate), maps rows to ledger transactions, matches/creates instruments, and tags everything with an `import_batch_id` so a bad import can be rolled back atomically. Dividends may need a second report (Taxable Income / dividend report) or manual entry — verify during Phase 0 spike.
 
+TODO: Avanza import rows already parse and count dividends, but dividend rows are not written into the ledger yet. When dividend support lands, route them into the income/gains model instead of leaving them as import-only metadata.
+
 ### API surface (v1 sketch)
 REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices`, `POST /api/import/sharesight`, `POST /api/prices/refresh`.
 
