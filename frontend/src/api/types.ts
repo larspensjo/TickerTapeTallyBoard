@@ -197,6 +197,8 @@ export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
 }
 
+export type ImportSource = "sharesight" | "avanza";
+
 export interface ImportRowNote {
   row: number | null;
   code: string;
@@ -208,7 +210,9 @@ export interface ImportCounts {
   buys: number;
   sells: number;
   splits: number;
+  dividends: number;
   new_instruments: number;
+  skipped: number;
   warnings: number;
   errors: number;
 }
@@ -218,11 +222,28 @@ export interface ImportNewInstrument {
   symbol: string;
   name: string;
   currency: string;
+  isin: string | null;
+}
+
+export interface ImportAssetGroup {
+  asset_key: string;
+  name: string;
+  currency: string;
+  buys: number;
+  sells: number;
+  splits: number;
+  dividends: number;
+  default_selected: boolean;
+  skipped_reason: string | null;
+  warnings: ImportRowNote[];
+  errors: ImportRowNote[];
+  is_new_instrument: boolean;
 }
 
 export interface ImportPreview {
   metadata: { title: string; date_from: string; date_to: string } | null;
   counts: ImportCounts;
+  assets: ImportAssetGroup[];
   new_instruments: ImportNewInstrument[];
   warnings: ImportRowNote[];
   errors: ImportRowNote[];
@@ -232,6 +253,7 @@ export interface ImportPreview {
 export interface ImportResult {
   batch_id: number;
   counts: ImportCounts;
+  warnings: ImportRowNote[];
 }
 
 export interface RollbackResult {

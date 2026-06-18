@@ -5,7 +5,14 @@ import {
   usePreviewImport,
   useRollbackImport,
 } from "../api/queries";
-import type { ImportPreview, ImportResult, ImportRowNote } from "../api/types";
+import type {
+  ImportAssetGroup,
+  ImportCounts,
+  ImportPreview,
+  ImportResult,
+  ImportRowNote,
+  ImportSource,
+} from "../api/types";
 
 type Phase =
   | "idle"
@@ -17,18 +24,22 @@ type Phase =
 
 interface State {
   phase: Phase;
+  source: ImportSource;
   fileName: string | null;
   preview: ImportPreview | null;
   result: ImportResult | null;
   confirmingDuplicate: boolean;
   error: string | null;
+  selected: Record<string, boolean>;
 }
 
 type Action =
+  | { type: "sourceSelected"; source: ImportSource }
   | { type: "fileSelected"; fileName: string }
   | { type: "previewReady"; preview: ImportPreview; fileName: string }
   | { type: "confirmDuplicate" }
   | { type: "cancelDuplicate" }
+  | { type: "toggleAsset"; assetKey: string }
   | { type: "commitStarted" }
   | { type: "committed"; result: ImportResult }
   | { type: "failed"; message: string }
@@ -36,15 +47,39 @@ type Action =
 
 const INITIAL_STATE: State = {
   phase: "idle",
+  source: "avanza",
   fileName: null,
   preview: null,
   result: null,
   confirmingDuplicate: false,
   error: null,
+  selected: {},
 };
+
+function selectedFromPreview(preview: ImportPreview): Record<string, boolean> {
+  return preview.assets.reduce<Record<string, boolean>>(
+    (accumulator, asset) => {
+      accumulator[asset.asset_key] = asset.default_selected;
+      return accumulator;
+    },
+    {},
+  );
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
+    case "sourceSelected":
+      return {
+        ...state,
+        source: action.source,
+        phase: "idle",
+        fileName: null,
+        preview: null,
+        result: null,
+        confirmingDuplicate: false,
+        error: null,
+        selected: {},
+      };
     case "fileSelected":
       return {
         ...state,
@@ -54,6 +89,7 @@ function reducer(state: State, action: Action): State {
         result: null,
         confirmingDuplicate: false,
         error: null,
+        selected: {},
       };
     case "previewReady":
       return {
@@ -64,11 +100,35 @@ function reducer(state: State, action: Action): State {
         result: null,
         confirmingDuplicate: false,
         error: null,
+        selected: selectedFromPreview(action.preview),
       };
     case "confirmDuplicate":
       return { ...state, confirmingDuplicate: true, error: null };
     case "cancelDuplicate":
       return { ...state, confirmingDuplicate: false, error: null };
+    case "toggleAsset": {
+      if (!state.preview) {
+        return state;
+      }
+
+      const asset = state.preview.assets.find(
+        (candidate) => candidate.asset_key === action.assetKey,
+      );
+
+      if (!asset || asset.skipped_reason) {
+        return state;
+      }
+
+      const current = state.selected[action.assetKey] ?? asset.default_selected;
+
+      return {
+        ...state,
+        selected: {
+          ...state.selected,
+          [action.assetKey]: !current,
+        },
+      };
+    }
     case "commitStarted":
       return { ...state, phase: "committing", error: null };
     case "committed":
@@ -79,6 +139,7 @@ function reducer(state: State, action: Action): State {
         result: action.result,
         confirmingDuplicate: false,
         error: null,
+        selected: {},
       };
     case "failed":
       return {
@@ -90,6 +151,8 @@ function reducer(state: State, action: Action): State {
     case "reset":
       return INITIAL_STATE;
   }
+
+  return state;
 }
 
 function formatError(error: unknown, fallback: string): string {
@@ -108,6 +171,42 @@ function noteKey(note: ImportRowNote, index: number) {
   return `${note.code}-${note.row ?? "none"}-${index}`;
 }
 
+function sourceLabel(source: ImportSource) {
+  return source === "avanza" ? "Avanza" : "Sharesight";
+}
+
+function isAssetSelected(
+  asset: ImportAssetGroup,
+  selected: Record<string, boolean>,
+) {
+  return selected[asset.asset_key] ?? asset.default_selected;
+}
+
+function noteFingerprint(note: ImportRowNote): string {
+  return `${note.row ?? "none"}:${note.code}:${note.message}`;
+}
+
+function hasBlockingErrors(
+  preview: ImportPreview | null,
+  selected: Record<string, boolean>,
+): boolean {
+  if (!preview) {
+    return false;
+  }
+
+  const selectedHasErrors = preview.assets.some(
+    (asset) => isAssetSelected(asset, selected) && asset.errors.length > 0,
+  );
+  const assetErrorKeys = new Set(
+    preview.assets.flatMap((asset) => asset.errors.map(noteFingerprint)),
+  );
+  const hasGlobalErrors = preview.errors.some(
+    (note) => !assetErrorKeys.has(noteFingerprint(note)),
+  );
+
+  return selectedHasErrors || hasGlobalErrors;
+}
+
 interface ImportViewProps {
   onViewTransactions: () => void;
 }
@@ -118,6 +217,18 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
   const previewImport = usePreviewImport();
   const commitImport = useCommitImport();
   const rollbackImport = useRollbackImport();
+
+  async function previewFile(
+    source: ImportSource,
+    fileName: string,
+    bytes: ArrayBuffer,
+  ) {
+    const preview = await previewImport.mutateAsync({
+      source,
+      file: bytes.slice(0),
+    });
+    dispatch({ type: "previewReady", preview, fileName });
+  }
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -132,8 +243,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
     try {
       const bytes = await file.arrayBuffer();
       setFileBytes(bytes);
-      const preview = await previewImport.mutateAsync(bytes.slice(0));
-      dispatch({ type: "previewReady", preview, fileName: file.name });
+      await previewFile(state.source, file.name, bytes);
     } catch (error) {
       dispatch({
         type: "failed",
@@ -142,17 +252,32 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
     }
   }
 
+  async function onSourceChange(source: ImportSource) {
+    if (state.source === source) {
+      return;
+    }
+
+    dispatch({ type: "sourceSelected", source });
+    setFileBytes(null);
+  }
+
   async function onCommit(allowDuplicate: boolean) {
-    if (!fileBytes) {
+    if (!fileBytes || !state.preview) {
       return;
     }
 
     dispatch({ type: "commitStarted" });
 
+    const exclude = state.preview.assets
+      .filter((asset) => !isAssetSelected(asset, state.selected))
+      .map((asset) => asset.asset_key);
+
     try {
       const result = await commitImport.mutateAsync({
+        source: state.source,
         file: fileBytes.slice(0),
         allowDuplicate,
+        exclude,
       });
       dispatch({ type: "committed", result });
     } catch (error) {
@@ -178,7 +303,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
 
   const preview = state.preview;
   const isDuplicate = preview?.duplicate_of_batch_id != null;
-  const hasErrors = (preview?.counts.errors ?? 0) > 0;
+  const commitBlockedByErrors = hasBlockingErrors(preview, state.selected);
   const isBusy =
     state.phase === "previewing" ||
     state.phase === "committing" ||
@@ -190,9 +315,35 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Sharesight</p>
+          <p className="eyebrow">{sourceLabel(state.source)}</p>
           <h1>Import All Trades CSV</h1>
         </div>
+
+        <fieldset className="segmented-control" aria-label="Import source">
+          <legend className="sr-only">Import source</legend>
+          <button
+            className={state.source === "sharesight" ? "active" : undefined}
+            type="button"
+            aria-pressed={state.source === "sharesight"}
+            disabled={isBusy}
+            onClick={() => {
+              void onSourceChange("sharesight");
+            }}
+          >
+            Sharesight
+          </button>
+          <button
+            className={state.source === "avanza" ? "active" : undefined}
+            type="button"
+            aria-pressed={state.source === "avanza"}
+            disabled={isBusy}
+            onClick={() => {
+              void onSourceChange("avanza");
+            }}
+          >
+            Avanza
+          </button>
+        </fieldset>
       </div>
 
       <div className="transaction-form">
@@ -226,35 +377,9 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
 
         {preview && state.phase !== "previewing" ? (
           <>
-            <section className="board-state muted">
+            <section className="board-state muted import-summary">
               <p className="total-value">{preview.counts.rows} trades</p>
-              <div className="summary-metrics">
-                <span>
-                  Buys <strong className="number">{preview.counts.buys}</strong>
-                </span>
-                <span>
-                  Sells{" "}
-                  <strong className="number">{preview.counts.sells}</strong>
-                </span>
-                <span>
-                  Splits{" "}
-                  <strong className="number">{preview.counts.splits}</strong>
-                </span>
-                <span>
-                  New instruments{" "}
-                  <strong className="number">
-                    {preview.counts.new_instruments}
-                  </strong>
-                </span>
-                <span>
-                  Warnings{" "}
-                  <strong className="number">{preview.counts.warnings}</strong>
-                </span>
-                <span>
-                  Errors{" "}
-                  <strong className="number">{preview.counts.errors}</strong>
-                </span>
-              </div>
+              <ImportCountsMetrics counts={preview.counts} />
               {preview.metadata ? (
                 <span className="status-chip">{preview.metadata.title}</span>
               ) : null}
@@ -265,56 +390,92 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
               ) : null}
             </section>
 
-            {preview.errors.length > 0 ? (
+            {preview.assets.length > 0 ? (
               <>
-                <p className="eyebrow">Errors</p>
-                <div className="table-wrap">
+                <p className="eyebrow">Assets</p>
+                <div className="table-wrap asset-table">
                   <table>
                     <thead>
                       <tr>
-                        <th>Row</th>
-                        <th>Code</th>
-                        <th>Message</th>
+                        <th className="checkbox-head">
+                          <span className="sr-only">Select</span>
+                        </th>
+                        <th>Asset</th>
+                        <th>Currency</th>
+                        <th>Buys</th>
+                        <th>Sells</th>
+                        <th>Splits</th>
+                        <th>Dividends</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.errors.map((note, index) => (
-                        <tr key={noteKey(note, index)}>
-                          <td>{note.row ?? "-"}</td>
-                          <td>{note.code}</td>
-                          <td>{note.message}</td>
-                        </tr>
-                      ))}
+                      {preview.assets.map((asset) => {
+                        const checked = isAssetSelected(asset, state.selected);
+                        const locked = asset.skipped_reason != null;
+
+                        return (
+                          <tr key={asset.asset_key}>
+                            <td className="checkbox-cell">
+                              <input
+                                type="checkbox"
+                                className="asset-check"
+                                checked={checked}
+                                disabled={locked || isBusy}
+                                aria-label={`Include ${asset.name}`}
+                                onChange={() => {
+                                  dispatch({
+                                    type: "toggleAsset",
+                                    assetKey: asset.asset_key,
+                                  });
+                                }}
+                              />
+                            </td>
+                            <td>
+                              <div className="asset-name-cell">
+                                <strong>{asset.name}</strong>
+                                <div className="asset-meta-line">
+                                  <span>{asset.asset_key}</span>
+                                  <div className="asset-badges">
+                                    {asset.is_new_instrument ? (
+                                      <span className="asset-badge">
+                                        New instrument
+                                      </span>
+                                    ) : null}
+                                    {asset.skipped_reason ? (
+                                      <span className="asset-badge warning">
+                                        {asset.skipped_reason}
+                                      </span>
+                                    ) : null}
+                                    {asset.errors.length > 0 ? (
+                                      <span className="asset-badge warning">
+                                        {asset.errors.length} error
+                                        {asset.errors.length === 1 ? "" : "s"}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td>{asset.currency}</td>
+                            <td className="number">{asset.buys}</td>
+                            <td className="number">{asset.sells}</td>
+                            <td className="number">{asset.splits}</td>
+                            <td className="number">{asset.dividends}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </>
             ) : null}
 
+            {preview.errors.length > 0 ? (
+              <ImportNoteSection title="Errors" notes={preview.errors} />
+            ) : null}
+
             {preview.warnings.length > 0 ? (
-              <>
-                <p className="eyebrow">Warnings</p>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Row</th>
-                        <th>Code</th>
-                        <th>Message</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.warnings.map((note, index) => (
-                        <tr key={noteKey(note, index)}>
-                          <td>{note.row ?? "-"}</td>
-                          <td>{note.code}</td>
-                          <td>{note.message}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+              <ImportNoteSection title="Warnings" notes={preview.warnings} />
             ) : null}
 
             {preview.new_instruments.length > 0 ? (
@@ -326,6 +487,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                       <tr>
                         <th>Exchange</th>
                         <th>Symbol</th>
+                        <th>ISIN</th>
                         <th>Name</th>
                         <th>Currency</th>
                       </tr>
@@ -335,6 +497,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                         <tr key={`${instrument.exchange}-${instrument.symbol}`}>
                           <td>{instrument.exchange}</td>
                           <td>{instrument.symbol}</td>
+                          <td>{instrument.isin ?? "-"}</td>
                           <td>{instrument.name}</td>
                           <td>{instrument.currency}</td>
                         </tr>
@@ -371,8 +534,10 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                 <button
                   type="button"
                   className="button outline danger"
-                  disabled={hasErrors || isBusy}
-                  onClick={() => dispatch({ type: "confirmDuplicate" })}
+                  disabled={commitBlockedByErrors || isBusy}
+                  onClick={() => {
+                    dispatch({ type: "confirmDuplicate" });
+                  }}
                 >
                   Import anyway...
                 </button>
@@ -380,7 +545,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                 <button
                   type="button"
                   className="button primary"
-                  disabled={hasErrors || isBusy}
+                  disabled={commitBlockedByErrors || isBusy}
                   onClick={() => {
                     void onCommit(isDuplicate);
                   }}
@@ -411,62 +576,130 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
         ) : null}
 
         {state.phase === "committed" && state.result ? (
-          <div className="board-state">
-            <p className="total-value">
-              Imported batch {state.result.batch_id}
-            </p>
-            <div className="summary-metrics">
-              <span>
-                Rows{" "}
-                <strong className="number">{state.result.counts.rows}</strong>
-              </span>
-              <span>
-                Buys{" "}
-                <strong className="number">{state.result.counts.buys}</strong>
-              </span>
-              <span>
-                Sells{" "}
-                <strong className="number">{state.result.counts.sells}</strong>
-              </span>
-              <span>
-                Splits{" "}
-                <strong className="number">{state.result.counts.splits}</strong>
-              </span>
+          <>
+            <div className="board-state">
+              <p className="total-value">
+                Imported batch {state.result.batch_id}
+              </p>
+              <ImportCountsMetrics counts={state.result.counts} showRows />
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={onViewTransactions}
+                  disabled={rollbackImport.isPending}
+                >
+                  View transactions
+                </button>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                    dispatch({ type: "reset" });
+                    setFileBytes(null);
+                  }}
+                  disabled={rollbackImport.isPending}
+                >
+                  Import another file
+                </button>
+                <button
+                  type="button"
+                  className="button outline danger"
+                  onClick={() => {
+                    void onRollback(state.result?.batch_id ?? 0);
+                  }}
+                  disabled={rollbackImport.isPending}
+                >
+                  Undo this import
+                </button>
+              </div>
             </div>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="button primary"
-                onClick={onViewTransactions}
-                disabled={rollbackImport.isPending}
-              >
-                View transactions
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => {
-                  dispatch({ type: "reset" });
-                  setFileBytes(null);
-                }}
-                disabled={rollbackImport.isPending}
-              >
-                Import another file
-              </button>
-              <button
-                type="button"
-                className="button outline danger"
-                onClick={() => {
-                  void onRollback(state.result?.batch_id ?? 0);
-                }}
-                disabled={rollbackImport.isPending}
-              >
-                Undo this import
-              </button>
-            </div>
-          </div>
+            {state.result.warnings.length > 0 ? (
+              <ImportNoteSection
+                title="Warnings"
+                notes={state.result.warnings}
+              />
+            ) : null}
+          </>
         ) : null}
       </div>
     </section>
+  );
+}
+
+function ImportCountsMetrics({
+  counts,
+  showRows = false,
+}: {
+  counts: ImportCounts;
+  showRows?: boolean;
+}) {
+  return (
+    <div className="summary-metrics">
+      {showRows ? (
+        <span>
+          Rows <strong className="number">{counts.rows}</strong>
+        </span>
+      ) : null}
+      <span>
+        Buys <strong className="number">{counts.buys}</strong>
+      </span>
+      <span>
+        Sells <strong className="number">{counts.sells}</strong>
+      </span>
+      <span>
+        Splits <strong className="number">{counts.splits}</strong>
+      </span>
+      <span>
+        Dividends <strong className="number">{counts.dividends}</strong>
+      </span>
+      <span>
+        New instruments{" "}
+        <strong className="number">{counts.new_instruments}</strong>
+      </span>
+      <span>
+        Skipped <strong className="number">{counts.skipped}</strong>
+      </span>
+      <span>
+        Warnings <strong className="number">{counts.warnings}</strong>
+      </span>
+      <span>
+        Errors <strong className="number">{counts.errors}</strong>
+      </span>
+    </div>
+  );
+}
+
+function ImportNoteSection({
+  title,
+  notes,
+}: {
+  title: string;
+  notes: ImportRowNote[];
+}) {
+  return (
+    <>
+      <p className="eyebrow">{title}</p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Code</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {notes.map((note, index) => (
+              <tr key={noteKey(note, index)}>
+                <td>{note.row ?? "-"}</td>
+                <td>{note.code}</td>
+                <td>{note.message}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

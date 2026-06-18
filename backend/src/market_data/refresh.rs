@@ -18,7 +18,10 @@ use crate::{
     },
     domain,
     import::now_iso8601,
-    providers::{FxRateProvider, PriceProvider, ProviderError, ProviderMissingReason},
+    providers::{
+        FxRateProvider, PriceProvider, ProviderError, ProviderMissingReason, SymbolSearchMatch,
+        SymbolSearchProvider,
+    },
 };
 
 const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
@@ -34,6 +37,7 @@ pub struct MarketDataService {
 struct MarketDataServiceInner {
     price_provider: Arc<dyn PriceProvider + Send + Sync>,
     fx_provider: Arc<dyn FxRateProvider + Send + Sync>,
+    symbol_search_provider: Option<Arc<dyn SymbolSearchProvider + Send + Sync>>,
     running: Arc<AtomicBool>,
     active: Arc<Mutex<Option<RefreshRunSummary>>>,
 }
@@ -71,6 +75,7 @@ impl MarketDataService {
         Self::from_providers(
             Arc::new(crate::providers::YahooChartClient::new()),
             Arc::new(crate::providers::FrankfurterClient::new()),
+            Some(Arc::new(crate::providers::YahooSearchClient::new())),
         )
     }
 
@@ -79,17 +84,36 @@ impl MarketDataService {
         P: PriceProvider + Send + Sync + 'static,
         F: FxRateProvider + Send + Sync + 'static,
     {
-        Self::from_providers(Arc::new(price_provider), Arc::new(fx_provider))
+        Self::from_providers(Arc::new(price_provider), Arc::new(fx_provider), None)
     }
 
-    pub fn from_providers(
+    pub fn with_symbol_search_providers<P, F, S>(
+        price_provider: P,
+        fx_provider: F,
+        symbol_search_provider: S,
+    ) -> Self
+    where
+        P: PriceProvider + Send + Sync + 'static,
+        F: FxRateProvider + Send + Sync + 'static,
+        S: SymbolSearchProvider + Send + Sync + 'static,
+    {
+        Self::from_providers(
+            Arc::new(price_provider),
+            Arc::new(fx_provider),
+            Some(Arc::new(symbol_search_provider)),
+        )
+    }
+
+    fn from_providers(
         price_provider: Arc<dyn PriceProvider + Send + Sync>,
         fx_provider: Arc<dyn FxRateProvider + Send + Sync>,
+        symbol_search_provider: Option<Arc<dyn SymbolSearchProvider + Send + Sync>>,
     ) -> Self {
         Self {
             inner: Arc::new(MarketDataServiceInner {
                 price_provider,
                 fx_provider,
+                symbol_search_provider,
                 running: Arc::new(AtomicBool::new(false)),
                 active: Arc::new(Mutex::new(None)),
             }),
@@ -328,7 +352,7 @@ impl MarketDataService {
         let transactions = transactions::all_for_holdings(pool).await?;
         let grouped = group_transactions(transactions);
         let instruments = instruments::list(pool).await?;
-        seed_provider_symbols(pool, &instruments).await?;
+        self.seed_provider_symbols(pool, &instruments).await?;
 
         let mut targets = Vec::new();
         for instrument in instruments {
@@ -396,6 +420,44 @@ impl MarketDataService {
                 .await
             {
                 Ok(rows) => {
+                    if let Some(row) = rows.iter().find(|row| {
+                        !row.currency
+                            .trim()
+                            .eq_ignore_ascii_case(target.instrument.currency.trim())
+                    }) {
+                        let now = now_iso8601();
+                        provider_symbols::upsert(
+                            pool,
+                            &provider_symbols::NewProviderSymbol {
+                                instrument_id: target.instrument.id,
+                                provider: YAHOO_PROVIDER.to_owned(),
+                                provider_symbol: provider_symbol.clone(),
+                                currency: Some(target.instrument.currency.clone()),
+                                enabled: false,
+                                created_at: now.clone(),
+                                updated_at: now,
+                            },
+                        )
+                        .await?;
+                        failed_items += 1;
+                        crate::engine_warn!(
+                            "market data refresh price currency mismatch instrument_id={} symbol={} expected_currency={} actual_currency={}; disabled mapping",
+                            target.instrument.id,
+                            provider_symbol,
+                            target.instrument.currency,
+                            row.currency
+                        );
+                        items.push(RefreshItem {
+                            kind: RefreshItemKind::Price,
+                            instrument_id: Some(target.instrument.id),
+                            symbol_or_pair: provider_symbol,
+                            status: RefreshItemStatus::Failed,
+                            reason: Some("currency_mismatch".to_owned()),
+                            rows_written: 0,
+                        });
+                        continue;
+                    }
+
                     for row in &rows {
                         prices::upsert(
                             pool,
@@ -520,6 +582,97 @@ impl MarketDataService {
             unmapped_instruments,
             failed_items,
             items,
+        })
+    }
+
+    async fn seed_provider_symbols(
+        &self,
+        pool: &SqlitePool,
+        instruments: &[crate::db::instruments::InstrumentRow],
+    ) -> Result<(), MarketDataError> {
+        for instrument in instruments {
+            if provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
+                .await?
+                .is_some()
+            {
+                continue;
+            }
+
+            let seed = match yahoo_seed_for_exchange(&instrument.exchange, &instrument.symbol) {
+                Some(seed) => Some(seed),
+                None => self.yahoo_seed_from_search(instrument).await,
+            };
+
+            let Some(seed) = seed else {
+                continue;
+            };
+
+            let now = now_iso8601();
+            provider_symbols::upsert(
+                pool,
+                &provider_symbols::NewProviderSymbol {
+                    instrument_id: instrument.id,
+                    provider: YAHOO_PROVIDER.to_owned(),
+                    provider_symbol: seed.provider_symbol,
+                    currency: Some(instrument.currency.clone()),
+                    enabled: seed.enabled,
+                    created_at: now.clone(),
+                    updated_at: now,
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn yahoo_seed_from_search(
+        &self,
+        instrument: &crate::db::instruments::InstrumentRow,
+    ) -> Option<YahooSeed> {
+        if !instrument.exchange.trim().eq_ignore_ascii_case("AVANZA") {
+            return None;
+        }
+
+        let query = instrument
+            .isin
+            .as_deref()
+            .filter(|value| is_isin_like(value))
+            .or_else(|| is_isin_like(&instrument.symbol).then_some(instrument.symbol.as_str()))?;
+
+        let search = self.inner.symbol_search_provider.as_ref()?;
+        let matches = match search.search(query).await {
+            Ok(matches) => matches,
+            Err(error) => {
+                crate::engine_warn!(
+                    "market data symbol search failed instrument_id={} isin={} reason={} message={}",
+                    instrument.id,
+                    query,
+                    error.reason_code(),
+                    error.message()
+                );
+                return None;
+            }
+        };
+
+        let Some(best) = best_yahoo_search_match(instrument, matches) else {
+            crate::engine_warn!(
+                "market data symbol search returned no supported match instrument_id={} isin={}",
+                instrument.id,
+                query
+            );
+            return None;
+        };
+
+        crate::engine_info!(
+            "market data seeded yahoo symbol from isin instrument_id={} isin={} provider_symbol={}",
+            instrument.id,
+            query,
+            best.provider_symbol
+        );
+
+        Some(YahooSeed {
+            provider_symbol: best.provider_symbol,
+            enabled: true,
         })
     }
 }
@@ -907,41 +1060,50 @@ async fn earliest_transaction_date(
     Ok(earliest)
 }
 
-async fn seed_provider_symbols(
-    pool: &SqlitePool,
-    instruments: &[crate::db::instruments::InstrumentRow],
-) -> Result<(), MarketDataError> {
-    for instrument in instruments {
-        if provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
-            .await?
-            .is_some()
-        {
-            continue;
-        }
-
-        if let Some(seed) = yahoo_seed_for_exchange(&instrument.exchange, &instrument.symbol) {
-            let now = now_iso8601();
-            provider_symbols::upsert(
-                pool,
-                &provider_symbols::NewProviderSymbol {
-                    instrument_id: instrument.id,
-                    provider: YAHOO_PROVIDER.to_owned(),
-                    provider_symbol: seed.provider_symbol,
-                    currency: Some(instrument.currency.clone()),
-                    enabled: seed.enabled,
-                    created_at: now.clone(),
-                    updated_at: now,
-                },
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
-
 struct YahooSeed {
     provider_symbol: String,
     enabled: bool,
+}
+
+fn best_yahoo_search_match(
+    instrument: &crate::db::instruments::InstrumentRow,
+    matches: Vec<SymbolSearchMatch>,
+) -> Option<SymbolSearchMatch> {
+    let mut supported = matches.into_iter().filter(is_supported_yahoo_quote);
+    if instrument
+        .isin
+        .as_deref()
+        .is_some_and(|isin| isin.trim().starts_with("US"))
+        && instrument.currency.trim().eq_ignore_ascii_case("USD")
+    {
+        return supported.find(|item| {
+            !item.provider_symbol.contains('.')
+                && item.exchange.as_deref().is_some_and(is_us_exchange)
+        });
+    }
+
+    supported.next()
+}
+
+fn is_supported_yahoo_quote(item: &SymbolSearchMatch) -> bool {
+    let quote_type = item
+        .quote_type
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(quote_type.as_str(), "EQUITY" | "ETF" | "MUTUALFUND")
+}
+
+fn is_us_exchange(exchange: &str) -> bool {
+    matches!(
+        exchange.trim().to_ascii_uppercase().as_str(),
+        "NMS" | "NYQ" | "ASE" | "NGM" | "NCM" | "PCX" | "NASDAQ" | "NYSE" | "NYSEARCA"
+    )
+}
+
+fn is_isin_like(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.len() == 12 && trimmed.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn yahoo_seed_for_exchange(exchange: &str, symbol: &str) -> Option<YahooSeed> {
@@ -1054,8 +1216,8 @@ mod tests {
     use crate::{
         db::{self, fx_rates, instruments, prices, provider_symbols, transactions},
         providers::{
-            DailyClose, FakeFxRateProvider, FakePriceProvider, FxProvider, FxRate,
-            MarketDataProvider,
+            DailyClose, FakeFxRateProvider, FakePriceProvider, FakeSymbolSearchProvider,
+            FxProvider, FxRate, MarketDataProvider, SymbolSearchMatch,
         },
     };
     use chrono::NaiveDate;
@@ -1080,6 +1242,29 @@ mod tests {
                 kind: "STOCK".to_owned(),
                 currency: currency.to_owned(),
                 isin: None,
+            },
+        )
+        .await
+        .expect("instrument upsert should succeed");
+        row.id
+    }
+
+    async fn instrument_with_isin(
+        pool: &SqlitePool,
+        symbol: &str,
+        exchange: &str,
+        currency: &str,
+        isin: &str,
+    ) -> i64 {
+        let (row, _) = instruments::upsert(
+            pool,
+            &crate::db::instruments::NewInstrument {
+                symbol: symbol.to_owned(),
+                exchange: exchange.to_owned(),
+                name: symbol.to_owned(),
+                kind: "STOCK".to_owned(),
+                currency: currency.to_owned(),
+                isin: Some(isin.to_owned()),
             },
         )
         .await
@@ -1177,6 +1362,116 @@ mod tests {
         assert_eq!(prices.len(), 2);
         let fx = fx_rates::list(&pool).await.expect("fx list");
         assert_eq!(fx.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn avanza_isin_refresh_seeds_yahoo_mapping_from_search() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "MSFT".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(101),
+            currency: "USD".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "USD".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            rate: dec!(10.5),
+        }]));
+        let symbol_search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+        symbol_search.push_response(Ok(vec![SymbolSearchMatch {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "MSFT".to_owned(),
+            quote_type: Some("EQUITY".to_owned()),
+            exchange: Some("NMS".to_owned()),
+            name: Some("Microsoft Corporation".to_owned()),
+        }]));
+
+        let pool = db::memory_pool().await.expect("memory pool");
+        let service = MarketDataService::with_symbol_search_providers(
+            price_provider,
+            fx_provider,
+            symbol_search.clone(),
+        );
+        let msft =
+            instrument_with_isin(&pool, "US5949181045", "AVANZA", "USD", "US5949181045").await;
+        buy(&pool, msft, "2026-06-01", 10, "100", "USD", Some("10")).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 1);
+        assert_eq!(response.unmapped_instruments, 0);
+        assert_eq!(symbol_search.calls()[0].query, "US5949181045");
+
+        let mapping = provider_symbols::find_by_instrument_provider(&pool, msft, YAHOO_PROVIDER)
+            .await
+            .expect("mapping lookup should succeed")
+            .expect("mapping should exist");
+        assert!(mapping.enabled);
+        assert_eq!(mapping.provider_symbol, "MSFT");
+    }
+
+    #[tokio::test]
+    async fn refresh_rejects_price_rows_with_wrong_currency() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "MSFT".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(101),
+            currency: "EUR".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "USD".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            rate: dec!(10.5),
+        }]));
+        let (pool, service) = test_state(price_provider, fx_provider).await;
+        let msft = instrument(&pool, "MSFT", "NASDAQ", "USD").await;
+        buy(&pool, msft, "2026-06-01", 10, "100", "USD", Some("10")).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should complete with item failure");
+
+        assert_eq!(response.status, RefreshRunStatus::Partial);
+        assert_eq!(response.prices_written, 0);
+        assert_eq!(response.failed_items, 1);
+        assert_eq!(
+            response.items[0].reason.as_deref(),
+            Some("currency_mismatch")
+        );
+
+        let prices = prices::list(&pool).await.expect("price list");
+        assert!(prices.is_empty());
     }
 
     #[tokio::test]

@@ -1,0 +1,10 @@
+Datum;Konto;Typ av transaktion;Värdepapper/beskrivning;Antal;Kurs;Belopp;Transaktionsvaluta;Courtage;Valutakurs;Instrumentvaluta;ISIN;Resultat
+2026-06-02;ISK;Split värdepapper;ServiceNow;-14;;;;;;;US81762P1021;
+2026-06-02;ISK;Split värdepapper;ServiceNow;70;;;;;;;US81762P1021;
+2026-06-01;ISK;Köp;ServiceNow;10;900,00;-94509,00;SEK;9,00;10,50;USD;US81762P1021;
+2026-05-20;ISK;Utdelning;Apple Inc;0;;120,00;SEK;;9,40;USD;US0378331005;
+2026-05-15;ISK;Sälj;Apple Inc;-2;210,00;3960,00;SEK;9,00;9,45;USD;US0378331005;200,00
+2026-05-10;ISK;Köp;Apple Inc;5;200,00;-9459,00;SEK;9,00;9,45;USD;US0378331005;
+2026-05-05;ISK;Köp;Volvo B;3;250,00;-750,00;SEK;0,00;;SEK;SE0000115446;
+2026-05-01;ISK;Köp;ASML Holding;1;800,00;-800,00;EUR;;;EUR;NL0010273215;
+2026-04-20;ISK;Köp;Avanza Global;1,5;120,00;-180,00;SEK;0,00;;SEK;SE0011527613;

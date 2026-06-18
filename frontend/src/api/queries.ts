@@ -5,6 +5,7 @@ import type {
   Holding,
   ImportPreview,
   ImportResult,
+  ImportSource,
   Instrument,
   InstrumentType,
   PriceStatusResponse,
@@ -126,10 +127,16 @@ export function useRefreshPrices() {
 
 export function usePreviewImport() {
   return useMutation({
-    mutationFn: (file: ArrayBuffer) =>
+    mutationFn: ({
+      source,
+      file,
+    }: {
+      source: ImportSource;
+      file: ArrayBuffer;
+    }) =>
       apiSendBytes<ImportPreview>(
         "POST",
-        "/api/import/sharesight/preview",
+        `/api/import/${source}/preview`,
         file,
       ),
   });
@@ -140,17 +147,34 @@ export function useCommitImport() {
 
   return useMutation({
     mutationFn: ({
+      source,
       file,
       allowDuplicate,
+      exclude,
     }: {
+      source: ImportSource;
       file: ArrayBuffer;
       allowDuplicate: boolean;
-    }) =>
-      apiSendBytes<ImportResult>(
+      exclude: string[];
+    }) => {
+      const params = new URLSearchParams();
+
+      if (allowDuplicate) {
+        params.set("allow_duplicate", "true");
+      }
+
+      if (exclude.length > 0) {
+        params.set("exclude", exclude.join(","));
+      }
+
+      const query = params.toString();
+
+      return apiSendBytes<ImportResult>(
         "POST",
-        `/api/import/sharesight/commit${allowDuplicate ? "?allow_duplicate=true" : ""}`,
+        `/api/import/${source}/commit${query ? `?${query}` : ""}`,
         file,
-      ),
+      );
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
@@ -166,7 +190,7 @@ export function useRollbackImport() {
     mutationFn: (batchId: number) =>
       apiSendBytes<RollbackResult>(
         "POST",
-        `/api/import/sharesight/rollback/${batchId}`,
+        `/api/import/rollback/${batchId}`,
         new ArrayBuffer(0),
       ),
     onSuccess: () => {

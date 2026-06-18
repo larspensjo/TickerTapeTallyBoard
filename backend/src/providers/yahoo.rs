@@ -5,9 +5,13 @@ use serde::Deserialize;
 use serde_json::Number;
 use std::str::FromStr;
 
-use super::{DailyClose, MarketDataProvider, ProviderError, ProviderMissingReason, ProviderResult};
+use super::{
+    DailyClose, MarketDataProvider, ProviderError, ProviderMissingReason, ProviderResult,
+    SymbolSearchMatch,
+};
 
 const DEFAULT_BASE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
+const DEFAULT_SEARCH_BASE_URL: &str = "https://query1.finance.yahoo.com/v1/finance/search";
 
 #[derive(Clone)]
 pub struct YahooChartClient {
@@ -141,6 +145,128 @@ impl Default for YahooChartClient {
     }
 }
 
+#[derive(Clone)]
+pub struct YahooSearchClient {
+    client: Client,
+    base_url: String,
+}
+
+impl YahooSearchClient {
+    pub fn new() -> Self {
+        Self::with_base_url(DEFAULT_SEARCH_BASE_URL)
+    }
+
+    pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self {
+            client: build_client(),
+            base_url: base_url.into(),
+        }
+    }
+
+    pub fn with_client(client: Client, base_url: impl Into<String>) -> Self {
+        Self {
+            client,
+            base_url: base_url.into(),
+        }
+    }
+
+    fn url(&self, query: &str) -> String {
+        let mut url = Url::parse(&self.base_url).expect("Yahoo search URL should always parse");
+        url.query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("quotesCount", "10")
+            .append_pair("newsCount", "0");
+        url.to_string()
+    }
+
+    fn parse_response(query: &str, body: &str) -> ProviderResult<Vec<SymbolSearchMatch>> {
+        let response: YahooSearchResponse = serde_json::from_str(body).map_err(|error| {
+            ProviderError::provider_error(
+                MarketDataProvider::Yahoo.as_str(),
+                format!("failed to parse Yahoo search response for {query}: {error}"),
+            )
+        })?;
+
+        Ok(response
+            .quotes
+            .into_iter()
+            .filter_map(|quote| {
+                let symbol = quote.symbol?;
+                Some(SymbolSearchMatch {
+                    provider: MarketDataProvider::Yahoo,
+                    provider_symbol: symbol,
+                    quote_type: quote.quote_type,
+                    exchange: quote.exchange,
+                    name: quote.longname.or(quote.shortname),
+                })
+            })
+            .collect())
+    }
+
+    fn log_failure(query: &str, error: &ProviderError) {
+        crate::engine_warn!(
+            "market data symbol search failure provider={} query={} reason={} message={}",
+            MarketDataProvider::Yahoo,
+            query,
+            error.reason_code(),
+            error.message()
+        );
+    }
+}
+
+impl Default for YahooSearchClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl super::SymbolSearchProvider for YahooSearchClient {
+    async fn search(&self, query: &str) -> ProviderResult<Vec<SymbolSearchMatch>> {
+        let url = self.url(query);
+        let response = match self.client.get(&url).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let error = ProviderError::provider_error(
+                    MarketDataProvider::Yahoo.as_str(),
+                    format!("failed to request Yahoo symbol search for {query}: {error}"),
+                );
+                Self::log_failure(query, &error);
+                return Err(error);
+            }
+        };
+
+        let status = response.status();
+        let body = match response.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                let error = ProviderError::provider_error(
+                    MarketDataProvider::Yahoo.as_str(),
+                    format!("failed to read Yahoo symbol search response for {query}: {error}"),
+                );
+                Self::log_failure(query, &error);
+                return Err(error);
+            }
+        };
+
+        if !status.is_success() {
+            let error = ProviderError::with_http_status(
+                MarketDataProvider::Yahoo.as_str(),
+                status.as_u16(),
+                format!("Yahoo symbol search for {query} failed with HTTP {status}: {body}"),
+            );
+            Self::log_failure(query, &error);
+            return Err(error);
+        }
+
+        let parsed = Self::parse_response(query, &body);
+        if let Err(error) = &parsed {
+            Self::log_failure(query, error);
+        }
+        parsed
+    }
+}
+
 #[async_trait::async_trait]
 impl super::PriceProvider for YahooChartClient {
     async fn daily_history(
@@ -245,6 +371,26 @@ fn map_chart_error(symbol: &str, error: YahooChartError) -> ProviderError {
 #[derive(Debug, Deserialize)]
 struct YahooChartResponse {
     chart: YahooChartEnvelope,
+}
+
+#[derive(Debug, Deserialize)]
+struct YahooSearchResponse {
+    #[serde(default)]
+    quotes: Vec<YahooSearchQuote>,
+}
+
+#[derive(Debug, Deserialize)]
+struct YahooSearchQuote {
+    #[serde(default)]
+    symbol: Option<String>,
+    #[serde(rename = "quoteType", default)]
+    quote_type: Option<String>,
+    #[serde(default)]
+    exchange: Option<String>,
+    #[serde(default)]
+    shortname: Option<String>,
+    #[serde(default)]
+    longname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,5 +507,30 @@ mod tests {
 
         assert_eq!(error.reason(), ProviderMissingReason::NotListed);
         assert_eq!(error.reason_code(), "not_listed");
+    }
+
+    #[test]
+    fn parses_search_response_into_symbol_matches() {
+        let rows = YahooSearchClient::parse_response(
+            "US5949181045",
+            r#"{
+                "quotes": [
+                    {
+                        "exchange": "NMS",
+                        "shortname": "Microsoft Corporation",
+                        "quoteType": "EQUITY",
+                        "symbol": "MSFT",
+                        "longname": "Microsoft Corporation"
+                    }
+                ]
+            }"#,
+        )
+        .expect("search fixture should parse");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].provider, MarketDataProvider::Yahoo);
+        assert_eq!(rows[0].provider_symbol, "MSFT");
+        assert_eq!(rows[0].quote_type.as_deref(), Some("EQUITY"));
+        assert_eq!(rows[0].exchange.as_deref(), Some("NMS"));
     }
 }
