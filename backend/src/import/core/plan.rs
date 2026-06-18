@@ -488,6 +488,7 @@ fn ledger_message(error: crate::domain::LedgerError) -> String {
             resulting_quantity, ..
         } => format!("Split would drive the position to {resulting_quantity}."),
         BuyMissingPrice { .. } => "A buy requires a native price.".to_string(),
+        SellMissingPrice { .. } => "A sell requires a native price.".to_string(),
     }
 }
 

@@ -28,6 +28,30 @@ pub enum UnavailableReason {
     MissingFx { transaction_id: i64 },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum BaseAmount {
+    Available(Decimal),
+    Unavailable { reasons: Vec<UnavailableReason> },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RealizedGain {
+    pub sold_quantity: i64,
+    pub proceeds_native: Decimal,
+    pub cost_basis_native: Decimal,
+    pub proceeds_base: BaseAmount,
+    pub cost_basis_base: BaseAmount,
+    pub price_effect_base: BaseAmount,
+    pub fx_effect_base: BaseAmount,
+    pub gain_base: BaseAmount,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PositionPerformance {
+    pub position: Position,
+    pub realized: RealizedGain,
+}
+
 impl Position {
     fn empty() -> Self {
         Self {
@@ -54,6 +78,50 @@ impl Position {
     }
 }
 
+impl BaseAmount {
+    fn zero() -> Self {
+        Self::Available(Decimal::ZERO)
+    }
+
+    fn add(&mut self, value: Decimal) {
+        if let Self::Available(total) = self {
+            *total += value;
+        }
+    }
+
+    fn mark_unavailable<I>(&mut self, reasons: I)
+    where
+        I: IntoIterator<Item = UnavailableReason>,
+    {
+        match self {
+            Self::Available(_) => {
+                *self = Self::Unavailable {
+                    reasons: dedup_unavailable_reasons(reasons.into_iter().collect()),
+                };
+            }
+            Self::Unavailable { reasons: existing } => {
+                existing.extend(reasons);
+                *existing = dedup_unavailable_reasons(std::mem::take(existing));
+            }
+        }
+    }
+}
+
+impl RealizedGain {
+    fn zero() -> Self {
+        Self {
+            sold_quantity: 0,
+            proceeds_native: Decimal::ZERO,
+            cost_basis_native: Decimal::ZERO,
+            proceeds_base: BaseAmount::zero(),
+            cost_basis_base: BaseAmount::zero(),
+            price_effect_base: BaseAmount::zero(),
+            fx_effect_base: BaseAmount::zero(),
+            gain_base: BaseAmount::zero(),
+        }
+    }
+}
+
 /// Derive a position by folding `(trade_date, id)`-ordered transactions.
 ///
 /// Callers must pass transactions already sorted by `(trade_date, id)`.
@@ -72,6 +140,107 @@ pub fn derive_position(transactions: &[LedgerTransaction]) -> Result<Position, L
     Ok(position)
 }
 
+/// Derive the current position and realized sell gain by folding
+/// `(trade_date, id)`-ordered transactions.
+pub fn derive_position_performance(
+    transactions: &[LedgerTransaction],
+) -> Result<PositionPerformance, LedgerError> {
+    debug_assert!(
+        transactions
+            .windows(2)
+            .all(|pair| { (pair[0].trade_date, pair[0].id) <= (pair[1].trade_date, pair[1].id) }),
+        "derive_position_performance requires transactions sorted by (trade_date, id)"
+    );
+
+    let mut position = Position::empty();
+    let mut realized = RealizedGain::zero();
+
+    for transaction in transactions {
+        if transaction.kind == TransactionKind::Sell {
+            accumulate_realized_gain(&mut realized, &position, transaction)?;
+        }
+        apply(&mut position, transaction)?;
+    }
+
+    Ok(PositionPerformance { position, realized })
+}
+
+fn accumulate_realized_gain(
+    realized: &mut RealizedGain,
+    position: &Position,
+    tx: &LedgerTransaction,
+) -> Result<(), LedgerError> {
+    let sell_qty = -tx.quantity;
+    if sell_qty > position.quantity {
+        return Err(LedgerError::SellExceedsPosition {
+            transaction_id: tx.id,
+            available: position.quantity,
+            requested: sell_qty,
+        });
+    }
+
+    let sell_price = tx.price.ok_or(LedgerError::SellMissingPrice {
+        transaction_id: tx.id,
+    })?;
+    let quantity = Decimal::from(sell_qty);
+    let ratio = quantity / Decimal::from(position.quantity);
+    let proceeds_native = sell_price * quantity;
+    let cost_basis_native = position.cost_basis_native * ratio;
+
+    realized.sold_quantity += sell_qty;
+    realized.proceeds_native += proceeds_native;
+    realized.cost_basis_native += cost_basis_native;
+
+    let sell_fx = match tx.fx_rate_to_base {
+        Some(fx) => fx,
+        None => {
+            let reasons = [UnavailableReason::MissingFx {
+                transaction_id: tx.id,
+            }];
+            realized.proceeds_base.mark_unavailable(reasons.clone());
+            realized.cost_basis_base.mark_unavailable(reasons.clone());
+            realized.price_effect_base.mark_unavailable(reasons.clone());
+            realized.fx_effect_base.mark_unavailable(reasons.clone());
+            realized.gain_base.mark_unavailable(reasons);
+            return Ok(());
+        }
+    };
+
+    let proceeds_base = proceeds_native * sell_fx - tx.brokerage_base;
+    let (cost_basis_base, fee_component_base) = match &position.base {
+        BaseCostBasis::Available {
+            cost_basis_base,
+            fee_component_base,
+        } => (cost_basis_base, fee_component_base),
+        BaseCostBasis::Unavailable { reasons } => {
+            realized.proceeds_base.add(proceeds_base);
+            realized.cost_basis_base.mark_unavailable(reasons.clone());
+            realized.price_effect_base.mark_unavailable(reasons.clone());
+            realized.fx_effect_base.mark_unavailable(reasons.clone());
+            realized.gain_base.mark_unavailable(reasons.clone());
+            return Ok(());
+        }
+    };
+
+    let allocated_cost_basis_base = *cost_basis_base * ratio;
+    let allocated_fee_component_base = *fee_component_base * ratio;
+    let price_effect_base = (proceeds_native - cost_basis_native) * sell_fx
+        - allocated_fee_component_base
+        - tx.brokerage_base;
+    let fx_effect_base =
+        cost_basis_native * sell_fx - (allocated_cost_basis_base - allocated_fee_component_base);
+
+    realized.proceeds_base.add(proceeds_base);
+    realized.cost_basis_base.add(allocated_cost_basis_base);
+    realized.price_effect_base.add(price_effect_base);
+    realized.fx_effect_base.add(fx_effect_base);
+    realized
+        .gain_base
+        .add(proceeds_base - allocated_cost_basis_base);
+
+    Ok(())
+}
+
 fn apply(position: &mut Position, tx: &LedgerTransaction) -> Result<(), LedgerError> {
     match tx.kind {
         TransactionKind::Buy => apply_buy(position, tx),
@@ -79,6 +248,16 @@ fn apply(position: &mut Position, tx: &LedgerTransaction) -> Result<(), LedgerEr
         TransactionKind::Split => apply_split(position, tx),
         TransactionKind::Dividend => Ok(()),
     }
+}
+
+fn dedup_unavailable_reasons(reasons: Vec<UnavailableReason>) -> Vec<UnavailableReason> {
+    let mut deduped = Vec::new();
+    for reason in reasons {
+        if !deduped.contains(&reason) {
+            deduped.push(reason);
+        }
+    }
+    deduped
 }
 
 fn apply_buy(position: &mut Position, tx: &LedgerTransaction) -> Result<(), LedgerError> {
@@ -173,7 +352,9 @@ fn apply_split(position: &mut Position, tx: &LedgerTransaction) -> Result<(), Le
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_position, BaseCostBasis, UnavailableReason};
+    use super::{
+        derive_position, derive_position_performance, BaseAmount, BaseCostBasis, UnavailableReason,
+    };
     use crate::domain::transaction::{LedgerError, LedgerTransaction, TransactionKind};
     use chrono::NaiveDate;
     use rust_decimal::Decimal;
@@ -209,6 +390,24 @@ mod tests {
             quantity: -qty,
             price: Some(dec!(1)),
             fx_rate_to_base: None,
+            brokerage_base: Decimal::ZERO,
+        }
+    }
+
+    fn sell_with_price(
+        id: i64,
+        date: NaiveDate,
+        qty: i64,
+        price: Decimal,
+        fx: Option<Decimal>,
+    ) -> LedgerTransaction {
+        LedgerTransaction {
+            id,
+            trade_date: date,
+            kind: TransactionKind::Sell,
+            quantity: -qty,
+            price: Some(price),
+            fx_rate_to_base: fx,
             brokerage_base: Decimal::ZERO,
         }
     }
@@ -401,5 +600,76 @@ mod tests {
         assert_eq!(avg.round_dp(2), dec!(3.33));
         assert!(avg > dec!(3.33));
         assert!(avg < dec!(3.34));
+    }
+
+    #[test]
+    fn position_performance_accumulates_realized_sell_gain() {
+        let mut buy = buy(1, d(2026, 6, 1), 10, dec!(100), Some(dec!(10)));
+        buy.brokerage_base = dec!(20);
+        let mut sell = sell_with_price(2, d(2026, 6, 2), 4, dec!(120), Some(dec!(11)));
+        sell.brokerage_base = dec!(5);
+
+        let performance = derive_position_performance(&[buy, sell]).expect("derives");
+
+        assert_eq!(performance.position.quantity, 6);
+        assert_eq!(performance.realized.sold_quantity, 4);
+        assert_eq!(performance.realized.proceeds_native, dec!(480));
+        assert_eq!(performance.realized.cost_basis_native, dec!(400));
+        assert_eq!(
+            performance.realized.cost_basis_base,
+            BaseAmount::Available(dec!(4008))
+        );
+        assert_eq!(
+            performance.realized.proceeds_base,
+            BaseAmount::Available(dec!(5275))
+        );
+        assert_eq!(
+            performance.realized.price_effect_base,
+            BaseAmount::Available(dec!(867))
+        );
+        assert_eq!(
+            performance.realized.fx_effect_base,
+            BaseAmount::Available(dec!(400))
+        );
+        assert_eq!(
+            performance.realized.gain_base,
+            BaseAmount::Available(dec!(1267))
+        );
+    }
+
+    #[test]
+    fn position_performance_marks_realized_base_unavailable_without_sell_fx() {
+        let buy = buy(1, d(2026, 6, 1), 10, dec!(100), Some(dec!(10)));
+        let sell = sell_with_price(2, d(2026, 6, 2), 10, dec!(120), None);
+
+        let performance = derive_position_performance(&[buy, sell]).expect("derives");
+
+        assert_eq!(performance.position.quantity, 0);
+        assert_eq!(performance.realized.sold_quantity, 10);
+        assert_eq!(
+            performance.realized.gain_base,
+            BaseAmount::Unavailable {
+                reasons: vec![UnavailableReason::MissingFx { transaction_id: 2 }]
+            }
+        );
+    }
+
+    #[test]
+    fn position_performance_keeps_sell_proceeds_when_buy_fx_is_missing() {
+        let buy = buy(1, d(2026, 6, 1), 10, dec!(100), None);
+        let sell = sell_with_price(2, d(2026, 6, 2), 10, dec!(120), Some(dec!(11)));
+
+        let performance = derive_position_performance(&[buy, sell]).expect("derives");
+
+        assert_eq!(
+            performance.realized.proceeds_base,
+            BaseAmount::Available(dec!(13200))
+        );
+        assert_eq!(
+            performance.realized.gain_base,
+            BaseAmount::Unavailable {
+                reasons: vec![UnavailableReason::MissingFx { transaction_id: 1 }]
+            }
+        );
     }
 }

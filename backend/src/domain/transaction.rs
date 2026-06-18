@@ -125,6 +125,9 @@ pub enum LedgerError {
     BuyMissingPrice {
         transaction_id: i64,
     },
+    SellMissingPrice {
+        transaction_id: i64,
+    },
 }
 
 impl LedgerError {
@@ -134,6 +137,7 @@ impl LedgerError {
             Self::SplitWithoutPosition { .. } => "split_without_position",
             Self::SplitDrivesNonPositive { .. } => "split_drives_non_positive",
             Self::BuyMissingPrice { .. } => "buy_missing_price",
+            Self::SellMissingPrice { .. } => "sell_missing_price",
         }
     }
 
@@ -142,7 +146,8 @@ impl LedgerError {
             Self::SellExceedsPosition { transaction_id, .. }
             | Self::SplitWithoutPosition { transaction_id }
             | Self::SplitDrivesNonPositive { transaction_id, .. }
-            | Self::BuyMissingPrice { transaction_id } => transaction_id,
+            | Self::BuyMissingPrice { transaction_id }
+            | Self::SellMissingPrice { transaction_id } => transaction_id,
         }
     }
 }

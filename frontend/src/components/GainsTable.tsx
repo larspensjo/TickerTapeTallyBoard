@@ -89,6 +89,14 @@ function latestStatus(row: GainsRow): LatestStatus {
     };
   }
 
+  if (row.position_status === "closed") {
+    return {
+      label: "Closed",
+      title: "Realized gain from a fully closed position",
+      visible: true,
+    };
+  }
+
   const priceFreshness = row.latest_price?.freshness;
   if (priceFreshness && priceFreshness !== "fresh") {
     return {
@@ -185,7 +193,14 @@ const columns = [
       }
 
       return (
-        <span className="status-chip compact warning" title={status.title}>
+        <span
+          className={
+            gain.position_status === "closed" && gain.reasons.length === 0
+              ? "status-chip compact"
+              : "status-chip compact warning"
+          }
+          title={status.title}
+        >
           {status.label}
         </span>
       );
@@ -193,7 +208,15 @@ const columns = [
   }),
 ];
 
-export function GainsTable({ rows }: { rows: GainsRow[] }) {
+export function GainsTable({
+  rows,
+  includeClosedPositions,
+  onIncludeClosedPositionsChange,
+}: {
+  rows: GainsRow[];
+  includeClosedPositions: boolean;
+  onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
+}) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "unrealized_gain_base", desc: true },
   ]);
@@ -216,6 +239,7 @@ export function GainsTable({ rows }: { rows: GainsRow[] }) {
             gain.instrument.name,
             gain.instrument.exchange,
             gain.instrument.currency,
+            gain.position_status,
             gain.cost_basis_base.status === "available"
               ? gain.cost_basis_base.value
               : "",
@@ -240,6 +264,7 @@ export function GainsTable({ rows }: { rows: GainsRow[] }) {
             gain.day_change_percent.status === "available"
               ? gain.day_change_percent.value
               : "",
+            gain.position_status === "closed" ? "closed realized" : "open",
             ...gain.reasons.map(reasonLabel),
             ...freshnessParts,
           ]
@@ -273,6 +298,16 @@ export function GainsTable({ rows }: { rows: GainsRow[] }) {
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
+        <label className="toolbar-check">
+          <input
+            type="checkbox"
+            checked={includeClosedPositions}
+            onChange={(event) =>
+              onIncludeClosedPositionsChange(event.target.checked)
+            }
+          />
+          <span>Include closed positions</span>
+        </label>
       </div>
       <div className="table-wrap gains-table">
         <table>

@@ -37,10 +37,13 @@ export function useHoldings() {
   });
 }
 
-export function useGains() {
+export function useGains(includeClosedPositions = false) {
   return useQuery({
-    queryKey: ["gains"],
-    queryFn: () => apiGet<GainsResponse>("/api/gains"),
+    queryKey: ["gains", includeClosedPositions],
+    queryFn: () =>
+      apiGet<GainsResponse>(
+        `/api/gains${includeClosedPositions ? "?include_closed=true" : ""}`,
+      ),
   });
 }
 
@@ -94,6 +97,7 @@ export function useCreateTransaction() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["gains"] });
     },
   });
 }
@@ -107,6 +111,7 @@ export function useDeleteTransaction() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["gains"] });
     },
   });
 }
@@ -179,6 +184,7 @@ export function useCommitImport() {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["gains"] });
     },
   });
 }
@@ -197,6 +203,7 @@ export function useRollbackImport() {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["gains"] });
     },
   });
 }

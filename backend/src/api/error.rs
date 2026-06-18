@@ -127,5 +127,6 @@ fn ledger_message(error: LedgerError) -> String {
             format!("Split would drive the position to {resulting_quantity} (must stay positive).")
         }
         LedgerError::BuyMissingPrice { .. } => "A buy requires a native price.".to_owned(),
+        LedgerError::SellMissingPrice { .. } => "A sell requires a native price.".to_owned(),
     }
 }

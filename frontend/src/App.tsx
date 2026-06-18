@@ -32,12 +32,14 @@ type AppView = "board" | "import";
 interface UiState {
   appView: AppView;
   boardView: BoardView;
+  includeClosedPositions: boolean;
   formOpen: boolean;
 }
 
 type UiAction =
   | { type: "appViewSelected"; appView: AppView }
   | { type: "boardViewSelected"; boardView: BoardView }
+  | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
   | { type: "formToggled"; open: boolean };
 
 interface HealthResponse {
@@ -52,6 +54,11 @@ function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, appView: action.appView };
     case "boardViewSelected":
       return { ...state, boardView: action.boardView };
+    case "closedPositionsToggled":
+      return {
+        ...state,
+        includeClosedPositions: action.includeClosedPositions,
+      };
     case "formToggled":
       return { ...state, formOpen: action.open };
   }
@@ -144,6 +151,7 @@ export function App() {
   const [uiState, dispatch] = useReducer(uiReducer, {
     appView: "board",
     boardView: "holdings",
+    includeClosedPositions: false,
     formOpen: false,
   });
 
@@ -154,7 +162,7 @@ export function App() {
   const instrumentsQuery = useInstruments();
   const transactionsQuery = useTransactions();
   const holdingsQuery = useHoldings();
-  const gainsQuery = useGains();
+  const gainsQuery = useGains(uiState.includeClosedPositions);
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const deleteTransaction = useDeleteTransaction();
@@ -230,6 +238,7 @@ export function App() {
                   void Promise.all([
                     healthQuery.refetch(),
                     holdingsQuery.refetch(),
+                    gainsQuery.refetch(),
                     instrumentsQuery.refetch(),
                     transactionsQuery.refetch(),
                   ]);
@@ -237,6 +246,7 @@ export function App() {
                 disabled={
                   healthQuery.isFetching ||
                   holdingsQuery.isFetching ||
+                  gainsQuery.isFetching ||
                   instrumentsQuery.isFetching ||
                   transactionsQuery.isFetching
                 }
@@ -246,6 +256,7 @@ export function App() {
                   className={
                     healthQuery.isFetching ||
                     holdingsQuery.isFetching ||
+                    gainsQuery.isFetching ||
                     instrumentsQuery.isFetching ||
                     transactionsQuery.isFetching
                       ? "spin"
@@ -466,7 +477,16 @@ export function App() {
                   onRetry={() => void gainsQuery.refetch()}
                   emptyMessage="No valued holdings yet. Add a Buy and refresh prices."
                 >
-                  <GainsTable rows={gainsQuery.data?.rows ?? []} />
+                  <GainsTable
+                    rows={gainsQuery.data?.rows ?? []}
+                    includeClosedPositions={uiState.includeClosedPositions}
+                    onIncludeClosedPositionsChange={(includeClosedPositions) =>
+                      dispatch({
+                        type: "closedPositionsToggled",
+                        includeClosedPositions,
+                      })
+                    }
+                  />
                 </BoardSection>
               ) : (
                 <BoardSection

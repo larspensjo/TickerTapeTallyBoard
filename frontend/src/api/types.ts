@@ -105,11 +105,13 @@ export interface GainsRow {
   day_change_base: MoneyValue;
   day_change_percent: PercentValue;
   reasons: string[];
+  position_status: "open" | "closed";
 }
 
 export interface GainsResponse {
   as_of_date: string;
   base_currency: string;
+  include_closed_positions: boolean;
   summary: GainsSummary;
   rows: GainsRow[];
 }

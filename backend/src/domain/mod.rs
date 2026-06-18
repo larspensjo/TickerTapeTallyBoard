@@ -8,7 +8,10 @@ mod transaction;
 mod valuation;
 
 #[allow(unused_imports)]
-pub use position::{derive_position, BaseCostBasis, Position, UnavailableReason};
+pub use position::{
+    derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,
+    PositionPerformance, RealizedGain, UnavailableReason,
+};
 #[allow(unused_imports)]
 pub use transaction::{
     validate, LedgerError, LedgerTransaction, ProposedTransaction, TransactionKind, ValidationError,

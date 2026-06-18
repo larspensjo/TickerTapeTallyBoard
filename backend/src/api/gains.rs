@@ -1,7 +1,8 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 use chrono::Local;
-use serde::Serialize;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::api::error::ApiError;
@@ -12,13 +13,23 @@ use crate::api::valuation::{
     PriceSnapshotResponse, BASE_CURRENCY,
 };
 use crate::db::{instruments, transactions};
-use crate::domain::{derive_position, summarize_holdings, value_position};
+use crate::domain::{
+    derive_position_performance, summarize_holdings, value_position, Availability, BaseAmount,
+    RealizedGain, ValuationReason, ValuedHolding,
+};
 use crate::state::AppState;
+
+#[derive(Debug, Deserialize)]
+pub struct GainsQuery {
+    #[serde(default)]
+    include_closed: bool,
+}
 
 #[derive(Debug, Serialize)]
 pub struct GainsResponse {
     pub as_of_date: String,
     pub base_currency: String,
+    pub include_closed_positions: bool,
     pub summary: SummaryResponse,
     pub rows: Vec<GainRow>,
 }
@@ -55,9 +66,20 @@ pub struct GainRow {
     pub day_change_base: AvailabilityResponse,
     pub day_change_percent: AvailabilityResponse,
     pub reasons: Vec<String>,
+    pub position_status: GainPositionStatus,
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, ApiError> {
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GainPositionStatus {
+    Open,
+    Closed,
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<GainsQuery>,
+) -> Result<Json<GainsResponse>, ApiError> {
     let valuation_date = Local::now().naive_local().date();
     let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
@@ -75,13 +97,16 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
 
     for instrument in &instruments_list {
         let ledger = ledgers.remove(&instrument.id).unwrap_or_default();
-        let position = derive_position(&ledger).map_err(|error| {
+        let performance = derive_position_performance(&ledger).map_err(|error| {
             ApiError::internal(format!(
                 "inconsistent stored ledger for instrument {}: {error:?}",
                 instrument.id
             ))
         })?;
-        if position.quantity == 0 {
+        if performance.position.quantity == 0 {
+            if query.include_closed && performance.realized.sold_quantity > 0 {
+                gain_rows.push(closed_gain_row(instrument, &performance.realized)?);
+            }
             continue;
         }
 
@@ -89,7 +114,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
             load_valuation_inputs(&state.pool, instrument, valuation_date).await?;
 
         let valued_holding = value_position(
-            &position,
+            &performance.position,
             &instrument.currency,
             valuation_date,
             valuation_inputs.latest_price,
@@ -100,60 +125,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
 
         valued_holdings.push(valued_holding.clone());
 
-        let gain_row = GainRow {
-            instrument: InstrumentResponse::from_row(instrument)?,
-            quantity: valued_holding.quantity,
-            cost_basis_native: money_string(valued_holding.cost_basis_native),
-            cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
-                money_string(*v)
-            }),
-            price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
-                money_string(*v)
-            }),
-            fx_effect_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
-                money_string(*v)
-            }),
-            latest_price: valued_holding
-                .latest_price
-                .as_ref()
-                .map(price_snapshot_response),
-            previous_price: valued_holding
-                .previous_price
-                .as_ref()
-                .map(price_snapshot_response),
-            latest_fx: valued_holding.latest_fx.as_ref().map(fx_snapshot_response),
-            previous_fx: valued_holding
-                .previous_fx
-                .as_ref()
-                .map(fx_snapshot_response),
-            market_value_native: serialize_availability(&valued_holding.market_value_native, |v| {
-                money_string(*v)
-            }),
-            market_value_base: serialize_availability(&valued_holding.market_value_base, |v| {
-                money_string(*v)
-            }),
-            unrealized_gain_base: serialize_availability(
-                &valued_holding.unrealized_gain_base,
-                |v| money_string(*v),
-            ),
-            unrealized_gain_percent: serialize_availability(
-                &valued_holding.unrealized_gain_percent,
-                |v| format!("{:.2}", v),
-            ),
-            day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
-                money_string(*v)
-            }),
-            day_change_percent: serialize_availability(&valued_holding.day_change_percent, |v| {
-                format!("{:.2}", v)
-            }),
-            reasons: valued_holding
-                .reasons
-                .iter()
-                .map(serialize_valuation_reason)
-                .collect(),
-        };
-
-        gain_rows.push(gain_row);
+        gain_rows.push(open_gain_row(instrument, &valued_holding)?);
     }
 
     let summary = summarize_holdings(&valued_holdings);
@@ -161,6 +133,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
     Ok(Json(GainsResponse {
         as_of_date: valuation_date.format("%Y-%m-%d").to_string(),
         base_currency: BASE_CURRENCY.to_string(),
+        include_closed_positions: query.include_closed,
         summary: SummaryResponse {
             market_value_base: serialize_availability(&summary.market_value_base, |v| {
                 money_string(*v)
@@ -185,6 +158,149 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<GainsResponse>, 
         },
         rows: gain_rows,
     }))
+}
+
+fn open_gain_row(
+    instrument: &instruments::InstrumentRow,
+    valued_holding: &ValuedHolding,
+) -> Result<GainRow, ApiError> {
+    Ok(GainRow {
+        instrument: InstrumentResponse::from_row(instrument)?,
+        quantity: valued_holding.quantity,
+        cost_basis_native: money_string(valued_holding.cost_basis_native),
+        cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
+            money_string(*v)
+        }),
+        price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
+            money_string(*v)
+        }),
+        fx_effect_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
+            money_string(*v)
+        }),
+        latest_price: valued_holding
+            .latest_price
+            .as_ref()
+            .map(price_snapshot_response),
+        previous_price: valued_holding
+            .previous_price
+            .as_ref()
+            .map(price_snapshot_response),
+        latest_fx: valued_holding.latest_fx.as_ref().map(fx_snapshot_response),
+        previous_fx: valued_holding
+            .previous_fx
+            .as_ref()
+            .map(fx_snapshot_response),
+        market_value_native: serialize_availability(&valued_holding.market_value_native, |v| {
+            money_string(*v)
+        }),
+        market_value_base: serialize_availability(&valued_holding.market_value_base, |v| {
+            money_string(*v)
+        }),
+        unrealized_gain_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
+            money_string(*v)
+        }),
+        unrealized_gain_percent: serialize_availability(
+            &valued_holding.unrealized_gain_percent,
+            |v| format!("{:.2}", v),
+        ),
+        day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
+            money_string(*v)
+        }),
+        day_change_percent: serialize_availability(&valued_holding.day_change_percent, |v| {
+            format!("{:.2}", v)
+        }),
+        reasons: valued_holding
+            .reasons
+            .iter()
+            .map(serialize_valuation_reason)
+            .collect(),
+        position_status: GainPositionStatus::Open,
+    })
+}
+
+fn closed_gain_row(
+    instrument: &instruments::InstrumentRow,
+    realized: &RealizedGain,
+) -> Result<GainRow, ApiError> {
+    let cost_basis_base = base_amount_availability(&realized.cost_basis_base);
+    let gain_base = base_amount_availability(&realized.gain_base);
+    let gain_percent = match (gain_base.as_ref(), cost_basis_base.as_ref()) {
+        (Some(gain), Some(cost_basis)) if *cost_basis != Decimal::ZERO => {
+            Availability::available((*gain / *cost_basis) * Decimal::from(100))
+        }
+        (Some(_), Some(_)) => Availability::unavailable(ValuationReason::ZeroCostBasis),
+        _ => Availability::Unavailable {
+            reasons: merge_closed_reasons(&[gain_base.reasons(), cost_basis_base.reasons()]),
+        },
+    };
+    let mut reasons = merge_closed_reasons(&[
+        cost_basis_base.reasons(),
+        base_amount_availability(&realized.proceeds_base).reasons(),
+        base_amount_availability(&realized.price_effect_base).reasons(),
+        base_amount_availability(&realized.fx_effect_base).reasons(),
+        gain_base.reasons(),
+        gain_percent.reasons(),
+    ]);
+
+    dedup_valuation_reasons(&mut reasons);
+
+    Ok(GainRow {
+        instrument: InstrumentResponse::from_row(instrument)?,
+        quantity: 0,
+        cost_basis_native: money_string(realized.cost_basis_native),
+        cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),
+        price_effect_base: serialize_base_amount(&realized.price_effect_base),
+        fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
+        latest_price: None,
+        previous_price: None,
+        latest_fx: None,
+        previous_fx: None,
+        market_value_native: AvailabilityResponse::Available {
+            value: money_string(realized.proceeds_native),
+        },
+        market_value_base: serialize_base_amount(&realized.proceeds_base),
+        unrealized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
+        unrealized_gain_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
+        day_change_base: AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        },
+        day_change_percent: AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        },
+        reasons: reasons.iter().map(serialize_valuation_reason).collect(),
+        position_status: GainPositionStatus::Closed,
+    })
+}
+
+fn serialize_base_amount(value: &BaseAmount) -> AvailabilityResponse {
+    let availability = base_amount_availability(value);
+    serialize_availability(&availability, |v| money_string(*v))
+}
+
+fn base_amount_availability(value: &BaseAmount) -> Availability<Decimal> {
+    match value {
+        BaseAmount::Available(value) => Availability::available(*value),
+        BaseAmount::Unavailable { .. } => Availability::unavailable(ValuationReason::MissingFx),
+    }
+}
+
+fn merge_closed_reasons(sources: &[Vec<ValuationReason>]) -> Vec<ValuationReason> {
+    let mut reasons = Vec::new();
+    for source in sources {
+        reasons.extend_from_slice(source);
+    }
+    dedup_valuation_reasons(&mut reasons);
+    reasons
+}
+
+fn dedup_valuation_reasons(reasons: &mut Vec<ValuationReason>) {
+    let mut deduped = Vec::new();
+    for reason in reasons.drain(..) {
+        if !deduped.contains(&reason) {
+            deduped.push(reason);
+        }
+    }
+    *reasons = deduped;
 }
 
 #[cfg(test)]
@@ -236,8 +352,58 @@ mod tests {
         let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["base_currency"], "SEK");
+        assert_eq!(body["include_closed_positions"], false);
         assert_eq!(body["rows"].as_array().unwrap().len(), 0);
         assert_eq!(body["summary"]["excluded_rows"], 0);
+    }
+
+    #[tokio::test]
+    async fn gains_can_include_closed_positions_with_realized_gain() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":10,"price":"100","currency":"USD","fx_rate_to_base":"10","brokerage":"20"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":10,"price":"120","currency":"USD","fx_rate_to_base":"11","brokerage":"5"}),
+        )
+        .await;
+
+        let (default_status, default_body) = send(&state, "GET", "/api/gains", json!({})).await;
+        assert_eq!(default_status, StatusCode::OK);
+        assert_eq!(default_body["rows"].as_array().expect("rows").len(), 0);
+
+        let (status, body) = send(&state, "GET", "/api/gains?include_closed=true", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["include_closed_positions"], true);
+        assert_eq!(body["rows"].as_array().expect("rows").len(), 1);
+        assert_eq!(
+            body["summary"]["market_value_base"]["status"],
+            "unavailable"
+        );
+
+        let row = &body["rows"][0];
+        assert_eq!(row["instrument"]["symbol"], "MSFT");
+        assert_eq!(row["position_status"], "closed");
+        assert_eq!(row["quantity"], 0);
+        assert_eq!(row["cost_basis_native"], "1000.00");
+        assert_available(&row["cost_basis_base"], "10020.00");
+        assert_available(&row["market_value_native"], "1200.00");
+        assert_available(&row["market_value_base"], "13195.00");
+        assert_available(&row["unrealized_gain_base"], "3175.00");
+        assert_available(&row["unrealized_gain_percent"], "31.68");
+        assert_available(&row["price_effect_base"], "2175.00");
+        assert_available(&row["fx_effect_base"], "1000.00");
     }
 
     #[tokio::test]
