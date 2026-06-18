@@ -377,7 +377,7 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
 
         {preview && state.phase !== "previewing" ? (
           <>
-            <section className="board-state muted">
+            <section className="board-state muted import-summary">
               <p className="total-value">{preview.counts.rows} trades</p>
               <ImportCountsMetrics counts={preview.counts} />
               {preview.metadata ? (
@@ -433,24 +433,26 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                             <td>
                               <div className="asset-name-cell">
                                 <strong>{asset.name}</strong>
-                                <span>{asset.asset_key}</span>
-                                <div className="asset-badges">
-                                  {asset.is_new_instrument ? (
-                                    <span className="asset-badge">
-                                      New instrument
-                                    </span>
-                                  ) : null}
-                                  {asset.skipped_reason ? (
-                                    <span className="asset-badge warning">
-                                      {asset.skipped_reason}
-                                    </span>
-                                  ) : null}
-                                  {asset.errors.length > 0 ? (
-                                    <span className="asset-badge warning">
-                                      {asset.errors.length} error
-                                      {asset.errors.length === 1 ? "" : "s"}
-                                    </span>
-                                  ) : null}
+                                <div className="asset-meta-line">
+                                  <span>{asset.asset_key}</span>
+                                  <div className="asset-badges">
+                                    {asset.is_new_instrument ? (
+                                      <span className="asset-badge">
+                                        New instrument
+                                      </span>
+                                    ) : null}
+                                    {asset.skipped_reason ? (
+                                      <span className="asset-badge warning">
+                                        {asset.skipped_reason}
+                                      </span>
+                                    ) : null}
+                                    {asset.errors.length > 0 ? (
+                                      <span className="asset-badge warning">
+                                        {asset.errors.length} error
+                                        {asset.errors.length === 1 ? "" : "s"}
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </div>
                             </td>
