@@ -13,7 +13,7 @@ pub mod frankfurter;
 pub mod yahoo;
 
 pub use frankfurter::FrankfurterClient;
-pub use yahoo::YahooChartClient;
+pub use yahoo::{YahooChartClient, YahooSearchClient};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -124,6 +124,15 @@ pub struct FxRate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolSearchMatch {
+    pub provider: MarketDataProvider,
+    pub provider_symbol: String,
+    pub quote_type: Option<String>,
+    pub exchange: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderError {
     provider: String,
     reason: ProviderMissingReason,
@@ -231,6 +240,11 @@ pub trait FxRateProvider: Send + Sync {
     ) -> ProviderResult<Vec<FxRate>>;
 }
 
+#[async_trait]
+pub trait SymbolSearchProvider: Send + Sync {
+    async fn search(&self, query: &str) -> ProviderResult<Vec<SymbolSearchMatch>>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceHistoryRequest {
     pub symbol: String,
@@ -244,6 +258,11 @@ pub struct FxHistoryRequest {
     pub quote: String,
     pub start: NaiveDate,
     pub end: NaiveDate,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolSearchRequest {
+    pub query: String,
 }
 
 #[derive(Clone)]
@@ -409,6 +428,72 @@ impl FxRateProvider for FakeFxRateProvider {
     }
 }
 
+#[derive(Clone)]
+pub struct FakeSymbolSearchProvider {
+    provider: MarketDataProvider,
+    state: Arc<Mutex<FakeSymbolSearchProviderState>>,
+}
+
+#[derive(Default)]
+struct FakeSymbolSearchProviderState {
+    responses: VecDeque<ProviderResult<Vec<SymbolSearchMatch>>>,
+    calls: Vec<SymbolSearchRequest>,
+}
+
+impl FakeSymbolSearchProvider {
+    pub fn new() -> Self {
+        Self::with_provider(MarketDataProvider::Manual)
+    }
+
+    pub fn with_provider(provider: MarketDataProvider) -> Self {
+        Self {
+            provider,
+            state: Arc::new(Mutex::new(FakeSymbolSearchProviderState::default())),
+        }
+    }
+
+    pub fn push_response(&self, response: ProviderResult<Vec<SymbolSearchMatch>>) {
+        self.state
+            .lock()
+            .expect("fake symbol search provider mutex poisoned")
+            .responses
+            .push_back(response);
+    }
+
+    pub fn calls(&self) -> Vec<SymbolSearchRequest> {
+        self.state
+            .lock()
+            .expect("fake symbol search provider mutex poisoned")
+            .calls
+            .clone()
+    }
+}
+
+impl Default for FakeSymbolSearchProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl SymbolSearchProvider for FakeSymbolSearchProvider {
+    async fn search(&self, query: &str) -> ProviderResult<Vec<SymbolSearchMatch>> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("fake symbol search provider mutex poisoned");
+        state.calls.push(SymbolSearchRequest {
+            query: query.to_owned(),
+        });
+        state.responses.pop_front().unwrap_or_else(|| {
+            Err(ProviderError::provider_error(
+                self.provider.as_str(),
+                format!("no fake symbol search response configured for {query}"),
+            ))
+        })
+    }
+}
+
 fn status_to_reason(status: u16) -> ProviderMissingReason {
     match status {
         404 => ProviderMissingReason::NotListed,
@@ -469,6 +554,24 @@ mod tests {
         assert_eq!(price.calls()[0].symbol, "MSFT");
         assert_eq!(fx.calls().len(), 1);
         assert_eq!(fx.calls()[0].base, "USD");
+    }
+
+    #[tokio::test]
+    async fn fake_symbol_search_provider_records_calls() {
+        let search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+        search.push_response(Ok(vec![SymbolSearchMatch {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "MSFT".to_owned(),
+            quote_type: Some("EQUITY".to_owned()),
+            exchange: Some("NMS".to_owned()),
+            name: Some("Microsoft Corporation".to_owned()),
+        }]));
+
+        let matches = search.search("US5949181045").await.expect("search");
+
+        assert_eq!(matches[0].provider_symbol, "MSFT");
+        assert_eq!(search.calls().len(), 1);
+        assert_eq!(search.calls()[0].query, "US5949181045");
     }
 
     #[test]
