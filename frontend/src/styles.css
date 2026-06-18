@@ -400,6 +400,10 @@ table {
   border-collapse: collapse;
 }
 
+.holdings-table table {
+  min-width: 1040px;
+}
+
 .gains-table table {
   min-width: 1180px;
 }
