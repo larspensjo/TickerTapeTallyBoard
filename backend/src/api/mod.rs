@@ -55,7 +55,9 @@ fn api_router() -> Router<AppState> {
             "/import/sharesight/preview",
             post(import::sharesight_preview),
         )
+        .route("/import/avanza/preview", post(import::avanza_preview))
         .route("/import/sharesight/commit", post(import::sharesight_commit))
+        .route("/import/avanza/commit", post(import::avanza_commit))
         .route("/import/rollback/{batch_id}", post(import::rollback))
         .route(
             "/import/sharesight/rollback/{batch_id}",

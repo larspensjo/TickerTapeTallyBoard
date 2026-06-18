@@ -5,6 +5,7 @@ use ticker_tape_tally_board_backend::{api, db, import::raw_file_hash, state::App
 use tower::ServiceExt;
 
 const SYNTHETIC: &[u8] = include_bytes!("fixtures/sharesight_synthetic.csv");
+const AVANZA: &[u8] = include_bytes!("fixtures/avanza_synthetic.csv");
 const MALFORMED: &[u8] = b"not,a,sharesight,report\n";
 const TWO_ASSETS_ONE_BAD: &str = concat!(
     "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
@@ -154,6 +155,159 @@ async fn import_batches_accepts_avanza_source() {
     .expect("AVANZA source should be accepted");
 
     assert!(batch_id >= 1);
+}
+
+#[tokio::test]
+async fn avanza_preview_counts_and_groups() {
+    let state = test_state().await;
+    let (status, body) = send_bytes(&state, "/api/import/avanza/preview", AVANZA).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["counts"]["dividends"], 1);
+    assert_eq!(body["counts"]["skipped"], 1);
+    assert_eq!(body["counts"]["errors"], 0);
+
+    let warnings = body["warnings"].as_array().expect("warnings");
+    assert!(warnings
+        .iter()
+        .any(|warning| warning["code"] == "missing_fx"));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning["code"] == "non_integer_quantity"));
+}
+
+#[tokio::test]
+async fn avanza_preview_returns_plan_shaped_parse_errors() {
+    let state = test_state().await;
+    let (status, body) = send_bytes(&state, "/api/import/avanza/preview", MALFORMED).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metadata"], Value::Null);
+    assert_eq!(body["counts"]["errors"], 1);
+    let errors = body["errors"].as_array().expect("errors array");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["code"], "header_not_found");
+}
+
+#[tokio::test]
+async fn avanza_commit_writes_avanza_batch_and_persists_native_source_currency() {
+    let state = test_state().await;
+    let (status, body) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;
+    assert_eq!(status, StatusCode::OK);
+    let batch_id = body["batch_id"].as_i64().expect("batch id");
+
+    let source: String = sqlx::query_scalar("SELECT source FROM import_batches WHERE id = ?")
+        .bind(batch_id)
+        .fetch_one(&state.pool)
+        .await
+        .expect("source");
+    assert_eq!(source, "AVANZA");
+
+    let asml = db::instruments::find_by_isin(&state.pool, "NL0010273215")
+        .await
+        .expect("query")
+        .expect("asml instrument");
+    let source_currency: Option<String> = sqlx::query_scalar(
+        "SELECT source_currency FROM transactions WHERE instrument_id = ? LIMIT 1",
+    )
+    .bind(asml.id)
+    .fetch_one(&state.pool)
+    .await
+    .expect("source_currency");
+    assert_eq!(source_currency.as_deref(), Some("EUR"));
+    assert_eq!(asml.symbol, "NL0010273215");
+    assert_eq!(asml.exchange, "AVANZA");
+}
+
+#[tokio::test]
+async fn avanza_commit_matches_existing_instrument_by_isin() {
+    let state = test_state().await;
+    let existing = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \
+         VALUES ('US81762P1021','AVANZA','ServiceNow','STOCK','USD','US81762P1021') RETURNING id",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .expect("seed");
+
+    let (status, _) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let now = db::instruments::find_by_isin(&state.pool, "US81762P1021")
+        .await
+        .expect("query")
+        .expect("servicenow");
+    assert_eq!(
+        now.id, existing,
+        "ISIN match must reuse the existing instrument"
+    );
+}
+
+#[tokio::test]
+async fn avanza_rollback_via_shared_route() {
+    let state = test_state().await;
+    let (_, committed) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;
+    let batch_id = committed["batch_id"].as_i64().expect("batch id");
+
+    let (status, _) = send_json(&state, "POST", &format!("/api/import/rollback/{batch_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn avanza_backfills_isin_on_symbol_only_existing_instrument() {
+    let state = test_state().await;
+    let existing = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \
+         VALUES ('US81762P1021','AVANZA','ServiceNow','STOCK','USD',NULL) RETURNING id",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .expect("seed symbol-only AVANZA row");
+
+    let (status, _) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let matched = db::instruments::find_by_isin(&state.pool, "US81762P1021")
+        .await
+        .expect("query")
+        .expect("isin should now match");
+    assert_eq!(
+        matched.id, existing,
+        "must reuse the symbol-only row, not duplicate it"
+    );
+    assert_eq!(matched.isin.as_deref(), Some("US81762P1021"));
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM instruments WHERE exchange = 'AVANZA' AND symbol = 'US81762P1021'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .expect("count");
+    assert_eq!(count, 1, "no duplicate AVANZA instrument was created");
+}
+
+#[tokio::test]
+async fn avanza_split_without_position_is_a_hard_error_not_a_new_instrument() {
+    let state = test_state().await;
+    let csv = concat!(
+        "Datum;Konto;Typ av transaktion;Värdepapper/beskrivning;Antal;Kurs;Belopp;Transaktionsvaluta;Courtage;Valutakurs;Instrumentvaluta;ISIN;Resultat\n",
+        "2026-06-02;ISK;Split värdepapper;Orphan;5;;;;;;;XS9999999999;\n",
+    );
+
+    let (status, body) = send_bytes(&state, "/api/import/avanza/preview", csv.as_bytes()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|error| error["code"] == "split_without_position"));
+
+    let (commit_status, _) = send_bytes(&state, "/api/import/avanza/commit", csv.as_bytes()).await;
+    assert_eq!(commit_status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(db::instruments::find_by_isin(&state.pool, "XS9999999999")
+        .await
+        .expect("query")
+        .is_none());
 }
 
 #[tokio::test]

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::api::ApiError;
 use crate::db::{import_batches, instruments, transactions};
 use crate::domain;
+use crate::import::avanza::mapper::to_prepared as avanza_prepared;
+use crate::import::avanza::parser::parse_report as parse_avanza_report;
 use crate::import::core::outcome::{
     InstrumentKey, MappedRow, ParseError, PreparedImport, RowNote, RowOutcome,
 };
@@ -123,6 +125,21 @@ pub async fn sharesight_commit(
     commit_source(&state, &bytes, "SHARESIGHT", &params, parse_sharesight).await
 }
 
+pub async fn avanza_preview(
+    State(state): State<AppState>,
+    bytes: Bytes,
+) -> Result<Json<ImportPreview>, ApiError> {
+    preview_source(&state, &bytes, parse_avanza).await
+}
+
+pub async fn avanza_commit(
+    State(state): State<AppState>,
+    Query(params): Query<CommitParams>,
+    bytes: Bytes,
+) -> Result<Json<ImportResult>, ApiError> {
+    commit_source(&state, &bytes, "AVANZA", &params, parse_avanza).await
+}
+
 pub async fn rollback(
     State(state): State<AppState>,
     Path(batch_id): Path<i64>,
@@ -158,6 +175,10 @@ pub async fn rollback(
 
 fn parse_sharesight(bytes: &[u8]) -> Result<PreparedImport, ParseError> {
     parse_report(bytes).map(|report| sharesight_prepared(&report))
+}
+
+fn parse_avanza(bytes: &[u8]) -> Result<PreparedImport, ParseError> {
+    parse_avanza_report(bytes).map(|report| avanza_prepared(&report))
 }
 
 async fn preview_source(
