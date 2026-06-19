@@ -9,7 +9,7 @@ mod transaction;
 mod valuation;
 
 #[allow(unused_imports)]
-pub use performance::{reconstruct_period, PeriodLedger};
+pub use performance::{compute_period_amounts, reconstruct_period, PeriodAmounts, PeriodLedger};
 #[allow(unused_imports)]
 pub use position::{
     derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,
