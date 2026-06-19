@@ -1,4 +1,5 @@
 import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { AssetView } from "./components/AssetView";
 import { BoardView } from "./components/BoardView";
 import { ImportView } from "./components/ImportView";
 
@@ -29,6 +30,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<BoardView />} />
           <Route path="/import" element={<ImportView />} />
+          <Route path="/asset/:id" element={<AssetView />} />
         </Routes>
       </main>
     </div>
