@@ -230,3 +230,27 @@ Consequences: Gains API responses expose a `totals` object separate from `summar
 Decision: The frontend adopts `react-router-dom`. The board (`/`), import (`/import`), and a new per-asset detail page (`/asset/:id`) become real routes, replacing the in-memory `appView` switch; the portfolio totals band, dev status strip, and app-bar actions are scoped to the board route. The asset page is a full-page, linkable destination (browser Back/Forward, bookmark, reload) reached by making the shared `InstrumentCell` a link, intended to grow into a per-asset editing surface. Its first iteration is a read-only data shell composed only from existing endpoints (`/api/instruments`, `/api/gains?include_closed=true`, `/api/holdings`, `/api/transactions`, `/api/prices/status`) with no backend changes; it reserves a band for a future price chart and omits per-asset income/total return because income is not yet tracked.
 Context: Clicking an asset should surface all of its information in one place, and the view is expected to host future edits and a price chart. A full page implies a real, linkable destination, which the current reducer-only navigation cannot provide.
 Consequences: Navigation moves from `appView` reducer state to routes; `boardView`, `boardFilter`, `includeClosedPositions`, and `formOpen` stay board-local. The price-history endpoint plus chart, per-asset income/total return, and asset-page editing are deferred to their own specs. See `docs/plans/Spec.asset-detail-page.md`.
+
+## 2026-06-19: Sharesight-Style Performance Returns Method
+
+Decision: The Gains view uses Modified Dietz money-weighted performance returns for all percentage totals, replacing cost-basis percentages. The denominator uses calendar-day weights. Component percentages (capital, currency) share the Modified Dietz denominator but are not individually annualised; only `total_return_percent` is annualised when average years invested ≥ 1. Period years are approximated as `period_days / 365.25`.
+Context: Sharesight documents its Performance Report as dollar-weighted / money-weighted using a Modified Dietz variation. Cost-basis ratios were misleading when compared against Sharesight exports.
+Consequences: The Gains API accepts `start_date` and `end_date` query params; missing prices/FX surface as explicit unavailable reasons, never zero. Income/dividends remain unavailable until Phase 5. Row-level percentages retain cost-basis semantics; only totals are Modified Dietz.
+
+## 2026-06-19: Period Reconstruction Boundary Convention
+
+Decision: For period performance, transactions strictly before `start_date` form the opening position; transactions with `trade_date ∈ [start_date, end_date]` are period cash flows. A buy on the first day of the report is a cash inflow, not an opening balance. Transactions after `end_date` are excluded entirely (ledger truncation).
+Context: This matches the spec's initial recommendation and the intuition that a purchase on the start date is a decision made within the reporting window.
+Consequences: When `start_date` matches a buy date, the begin market value is zero for those shares. Calibrate this boundary against a Sharesight export before claiming full compatibility.
+
+## 2026-06-19: Split-Adjusted Quantities For Period Valuation
+
+Decision: `split_factor(transactions, opening_qty)` computes the cumulative factor given the quantity already held before the first transaction in the slice. For in-period splits, opening_qty = start_position.quantity; for post-period splits, opening_qty = end_position.quantity. Split factor for a split with delta d when quantity is q: factor = (q+d)/q.
+Context: Yahoo historical prices are split-adjusted. A pre-split ledger quantity without adjustment would understate market value when multiplied by a split-adjusted price. Starting running_qty at zero would silently miscalculate factors for pre-period holders.
+Consequences: Instruments with splits in or after the report range will have adjusted quantities in the performance computation. Instruments without splits are unaffected (factor = 1).
+
+## 2026-06-19: Performance Amount Formula (Market-Value Identity)
+
+Decision: total_return = end_mv − begin_mv − net_flows. Capital gain = same formula evaluated at constant end_fx. Currency gain = total_return − capital_gain. No held-quantity tracking or FIFO matching required.
+Context: A stateful "held vs sold" tracking approach risks negative held quantities when in-period sells exceed the start position. The market-value identity is equivalent and avoids this class of errors.
+Consequences: Decomposition into capital and currency gain is correct for all cases including buy-then-sell within the period, mixed pre/in-period sells, and inception mode.
