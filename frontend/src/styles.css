@@ -93,7 +93,7 @@ button {
 
 .app-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(220px, 1fr) auto;
   gap: var(--space-4);
   align-items: center;
   min-height: 56px;
@@ -103,7 +103,6 @@ button {
 
 .brand,
 .app-nav,
-.app-actions,
 .summary-metrics,
 .status-strip,
 .segmented-control {
@@ -150,11 +149,6 @@ button {
 .app-nav a.active {
   border-color: var(--accent);
   color: var(--text-primary);
-}
-
-.app-actions {
-  justify-content: flex-end;
-  gap: var(--space-2);
 }
 
 .button {
@@ -974,12 +968,6 @@ th.number-head .sort-button {
 
   .app-nav {
     min-height: 40px;
-  }
-
-  .app-actions {
-    justify-content: flex-start;
-    overflow-x: auto;
-    padding-bottom: var(--space-1);
   }
 
   .board-grid {
