@@ -43,6 +43,7 @@ pub enum ValuationReason {
     MissingStartFx,
     MissingEndFx,
     MissingTransactionPrice { transaction_id: i64 },
+    MissingTransactionFx { transaction_id: i64 },
     ZeroOrInvalidPerformanceDenominator,
 }
 

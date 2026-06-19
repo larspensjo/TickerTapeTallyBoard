@@ -197,7 +197,7 @@ pub fn compute_period_amounts(
                         Some(f) => f,
                         None => {
                             return PeriodAmounts::unavailable(vec![
-                                ValuationReason::MissingTransactionPrice {
+                                ValuationReason::MissingTransactionFx {
                                     transaction_id: tx.id,
                                 },
                             ]);
@@ -226,7 +226,7 @@ pub fn compute_period_amounts(
                         Some(f) => f,
                         None => {
                             return PeriodAmounts::unavailable(vec![
-                                ValuationReason::MissingTransactionPrice {
+                                ValuationReason::MissingTransactionFx {
                                     transaction_id: tx.id,
                                 },
                             ]);

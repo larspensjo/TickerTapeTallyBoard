@@ -146,6 +146,9 @@ pub(super) fn serialize_valuation_reason(reason: &ValuationReason) -> String {
         ValuationReason::MissingTransactionPrice { transaction_id } => {
             format!("missing_transaction_price_{transaction_id}")
         }
+        ValuationReason::MissingTransactionFx { transaction_id } => {
+            format!("missing_transaction_fx_{transaction_id}")
+        }
         ValuationReason::ZeroOrInvalidPerformanceDenominator => {
             "zero_or_invalid_performance_denominator".to_string()
         }
