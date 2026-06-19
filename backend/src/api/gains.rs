@@ -1,6 +1,6 @@
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,6 +23,14 @@ use crate::state::AppState;
 pub struct GainsQuery {
     #[serde(default)]
     include_closed: bool,
+    start_date: Option<String>,
+    end_date: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReportPeriodResponse {
+    pub start_date: Option<String>,
+    pub end_date: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,6 +38,9 @@ pub struct GainsResponse {
     pub as_of_date: String,
     pub base_currency: String,
     pub include_closed_positions: bool,
+    pub report_period: ReportPeriodResponse,
+    pub percentage_method: String,
+    pub display_percent_kind: String,
     pub summary: SummaryResponse,
     pub totals: TotalsResponse,
     pub rows: Vec<GainRow>,
@@ -90,20 +101,46 @@ pub enum GainPositionStatus {
     Closed,
 }
 
+fn parse_date(s: &str, field: &str) -> Result<NaiveDate, ApiError> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| ApiError::bad_request("invalid_date", format!("invalid {field}: {s}")))
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<GainsQuery>,
 ) -> Result<Json<GainsResponse>, ApiError> {
-    let valuation_date = Local::now().naive_local().date();
+    let end_date = match &query.end_date {
+        Some(s) => parse_date(s, "end_date")?,
+        None => Local::now().naive_local().date(),
+    };
+    let start_date = match &query.start_date {
+        Some(s) => {
+            let d = parse_date(s, "start_date")?;
+            if d > end_date {
+                return Err(ApiError::bad_request(
+                    "start_date_after_end_date",
+                    "start_date must not be after end_date",
+                ));
+            }
+            Some(d)
+        }
+        None => None,
+    };
+
     let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
-    let mut ledgers = BTreeMap::new();
+    let mut ledgers: BTreeMap<i64, Vec<_>> = BTreeMap::new();
 
     for row in &transaction_rows {
-        ledgers
-            .entry(row.instrument_id)
-            .or_insert_with(Vec::new)
-            .push(row.to_ledger()?);
+        let ledger_tx = row.to_ledger()?;
+        // Truncate ledger at end_date — transactions after end_date must not affect any result.
+        if ledger_tx.trade_date <= end_date {
+            ledgers
+                .entry(row.instrument_id)
+                .or_insert_with(Vec::new)
+                .push(ledger_tx);
+        }
     }
 
     let mut valued_holdings = Vec::new();
@@ -126,13 +163,12 @@ pub async fn list(
             continue;
         }
 
-        let valuation_inputs =
-            load_valuation_inputs(&state.pool, instrument, valuation_date).await?;
+        let valuation_inputs = load_valuation_inputs(&state.pool, instrument, end_date).await?;
 
         let valued_holding = value_position(
             &performance.position,
             &instrument.currency,
-            valuation_date,
+            end_date,
             valuation_inputs.latest_price,
             valuation_inputs.previous_price,
             valuation_inputs.latest_fx,
@@ -152,9 +188,15 @@ pub async fn list(
     let summary = summarize_holdings(&valued_holdings);
 
     Ok(Json(GainsResponse {
-        as_of_date: valuation_date.format("%Y-%m-%d").to_string(),
+        as_of_date: end_date.format("%Y-%m-%d").to_string(),
         base_currency: BASE_CURRENCY.to_string(),
         include_closed_positions: query.include_closed,
+        report_period: ReportPeriodResponse {
+            start_date: start_date.map(|d| d.format("%Y-%m-%d").to_string()),
+            end_date: end_date.format("%Y-%m-%d").to_string(),
+        },
+        percentage_method: "modified_dietz".to_string(),
+        display_percent_kind: "absolute".to_string(),
         summary: SummaryResponse {
             market_value_base: serialize_availability(&summary.market_value_base, |v| {
                 money_string(*v)
@@ -775,5 +817,77 @@ mod tests {
             .map(|reason| reason.as_str().expect("reason string"))
             .collect::<Vec<_>>();
         assert_eq!(reasons, expected);
+    }
+
+    #[tokio::test]
+    async fn gains_rejects_malformed_start_date() {
+        let state = AppState::for_tests().await;
+        let (status, body) =
+            send(&state, "GET", "/api/gains?start_date=not-a-date", json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid_date");
+    }
+
+    #[tokio::test]
+    async fn gains_rejects_start_after_end() {
+        let state = AppState::for_tests().await;
+        let (status, body) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-30&end_date=2026-06-01",
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "start_date_after_end_date");
+    }
+
+    #[tokio::test]
+    async fn gains_with_end_date_uses_that_date_as_valuation_date() {
+        let state = AppState::for_tests().await;
+        let (status, body) = send(&state, "GET", "/api/gains?end_date=2026-01-15", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["as_of_date"], "2026-01-15");
+        assert_eq!(body["report_period"]["end_date"], "2026-01-15");
+    }
+
+    #[tokio::test]
+    async fn gains_with_no_dates_returns_inception_period() {
+        let state = AppState::for_tests().await;
+        let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["report_period"]["start_date"].is_null());
+    }
+
+    #[tokio::test]
+    async fn gains_post_end_date_transaction_excluded() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "TSLA", "NASDAQ", "USD").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-01",
+                   "quantity":100,"price":"10","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-09-01",
+                   "quantity":100,"price":"15","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+        let (status, body) = send(&state, "GET", "/api/gains?end_date=2026-06-30", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        // Row for TSLA should show quantity 100, not 200
+        let row = body["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["instrument"]["symbol"] == "TSLA")
+            .unwrap();
+        assert_eq!(row["quantity"], 100);
     }
 }

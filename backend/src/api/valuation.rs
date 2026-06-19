@@ -43,6 +43,14 @@ pub(super) struct ValuationInputs {
     pub previous_fx: Option<FxCandidate>,
 }
 
+#[allow(dead_code)]
+pub(super) struct PeriodInputs {
+    pub start_price: Option<PriceCandidate>,
+    pub end_price: Option<PriceCandidate>,
+    pub start_fx: Option<FxCandidate>,
+    pub end_fx: Option<FxCandidate>,
+}
+
 pub(super) async fn load_valuation_inputs(
     pool: &SqlitePool,
     instrument: &instruments::InstrumentRow,
@@ -107,6 +115,70 @@ pub(super) async fn load_valuation_inputs(
         previous_price,
         latest_fx,
         previous_fx,
+    })
+}
+
+#[allow(dead_code)]
+pub(super) async fn load_period_inputs(
+    pool: &SqlitePool,
+    instrument: &instruments::InstrumentRow,
+    start_date: Option<NaiveDate>,
+    end_date: NaiveDate,
+) -> Result<PeriodInputs, ApiError> {
+    let price_mapping =
+        provider_symbols::find_by_instrument_provider(pool, instrument.id, PRICE_PROVIDER).await?;
+    let mapping_enabled = price_mapping.as_ref().is_some_and(|r| r.enabled);
+
+    let (start_price, end_price) = if mapping_enabled {
+        let end = prices::find_latest_on_or_before(pool, instrument.id, PRICE_PROVIDER, end_date)
+            .await?
+            .and_then(price_candidate);
+        let start = if let Some(sd) = start_date {
+            prices::find_latest_on_or_before(pool, instrument.id, PRICE_PROVIDER, sd)
+                .await?
+                .and_then(price_candidate)
+        } else {
+            None
+        };
+        (start, end)
+    } else {
+        (None, None)
+    };
+
+    let is_base_currency = instrument.currency.eq_ignore_ascii_case(BASE_CURRENCY);
+    let (start_fx, end_fx) = if is_base_currency {
+        (None, None)
+    } else {
+        let end = fx_rates::find_latest_on_or_before(
+            pool,
+            &instrument.currency,
+            BASE_CURRENCY,
+            FX_PROVIDER,
+            end_date,
+        )
+        .await?
+        .and_then(fx_candidate);
+        let start = if let Some(sd) = start_date {
+            fx_rates::find_latest_on_or_before(
+                pool,
+                &instrument.currency,
+                BASE_CURRENCY,
+                FX_PROVIDER,
+                sd,
+            )
+            .await?
+            .and_then(fx_candidate)
+        } else {
+            None
+        };
+        (start, end)
+    };
+
+    Ok(PeriodInputs {
+        start_price,
+        end_price,
+        start_fx,
+        end_fx,
     })
 }
 
