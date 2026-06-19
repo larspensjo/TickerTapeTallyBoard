@@ -300,7 +300,10 @@ pub fn period_cash_flows(
                         }
                     }
                 };
-                let cost = Decimal::from(tx.quantity) * p * f + tx.brokerage_base;
+                // Apply post_period_split_factor so denominator flows agree with
+                // compute_period_amounts numerator flows (both use split-adjusted quantities).
+                let qty = Decimal::from(tx.quantity) * period.post_period_split_factor;
+                let cost = qty * p * f + tx.brokerage_base;
                 flows.push(CashFlow {
                     date: tx.trade_date,
                     amount_base: cost,
@@ -332,7 +335,9 @@ pub fn period_cash_flows(
                     }
                 };
                 // tx.quantity is negative for sells; (-tx.quantity) is the positive share count.
-                let proceeds = Decimal::from(-tx.quantity) * p * f - tx.brokerage_base;
+                // Apply post_period_split_factor to match compute_period_amounts.
+                let qty = Decimal::from(-tx.quantity) * period.post_period_split_factor;
+                let proceeds = qty * p * f - tx.brokerage_base;
                 flows.push(CashFlow {
                     date: tx.trade_date,
                     amount_base: -proceeds,
@@ -848,5 +853,40 @@ mod tests {
         let (result, kind) = apply_annualisation(dec!(-1.5), 730);
         assert!(matches!(kind, DisplayPercentKind::Absolute));
         assert_eq!(result, dec!(-1.5));
+    }
+
+    #[test]
+    fn period_cash_flows_apply_post_period_split_factor() {
+        // 100 shares bought at $10, FX 10; 2:1 split happens after end_date.
+        // post_period_split_factor = 2.
+        // The cash flow (denominator) should be 200 (split-adjusted) * 10 * 10 = 20_000,
+        // matching compute_period_amounts's net_flows for this buy.
+        let txs = vec![
+            buy_with_fx(1, "2026-06-05", 100, dec!(10), dec!(10), Decimal::ZERO),
+            split_tx(2, "2026-08-01", 100), // after end_date → post-period
+        ];
+        let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
+        assert_eq!(p.post_period_split_factor, dec!(2));
+
+        let flows = match period_cash_flows(&p, false) {
+            Availability::Available(v) => v,
+            _ => panic!("expected available flows"),
+        };
+        assert_eq!(flows.len(), 1);
+        // 100 shares × 2 (split factor) × $10 price × 10 FX = 20_000
+        assert_eq!(flows[0].amount_base, dec!(20000));
+
+        // compute_period_amounts must produce the same net_flows for consistency.
+        let amounts = compute_period_amounts(
+            &p,
+            Some(dec!(10)),
+            Some(dec!(10)),
+            Some(dec!(10)),
+            Some(dec!(10)),
+            false,
+        );
+        // end_mv = 200 shares × $10 × 10 FX = 20_000; begin_mv = 0; net_flows = 20_000
+        // total_return = 20_000 - 0 - 20_000 = 0
+        assert_eq!(avail(&amounts.total_return_base), dec!(0));
     }
 }
