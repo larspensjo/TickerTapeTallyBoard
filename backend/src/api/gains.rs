@@ -160,8 +160,6 @@ pub async fn list(
         })?;
         if performance.position.quantity == 0 {
             if query.include_closed && performance.realized.sold_quantity > 0 {
-                // Accumulate realized gains directly into the PerformanceAccumulator.
-                perf_accum.add_realized(&performance.realized);
                 totals.add_closed(&performance.realized);
                 gain_rows.push(closed_gain_row(instrument, &performance.realized)?);
             }
@@ -357,9 +355,6 @@ struct PerformanceAccumulator {
     unavailable_reasons: Vec<ValuationReason>,
     earliest_tx_date: Option<NaiveDate>,
     has_data: bool,
-    /// True when closed positions contributed to amounts but not to cash_flows.
-    /// Percents cannot be computed accurately in this case.
-    closed_positions_present: bool,
 }
 
 impl PerformanceAccumulator {
@@ -368,34 +363,6 @@ impl PerformanceAccumulator {
             Some(existing) => existing.min(date),
             None => date,
         });
-    }
-
-    /// Accumulate amounts from a fully-closed position (RealizedGain).
-    /// The Modified Dietz denominator cannot be computed without proper period cash flows,
-    /// so percents will remain unavailable for these positions. Only the base amounts accumulate.
-    fn add_realized(&mut self, realized: &RealizedGain) {
-        // Extract the base amounts from the realized gain.
-        let gain = match &realized.gain_base {
-            BaseAmount::Available(v) => *v,
-            BaseAmount::Unavailable { .. } => return, // Can't accumulate without FX
-        };
-        let cap = match &realized.price_effect_base {
-            BaseAmount::Available(v) => *v,
-            BaseAmount::Unavailable { .. } => return,
-        };
-        let cur = match &realized.fx_effect_base {
-            BaseAmount::Available(v) => *v,
-            BaseAmount::Unavailable { .. } => return,
-        };
-        self.total_return += gain;
-        self.capital_gain += cap;
-        self.currency_gain += cur;
-        self.has_data = true;
-        // Cash flows are not accumulated for closed positions since we don't reconstruct the
-        // period for them. This means the Modified Dietz denominator won't account for these
-        // flows, so percents will be computed without them (or remain unavailable).
-        // Mark that denominator accuracy is compromised for closed positions:
-        self.closed_positions_present = true;
     }
 
     fn add(&mut self, amounts: &PeriodAmounts, flows: &Availability<Vec<CashFlow>>) {
@@ -451,15 +418,6 @@ impl PerformanceAccumulator {
         if !self.has_data {
             let u = AvailabilityResponse::Unavailable {
                 reasons: Vec::new(),
-            };
-            return (u.clone(), u.clone(), u, "absolute".to_string());
-        }
-
-        // When closed positions are present (amounts accumulated via add_realized), the cash_flows
-        // list is incomplete for the Modified Dietz denominator. Percents are unavailable.
-        if self.closed_positions_present {
-            let u = AvailabilityResponse::Unavailable {
-                reasons: vec!["closed_position_cash_flows_not_tracked".to_string()],
             };
             return (u.clone(), u.clone(), u, "absolute".to_string());
         }
@@ -808,11 +766,10 @@ mod tests {
             body["summary"]["market_value_base"]["status"],
             "unavailable"
         );
-        assert_available(&body["totals"]["capital_gain_base"], "2175.00");
-        assert_available(&body["totals"]["currency_gain_base"], "1000.00");
-        assert_available(&body["totals"]["total_return_base"], "3175.00");
-        // With buy on 2026-06-01 and sell on 2026-06-02, the denominator becomes negative
-        // because the full sell proceeds outweigh the weighted buy cost → unavailable.
+        // Only a closed position — perf_accum has no open-position data, so base amounts are unavailable.
+        assert_unavailable(&body["totals"]["capital_gain_base"], &[]);
+        assert_unavailable(&body["totals"]["currency_gain_base"], &[]);
+        assert_unavailable(&body["totals"]["total_return_base"], &[]);
         assert_unavailable_status(&body["totals"]["total_return_percent"]);
         assert_unavailable(&body["totals"]["income_base"], &["income_not_tracked"]);
 
