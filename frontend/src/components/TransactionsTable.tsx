@@ -28,19 +28,23 @@ const numericColumns = new Set(["trade_date", "quantity", "price"]);
 export function TransactionsTable({
   transactions,
   instruments,
-  filter,
+  filter = "",
   onFilterChange,
   onDelete,
-  deletingId,
-  errorMessage,
+  deletingId = null,
+  errorMessage = null,
+  showToolbar = true,
+  showActions = true,
 }: {
   transactions: Transaction[];
   instruments: Instrument[];
-  filter: string;
-  onFilterChange: (filter: string) => void;
-  onDelete: (id: number) => void;
-  deletingId: number | null;
-  errorMessage: string | null;
+  filter?: string;
+  onFilterChange?: (filter: string) => void;
+  onDelete?: (id: number) => void;
+  deletingId?: number | null;
+  errorMessage?: string | null;
+  showToolbar?: boolean;
+  showActions?: boolean;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -123,25 +127,29 @@ export function TransactionsTable({
           );
         },
       }),
-      columnHelper.display({
-        id: "actions",
-        header: "",
-        cell: (info) => {
-          const id = info.row.original.transaction.id;
-          return (
-            <button
-              type="button"
-              className="button outline danger"
-              onClick={() => onDelete(id)}
-              disabled={deletingId === id}
-            >
-              Delete
-            </button>
-          );
-        },
-      }),
+      ...(showActions && onDelete
+        ? [
+            columnHelper.display({
+              id: "actions",
+              header: "",
+              cell: (info) => {
+                const id = info.row.original.transaction.id;
+                return (
+                  <button
+                    type="button"
+                    className="button outline danger"
+                    onClick={() => onDelete(id)}
+                    disabled={deletingId === id}
+                  >
+                    Delete
+                  </button>
+                );
+              },
+            }),
+          ]
+        : []),
     ],
-    [deletingId, onDelete],
+    [showActions, deletingId, onDelete],
   );
 
   const table = useReactTable({
@@ -158,18 +166,20 @@ export function TransactionsTable({
 
   return (
     <>
-      <div className="table-toolbar">
-        <input
-          className="filter-input"
-          type="search"
-          placeholder="Filter instrument"
-          value={filter}
-          onChange={(event) => onFilterChange(event.target.value)}
-        />
-        {errorMessage ? (
-          <p className="form-error table-error">{errorMessage}</p>
-        ) : null}
-      </div>
+      {showToolbar ? (
+        <div className="table-toolbar">
+          <input
+            className="filter-input"
+            type="search"
+            placeholder="Filter instrument"
+            value={filter}
+            onChange={(event) => onFilterChange?.(event.target.value)}
+          />
+          {errorMessage ? (
+            <p className="form-error table-error">{errorMessage}</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="table-wrap">
         <table>
           <thead>
