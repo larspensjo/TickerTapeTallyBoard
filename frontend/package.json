@@ -1,6 +1,6 @@
 {
   "name": "ticker-tape-tally-board-frontend",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,8 @@
     "@tanstack/react-table": "^8.21.3",
     "lucide-react": "^1.20.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
