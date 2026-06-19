@@ -9,7 +9,11 @@ mod transaction;
 mod valuation;
 
 #[allow(unused_imports)]
-pub use performance::{compute_period_amounts, reconstruct_period, PeriodAmounts, PeriodLedger};
+pub use performance::{
+    apply_annualisation, compute_modified_dietz, compute_modified_dietz_denominator,
+    compute_period_amounts, period_cash_flows, reconstruct_period, CashFlow, DisplayPercentKind,
+    PeriodAmounts, PeriodLedger,
+};
 #[allow(unused_imports)]
 pub use position::{
     derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,
