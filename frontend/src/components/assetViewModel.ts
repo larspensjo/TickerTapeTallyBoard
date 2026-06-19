@@ -78,7 +78,12 @@ export function findInstrument(
 }
 
 export function findGainsRow(rows: GainsRow[], id: number): GainsRow | null {
-  return rows.find((row) => row.instrument.id === id) ?? null;
+  const matching = rows.filter((row) => row.instrument.id === id);
+  return (
+    matching.find((row) => row.position_status !== "closed") ??
+    matching[0] ??
+    null
+  );
 }
 
 export function findHolding(holdings: Holding[], id: number): Holding | null {
