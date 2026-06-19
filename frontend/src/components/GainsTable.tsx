@@ -9,7 +9,12 @@ import {
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { AvailabilityValue, GainsRow, GainsTotals } from "../api/types";
+import type {
+  AvailabilityValue,
+  DateRange,
+  GainsRow,
+  GainsTotals,
+} from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import {
   AvailabilityValueCell,
@@ -20,6 +25,67 @@ import {
   reasonSummary,
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
+
+type DatePreset = "today" | "7d" | "12m" | "ytd" | "fy" | "all" | "custom";
+
+const PRESETS: DatePreset[] = [
+  "today",
+  "7d",
+  "12m",
+  "ytd",
+  "fy",
+  "all",
+  "custom",
+];
+
+const PRESET_LABELS: Record<DatePreset, string> = {
+  today: "Today",
+  "7d": "7D",
+  "12m": "12M",
+  ytd: "YTD",
+  fy: "FY",
+  all: "All",
+  custom: "Custom",
+};
+
+function localDateString(d: Date): string {
+  return d.toLocaleDateString("sv-SE");
+}
+
+function presetToRange(
+  preset: DatePreset,
+  customStart: string,
+  customEnd: string,
+): DateRange {
+  const today = new Date();
+  const fmt = localDateString;
+
+  switch (preset) {
+    case "today":
+      return { startDate: fmt(today), endDate: fmt(today) };
+    case "7d": {
+      const start = new Date(today);
+      start.setDate(start.getDate() - 7);
+      return { startDate: fmt(start), endDate: fmt(today) };
+    }
+    case "12m": {
+      const start = new Date(today);
+      start.setFullYear(start.getFullYear() - 1);
+      return { startDate: fmt(start), endDate: fmt(today) };
+    }
+    case "ytd":
+      return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
+    case "fy":
+      return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
+    case "all":
+      return { startDate: null, endDate: fmt(today) };
+    case "custom":
+      return {
+        startDate: customStart || null,
+        endDate: customEnd || fmt(today),
+      };
+  }
+}
 
 interface RowView {
   gain: GainsRow;
@@ -219,6 +285,9 @@ export function GainsTable({
   onFilterChange,
   includeClosedPositions,
   onIncludeClosedPositionsChange,
+  dateRange,
+  onDateRangeChange,
+  displayPercentKind = "absolute",
 }: {
   rows: GainsRow[];
   totals?: GainsTotals;
@@ -226,10 +295,16 @@ export function GainsTable({
   onFilterChange: (filter: string) => void;
   includeClosedPositions: boolean;
   onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
+  dateRange: DateRange;
+  onDateRangeChange: (range: DateRange) => void;
+  displayPercentKind?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "unrealized_gain_base", desc: true },
   ]);
+  const [selectedPreset, setSelectedPreset] = useState<DatePreset>("all");
+  const [customStart, setCustomStart] = useState(dateRange.startDate ?? "");
+  const [customEnd, setCustomEnd] = useState(dateRange.endDate ?? "");
 
   const tableRows = useMemo<RowView[]>(
     () =>
@@ -298,8 +373,52 @@ export function GainsTable({
 
   return (
     <>
-      {totals ? <GainsTotalsBand totals={totals} /> : null}
+      {totals ? (
+        <GainsTotalsBand
+          totals={totals}
+          displayPercentKind={displayPercentKind}
+        />
+      ) : null}
       <div className="table-toolbar">
+        <div className="date-range-presets">
+          {PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`preset-btn${selectedPreset === p ? " active" : ""}`}
+              onClick={() => {
+                setSelectedPreset(p);
+                onDateRangeChange(presetToRange(p, customStart, customEnd));
+              }}
+            >
+              {PRESET_LABELS[p]}
+            </button>
+          ))}
+          {selectedPreset === "custom" && (
+            <>
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => {
+                  setCustomStart(e.target.value);
+                  onDateRangeChange(
+                    presetToRange("custom", e.target.value, customEnd),
+                  );
+                }}
+              />
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => {
+                  setCustomEnd(e.target.value);
+                  onDateRangeChange(
+                    presetToRange("custom", customStart, e.target.value),
+                  );
+                }}
+              />
+            </>
+          )}
+        </div>
         <input
           className="filter-input"
           type="search"
@@ -388,9 +507,20 @@ export function GainsTable({
   );
 }
 
-function GainsTotalsBand({ totals }: { totals: GainsTotals }) {
+function GainsTotalsBand({
+  totals,
+  displayPercentKind,
+}: {
+  totals: GainsTotals;
+  displayPercentKind: string;
+}) {
+  const label =
+    displayPercentKind === "annualised"
+      ? "Annualised return"
+      : "Performance return";
   return (
     <section className="gains-totals" aria-label="Gains totals">
+      <span className="gains-totals-method">{label}</span>
       <GainsTotalMetric
         label="Capital gain"
         percent={totals.capital_gain_percent}

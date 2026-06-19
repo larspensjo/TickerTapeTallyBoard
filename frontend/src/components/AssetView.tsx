@@ -35,7 +35,7 @@ export function AssetView() {
   const id = parseInstrumentId(idParam);
 
   const instrumentsQuery = useInstruments();
-  const gainsQuery = useGains(true);
+  const gainsQuery = useGains({ includeClosedPositions: true });
   const holdingsQuery = useHoldings();
   const transactionsQuery = useTransactions();
   const priceStatusQuery = usePriceStatus();

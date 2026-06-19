@@ -13,7 +13,12 @@ import {
   useRefreshPrices,
   useTransactions,
 } from "../api/queries";
-import type { MoneyValue, PercentValue, RefreshRunSummary } from "../api/types";
+import type {
+  DateRange,
+  MoneyValue,
+  PercentValue,
+  RefreshRunSummary,
+} from "../api/types";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { GainsTable } from "./GainsTable";
 import { HoldingsTable } from "./HoldingsTable";
@@ -33,13 +38,15 @@ interface UiState {
   boardFilter: string;
   includeClosedPositions: boolean;
   formOpen: boolean;
+  dateRange: DateRange;
 }
 
 type UiAction =
   | { type: "boardViewSelected"; boardView: BoardView }
   | { type: "boardFilterChanged"; filter: string }
   | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
-  | { type: "formToggled"; open: boolean };
+  | { type: "formToggled"; open: boolean }
+  | { type: "dateRangeChanged"; dateRange: DateRange };
 
 interface HealthResponse {
   status: string;
@@ -60,6 +67,8 @@ function uiReducer(state: UiState, action: UiAction): UiState {
       };
     case "formToggled":
       return { ...state, formOpen: action.open };
+    case "dateRangeChanged":
+      return { ...state, dateRange: action.dateRange };
   }
 
   return state;
@@ -157,6 +166,7 @@ export function BoardView() {
     boardFilter: "",
     includeClosedPositions: false,
     formOpen: false,
+    dateRange: { startDate: null, endDate: null },
   });
 
   const healthQuery = useQuery({
@@ -166,7 +176,11 @@ export function BoardView() {
   const instrumentsQuery = useInstruments();
   const transactionsQuery = useTransactions();
   const holdingsQuery = useHoldings();
-  const gainsQuery = useGains(uiState.includeClosedPositions);
+  const gainsQuery = useGains({
+    includeClosedPositions: uiState.includeClosedPositions,
+    startDate: uiState.dateRange.startDate,
+    endDate: uiState.dateRange.endDate ?? undefined,
+  });
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const deleteTransaction = useDeleteTransaction();
@@ -441,6 +455,11 @@ export function BoardView() {
                     includeClosedPositions,
                   })
                 }
+                dateRange={uiState.dateRange}
+                onDateRangeChange={(dateRange) =>
+                  dispatch({ type: "dateRangeChanged", dateRange })
+                }
+                displayPercentKind={gainsQuery.data?.display_percent_kind}
               />
             </BoardSection>
           ) : (

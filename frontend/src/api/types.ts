@@ -120,6 +120,16 @@ export interface GainsRow {
   position_status: "open" | "closed";
 }
 
+export interface ReportPeriod {
+  start_date: string | null;
+  end_date: string;
+}
+
+export interface DateRange {
+  startDate: string | null;
+  endDate: string | null;
+}
+
 export interface GainsResponse {
   as_of_date: string;
   base_currency: string;
@@ -127,6 +137,9 @@ export interface GainsResponse {
   summary: GainsSummary;
   totals: GainsTotals;
   rows: GainsRow[];
+  report_period: ReportPeriod;
+  percentage_method: string;
+  display_percent_kind: string;
 }
 
 export interface RefreshRunSummary {

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend, apiSendBytes } from "./client";
 import type {
+  DateRange,
   GainsResponse,
   Holding,
   ImportPreview,
@@ -37,15 +38,33 @@ export function useHoldings() {
   });
 }
 
-export function useGains(includeClosedPositions = false) {
+export interface GainsParams {
+  includeClosedPositions?: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
+export function useGains(params: GainsParams = {}) {
+  const { includeClosedPositions = false, startDate, endDate } = params;
   return useQuery({
-    queryKey: ["gains", includeClosedPositions],
-    queryFn: () =>
-      apiGet<GainsResponse>(
-        `/api/gains${includeClosedPositions ? "?include_closed=true" : ""}`,
-      ),
+    queryKey: [
+      "gains",
+      includeClosedPositions,
+      startDate ?? null,
+      endDate ?? null,
+    ],
+    queryFn: () => {
+      const search = new URLSearchParams();
+      if (includeClosedPositions) search.set("include_closed", "true");
+      if (startDate) search.set("start_date", startDate);
+      if (endDate) search.set("end_date", endDate);
+      const qs = search.toString();
+      return apiGet<GainsResponse>(`/api/gains${qs ? `?${qs}` : ""}`);
+    },
   });
 }
+
+export type { DateRange };
 
 export function usePriceStatus() {
   return useQuery({
