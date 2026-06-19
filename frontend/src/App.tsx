@@ -32,6 +32,7 @@ type AppView = "board" | "import";
 interface UiState {
   appView: AppView;
   boardView: BoardView;
+  boardFilter: string;
   includeClosedPositions: boolean;
   formOpen: boolean;
 }
@@ -39,6 +40,7 @@ interface UiState {
 type UiAction =
   | { type: "appViewSelected"; appView: AppView }
   | { type: "boardViewSelected"; boardView: BoardView }
+  | { type: "boardFilterChanged"; filter: string }
   | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
   | { type: "formToggled"; open: boolean };
 
@@ -54,6 +56,8 @@ function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, appView: action.appView };
     case "boardViewSelected":
       return { ...state, boardView: action.boardView };
+    case "boardFilterChanged":
+      return { ...state, boardFilter: action.filter };
     case "closedPositionsToggled":
       return {
         ...state,
@@ -151,6 +155,7 @@ export function App() {
   const [uiState, dispatch] = useReducer(uiReducer, {
     appView: "board",
     boardView: "holdings",
+    boardFilter: "",
     includeClosedPositions: false,
     formOpen: false,
   });
@@ -467,7 +472,13 @@ export function App() {
                   onRetry={() => void holdingsQuery.refetch()}
                   emptyMessage="No holdings yet. Add a Buy to get started."
                 >
-                  <HoldingsTable holdings={holdingsQuery.data ?? []} />
+                  <HoldingsTable
+                    holdings={holdingsQuery.data ?? []}
+                    filter={uiState.boardFilter}
+                    onFilterChange={(filter) =>
+                      dispatch({ type: "boardFilterChanged", filter })
+                    }
+                  />
                 </BoardSection>
               ) : uiState.boardView === "gains" ? (
                 <BoardSection
@@ -480,6 +491,10 @@ export function App() {
                   <GainsTable
                     rows={gainsQuery.data?.rows ?? []}
                     totals={gainsQuery.data?.totals}
+                    filter={uiState.boardFilter}
+                    onFilterChange={(filter) =>
+                      dispatch({ type: "boardFilterChanged", filter })
+                    }
                     includeClosedPositions={uiState.includeClosedPositions}
                     onIncludeClosedPositionsChange={(includeClosedPositions) =>
                       dispatch({
@@ -500,6 +515,10 @@ export function App() {
                   <TransactionsTable
                     transactions={transactionsQuery.data ?? []}
                     instruments={instruments}
+                    filter={uiState.boardFilter}
+                    onFilterChange={(filter) =>
+                      dispatch({ type: "boardFilterChanged", filter })
+                    }
                     onDelete={(id) => void handleDelete(id)}
                     deletingId={
                       deleteTransaction.isPending

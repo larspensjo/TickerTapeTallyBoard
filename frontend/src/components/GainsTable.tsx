@@ -213,18 +213,21 @@ const columns = [
 export function GainsTable({
   rows,
   totals,
+  filter,
+  onFilterChange,
   includeClosedPositions,
   onIncludeClosedPositionsChange,
 }: {
   rows: GainsRow[];
   totals?: GainsTotals;
+  filter: string;
+  onFilterChange: (filter: string) => void;
   includeClosedPositions: boolean;
   onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "unrealized_gain_base", desc: true },
   ]);
-  const [filter, setFilter] = useState("");
 
   const tableRows = useMemo<RowView[]>(
     () =>
@@ -284,7 +287,6 @@ export function GainsTable({
     columns,
     state: { sorting, globalFilter: filter },
     onSortingChange: setSorting,
-    onGlobalFilterChange: setFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -299,9 +301,9 @@ export function GainsTable({
         <input
           className="filter-input"
           type="search"
-          placeholder="Filter gains"
+          placeholder="Filter instrument"
           value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+          onChange={(event) => onFilterChange(event.target.value)}
         />
         <label className="toolbar-check">
           <input

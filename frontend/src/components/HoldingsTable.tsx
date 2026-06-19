@@ -2,6 +2,7 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
+  getFilteredRowModel,
   getSortedRowModel,
   type SortingState,
   useReactTable,
@@ -19,7 +20,12 @@ import {
   unavailableValue,
 } from "./valuationDisplay";
 
-const columnHelper = createColumnHelper<Holding>();
+interface RowView {
+  holding: Holding;
+  search: string;
+}
+
+const columnHelper = createColumnHelper<RowView>();
 type PortfolioPercentage = AvailabilityValue<string>;
 
 function valuationUnavailableReasons(holding: Holding): string[] {
@@ -149,11 +155,11 @@ function portfolioPercentageCell(value: PortfolioPercentage) {
 
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
   return [
-    columnHelper.accessor((row) => row.instrument.symbol, {
+    columnHelper.accessor((row) => row.holding.instrument.symbol, {
       id: "instrument",
       header: "Instrument",
       cell: (info) => {
-        const { symbol, name, exchange } = info.row.original.instrument;
+        const { symbol, name, exchange } = info.row.original.holding.instrument;
         return (
           <div className="instrument-cell">
             <strong>{symbol}</strong>
@@ -163,42 +169,45 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
         );
       },
     }),
-    columnHelper.accessor("quantity", {
+    columnHelper.accessor((row) => row.holding.quantity, {
+      id: "quantity",
       header: "Qty",
       cell: (info) => formatGroupedNumber(info.getValue()),
     }),
-    columnHelper.accessor("average_cost_native", {
+    columnHelper.accessor((row) => row.holding.average_cost_native, {
+      id: "average_cost_native",
       header: "Avg cost/share",
       cell: (info) => (
         <FormattedNumber
           value={info.getValue()}
-          prefix={info.row.original.instrument.currency}
+          prefix={info.row.original.holding.instrument.currency}
         />
       ),
     }),
-    columnHelper.accessor("cost_basis_native", {
+    columnHelper.accessor((row) => row.holding.cost_basis_native, {
+      id: "cost_basis_native",
       header: "Cost basis",
       cell: (info) => (
         <FormattedNumber
           value={info.getValue()}
-          prefix={info.row.original.instrument.currency}
+          prefix={info.row.original.holding.instrument.currency}
         />
       ),
     }),
     columnHelper.accessor(
       (row) =>
-        row.valuation?.market_value_base ??
+        row.holding.valuation?.market_value_base ??
         unavailableValue("valuation_unavailable"),
       {
         id: "market_value_base",
         header: "Current value (SEK)",
         sortingFn: availabilitySortRows,
-        cell: (info) => currentValueCell(info.row.original),
+        cell: (info) => currentValueCell(info.row.original.holding),
       },
     ),
     columnHelper.accessor(
       (row) =>
-        portfolioPercentages.get(row.instrument.id) ??
+        portfolioPercentages.get(row.holding.instrument.id) ??
         unavailableValue("valuation_unavailable"),
       {
         id: "portfolio_percentage",
@@ -210,15 +219,59 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
     columnHelper.display({
       id: "pnl_hint",
       header: "P&L hint",
-      cell: (info) => pnlHintCell(info.row.original),
+      cell: (info) => pnlHintCell(info.row.original.holding),
     }),
   ];
 }
 
-export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
+function holdingSearchText(holding: Holding): string {
+  return [
+    holding.instrument.symbol,
+    holding.instrument.name,
+    holding.instrument.exchange,
+    holding.instrument.currency,
+    holding.instrument.type,
+    holding.quantity.toString(),
+    holding.average_cost_native,
+    holding.cost_basis_native,
+    holding.base.status,
+    ...(holding.base.status === "unavailable"
+      ? holding.base.reasons.map((reason) => reason.code)
+      : []),
+    holding.valuation?.market_value_base.status === "available"
+      ? holding.valuation.market_value_base.value
+      : "",
+    holding.valuation?.unrealized_gain_base.status === "available"
+      ? holding.valuation.unrealized_gain_base.value
+      : "",
+    holding.valuation?.unrealized_gain_percent.status === "available"
+      ? holding.valuation.unrealized_gain_percent.value
+      : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+export function HoldingsTable({
+  holdings,
+  filter,
+  onFilterChange,
+}: {
+  holdings: Holding[];
+  filter: string;
+  onFilterChange: (filter: string) => void;
+}) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "market_value_base", desc: true },
   ]);
+  const tableRows = useMemo<RowView[]>(
+    () =>
+      holdings.map((holding) => ({
+        holding,
+        search: holdingSearchText(holding),
+      })),
+    [holdings],
+  );
   const portfolioPercentages = useMemo(
     () => computePortfolioPercentages(holdings),
     [holdings],
@@ -228,69 +281,83 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
     [portfolioPercentages],
   );
   const table = useReactTable({
-    data: holdings,
+    data: tableRows,
     columns,
-    state: { sorting },
+    state: { sorting, globalFilter: filter },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    globalFilterFn: (row, _columnId, filterValue) =>
+      row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });
 
   return (
-    <div className="table-wrap holdings-table">
-      <table>
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const sorted = header.column.getIsSorted();
-                return (
-                  <th
-                    key={header.id}
+    <>
+      <div className="table-toolbar">
+        <input
+          className="filter-input"
+          type="search"
+          placeholder="Filter instrument"
+          value={filter}
+          onChange={(event) => onFilterChange(event.target.value)}
+        />
+      </div>
+      <div className="table-wrap holdings-table">
+        <table>
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  const sorted = header.column.getIsSorted();
+                  return (
+                    <th
+                      key={header.id}
+                      className={
+                        numericColumns.has(header.column.id)
+                          ? "sortable number-head"
+                          : "sortable"
+                      }
+                    >
+                      <button
+                        type="button"
+                        className="sort-button"
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        {flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
+                        {sorted === "asc" ? (
+                          <ChevronUp aria-hidden="true" size={12} />
+                        ) : sorted === "desc" ? (
+                          <ChevronDown aria-hidden="true" size={12} />
+                        ) : null}
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row) => (
+              <tr key={row.id}>
+                {row.getVisibleCells().map((cell) => (
+                  <td
+                    key={cell.id}
                     className={
-                      numericColumns.has(header.column.id)
-                        ? "sortable number-head"
-                        : "sortable"
+                      numericColumns.has(cell.column.id) ? "number" : undefined
                     }
                   >
-                    <button
-                      type="button"
-                      className="sort-button"
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      {flexRender(
-                        header.column.columnDef.header,
-                        header.getContext(),
-                      )}
-                      {sorted === "asc" ? (
-                        <ChevronUp aria-hidden="true" size={12} />
-                      ) : sorted === "desc" ? (
-                        <ChevronDown aria-hidden="true" size={12} />
-                      ) : null}
-                    </button>
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td
-                  key={cell.id}
-                  className={
-                    numericColumns.has(cell.column.id) ? "number" : undefined
-                  }
-                >
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

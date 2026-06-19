@@ -26,18 +26,21 @@ const numericColumns = new Set(["trade_date", "quantity", "price"]);
 export function TransactionsTable({
   transactions,
   instruments,
+  filter,
+  onFilterChange,
   onDelete,
   deletingId,
   errorMessage,
 }: {
   transactions: Transaction[];
   instruments: Instrument[];
+  filter: string;
+  onFilterChange: (filter: string) => void;
   onDelete: (id: number) => void;
   deletingId: number | null;
   errorMessage: string | null;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [filter, setFilter] = useState("");
 
   const byId = useMemo(() => {
     const map = new Map<number, Instrument>();
@@ -140,7 +143,6 @@ export function TransactionsTable({
     columns,
     state: { sorting, globalFilter: filter },
     onSortingChange: setSorting,
-    onGlobalFilterChange: setFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -154,9 +156,9 @@ export function TransactionsTable({
         <input
           className="filter-input"
           type="search"
-          placeholder="Filter transactions"
+          placeholder="Filter instrument"
           value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+          onChange={(event) => onFilterChange(event.target.value)}
         />
         {errorMessage ? (
           <p className="form-error table-error">{errorMessage}</p>
