@@ -569,20 +569,30 @@ tbody tr:last-child td {
 
 .instrument-cell {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-1) var(--space-2);
   align-items: center;
+  min-width: 0;
 }
 
 .instrument-cell strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
   font-size: 0.875rem;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .instrument-cell span {
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
+  max-width: 12rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .instrument-cell em {
@@ -596,15 +606,6 @@ tbody tr:last-child td {
   font-style: normal;
   font-weight: 500;
   grid-column: 1 / -1;
-}
-
-.instrument-cell.compact {
-  grid-template-columns: auto auto;
-  justify-content: start;
-}
-
-.instrument-cell.compact em {
-  grid-column: auto;
 }
 
 .metric-stack {

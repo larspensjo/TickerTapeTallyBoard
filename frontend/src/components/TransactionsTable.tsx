@@ -10,10 +10,12 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Instrument, Transaction } from "../api/types";
+import { InstrumentCell } from "./InstrumentCell";
 import { FormattedNumber, formatGroupedNumber } from "./valuationDisplay";
 
 interface Row {
   transaction: Transaction;
+  name: string;
   symbol: string;
   exchange: string;
   search: string;
@@ -54,18 +56,21 @@ export function TransactionsTable({
     () =>
       transactions.map((transaction) => {
         const instrument = byId.get(transaction.instrument_id);
-        const symbol = instrument?.symbol ?? `#${transaction.instrument_id}`;
+        const missingInstrumentLabel = `#${transaction.instrument_id}`;
+        const name = instrument?.name ?? missingInstrumentLabel;
+        const symbol = instrument?.symbol ?? "";
         const exchange = instrument?.exchange ?? "";
         return {
           transaction,
+          name,
           symbol,
           exchange,
           search: [
             transaction.trade_date,
             transaction.type,
+            name,
             symbol,
             exchange,
-            instrument?.name ?? "",
             transaction.quantity.toString(),
             transaction.price ?? "",
             transaction.currency ?? "",
@@ -90,14 +95,15 @@ export function TransactionsTable({
         header: "Type",
         cell: (info) => <span className="type-chip">{info.getValue()}</span>,
       }),
-      columnHelper.accessor((row) => row.symbol, {
+      columnHelper.accessor((row) => row.name, {
         id: "instrument",
         header: "Instrument",
         cell: (info) => (
-          <div className="instrument-cell compact">
-            <strong>{info.row.original.symbol}</strong>
-            <em>{info.row.original.exchange}</em>
-          </div>
+          <InstrumentCell
+            name={info.row.original.name}
+            symbol={info.row.original.symbol}
+            exchange={info.row.original.exchange}
+          />
         ),
       }),
       columnHelper.accessor((row) => row.transaction.quantity, {

@@ -10,6 +10,7 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AvailabilityValue, GainsRow, GainsTotals } from "../api/types";
+import { InstrumentCell } from "./InstrumentCell";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -121,18 +122,12 @@ function latestStatus(row: GainsRow): LatestStatus {
 }
 
 const columns = [
-  columnHelper.accessor((row) => row.gain.instrument.symbol, {
+  columnHelper.accessor((row) => row.gain.instrument.name, {
     id: "instrument",
     header: "Instrument",
     cell: (info) => {
       const { symbol, name, exchange } = info.row.original.gain.instrument;
-      return (
-        <div className="instrument-cell">
-          <strong>{symbol}</strong>
-          <span>{name}</span>
-          <em>{exchange}</em>
-        </div>
-      );
+      return <InstrumentCell name={name} symbol={symbol} exchange={exchange} />;
     },
   }),
   columnHelper.accessor((row) => row.gain.cost_basis_base, {

@@ -10,6 +10,7 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AvailabilityValue, Holding } from "../api/types";
+import { InstrumentCell } from "./InstrumentCell";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -155,17 +156,13 @@ function portfolioPercentageCell(value: PortfolioPercentage) {
 
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
   return [
-    columnHelper.accessor((row) => row.holding.instrument.symbol, {
+    columnHelper.accessor((row) => row.holding.instrument.name, {
       id: "instrument",
       header: "Instrument",
       cell: (info) => {
         const { symbol, name, exchange } = info.row.original.holding.instrument;
         return (
-          <div className="instrument-cell">
-            <strong>{symbol}</strong>
-            <span>{name}</span>
-            <em>{exchange}</em>
-          </div>
+          <InstrumentCell name={name} symbol={symbol} exchange={exchange} />
         );
       },
     }),
