@@ -37,6 +37,13 @@ pub enum ValuationReason {
     ZeroCostBasis,
     ZeroPreviousMarketValue,
     BaseCostBasisUnavailable { reasons: Vec<UnavailableReason> },
+    // performance-specific variants:
+    MissingStartPrice,
+    MissingEndPrice,
+    MissingStartFx,
+    MissingEndFx,
+    MissingTransactionPrice { transaction_id: i64 },
+    ZeroOrInvalidPerformanceDenominator,
 }
 
 #[derive(Clone, Debug, PartialEq)]

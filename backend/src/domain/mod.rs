@@ -3,10 +3,13 @@
 
 #![allow(dead_code)]
 
+mod performance;
 mod position;
 mod transaction;
 mod valuation;
 
+#[allow(unused_imports)]
+pub use performance::{reconstruct_period, PeriodLedger};
 #[allow(unused_imports)]
 pub use position::{
     derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,

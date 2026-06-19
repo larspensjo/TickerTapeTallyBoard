@@ -139,6 +139,16 @@ pub(super) fn serialize_valuation_reason(reason: &ValuationReason) -> String {
         ValuationReason::BaseCostBasisUnavailable { .. } => {
             "base_cost_basis_unavailable".to_string()
         }
+        ValuationReason::MissingStartPrice => "missing_start_price".to_string(),
+        ValuationReason::MissingEndPrice => "missing_end_price".to_string(),
+        ValuationReason::MissingStartFx => "missing_start_fx".to_string(),
+        ValuationReason::MissingEndFx => "missing_end_fx".to_string(),
+        ValuationReason::MissingTransactionPrice { transaction_id } => {
+            format!("missing_transaction_price_{transaction_id}")
+        }
+        ValuationReason::ZeroOrInvalidPerformanceDenominator => {
+            "zero_or_invalid_performance_denominator".to_string()
+        }
     }
 }
 
