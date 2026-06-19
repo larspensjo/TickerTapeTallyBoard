@@ -126,8 +126,15 @@ const columns = [
     id: "instrument",
     header: "Instrument",
     cell: (info) => {
-      const { symbol, name, exchange } = info.row.original.gain.instrument;
-      return <InstrumentCell name={name} symbol={symbol} exchange={exchange} />;
+      const { id, symbol, name, exchange } = info.row.original.gain.instrument;
+      return (
+        <InstrumentCell
+          instrumentId={id}
+          name={name}
+          symbol={symbol}
+          exchange={exchange}
+        />
+      );
     },
   }),
   columnHelper.accessor((row) => row.gain.cost_basis_base, {

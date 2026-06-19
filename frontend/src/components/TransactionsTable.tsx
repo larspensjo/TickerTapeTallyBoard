@@ -104,6 +104,7 @@ export function TransactionsTable({
         header: "Instrument",
         cell: (info) => (
           <InstrumentCell
+            instrumentId={info.row.original.transaction.instrument_id}
             name={info.row.original.name}
             symbol={info.row.original.symbol}
             exchange={info.row.original.exchange}

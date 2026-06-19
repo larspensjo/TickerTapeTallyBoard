@@ -1,10 +1,14 @@
+import { Link } from "react-router-dom";
+
 interface InstrumentCellProps {
+  instrumentId: number;
   name: string;
   symbol: string;
   exchange: string;
 }
 
 export function InstrumentCell({
+  instrumentId,
   name,
   symbol,
   exchange,
@@ -16,7 +20,9 @@ export function InstrumentCell({
 
   return (
     <div className="instrument-cell">
-      <strong>{primary}</strong>
+      <Link className="instrument-link" to={`/asset/${instrumentId}`}>
+        {primary}
+      </Link>
       {showSymbol ? <span>{trimmedSymbol}</span> : null}
       {exchange ? <em>{exchange}</em> : null}
     </div>

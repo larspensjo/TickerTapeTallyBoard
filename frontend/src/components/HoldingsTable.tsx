@@ -160,9 +160,15 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       id: "instrument",
       header: "Instrument",
       cell: (info) => {
-        const { symbol, name, exchange } = info.row.original.holding.instrument;
+        const { id, symbol, name, exchange } =
+          info.row.original.holding.instrument;
         return (
-          <InstrumentCell name={name} symbol={symbol} exchange={exchange} />
+          <InstrumentCell
+            instrumentId={id}
+            name={name}
+            symbol={symbol}
+            exchange={exchange}
+          />
         );
       },
     }),
