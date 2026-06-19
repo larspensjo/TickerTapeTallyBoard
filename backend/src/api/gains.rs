@@ -143,6 +143,10 @@ pub async fn list(
         totals.add_open(&valued_holding);
 
         gain_rows.push(open_gain_row(instrument, &valued_holding)?);
+        if query.include_closed && performance.realized.sold_quantity > 0 {
+            totals.add_closed(&performance.realized);
+            gain_rows.push(closed_gain_row(instrument, &performance.realized)?);
+        }
     }
 
     let summary = summarize_holdings(&valued_holdings);
@@ -555,6 +559,59 @@ mod tests {
         assert_available(&row["unrealized_gain_percent"], "31.68");
         assert_available(&row["price_effect_base"], "2175.00");
         assert_available(&row["fx_effect_base"], "1000.00");
+    }
+
+    #[tokio::test]
+    async fn gains_include_closed_positions_counts_partial_sells_from_open_positions() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+        let latest = Local::now().naive_local().date();
+        let previous = latest - Duration::days(1);
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":10,"price":"100","currency":"USD","fx_rate_to_base":"10","brokerage":"20"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":4,"price":"120","currency":"USD","fx_rate_to_base":"11","brokerage":"5"}),
+        )
+        .await;
+
+        seed_market_data(&state, instrument_id, latest, previous).await;
+
+        let (status, body) = send(&state, "GET", "/api/gains?include_closed=true", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["include_closed_positions"], true);
+        assert_eq!(body["rows"].as_array().expect("rows").len(), 2);
+        assert_available(&body["totals"]["capital_gain_base"], "2175.00");
+        assert_available(&body["totals"]["capital_gain_percent"], "21.70");
+        assert_available(&body["totals"]["currency_gain_base"], "1000.00");
+        assert_available(&body["totals"]["currency_gain_percent"], "9.98");
+        assert_available(&body["totals"]["total_return_base"], "3175.00");
+        assert_available(&body["totals"]["total_return_percent"], "31.68");
+
+        let rows = body["rows"].as_array().expect("rows");
+        let open_row = rows
+            .iter()
+            .find(|row| row["position_status"] == "open")
+            .expect("open row");
+        assert_eq!(open_row["quantity"], 6);
+        assert_available(&open_row["unrealized_gain_base"], "1908.00");
+
+        let closed_row = rows
+            .iter()
+            .find(|row| row["position_status"] == "closed")
+            .expect("closed row");
+        assert_eq!(closed_row["quantity"], 0);
+        assert_available(&closed_row["unrealized_gain_base"], "1267.00");
     }
 
     #[tokio::test]
