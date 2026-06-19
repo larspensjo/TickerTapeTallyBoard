@@ -493,7 +493,12 @@ td {
 }
 
 td.number,
-th:not(:first-child) {
+th.number-head {
+  text-align: right;
+}
+
+.action-head,
+.action-cell {
   text-align: right;
 }
 

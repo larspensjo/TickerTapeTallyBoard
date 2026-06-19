@@ -177,7 +177,7 @@ export function TransactionsTable({
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
                   if (header.column.id === "actions") {
-                    return <th key={header.id} />;
+                    return <th key={header.id} className="action-head" />;
                   }
 
                   if (!header.column.getCanSort()) {
@@ -228,7 +228,7 @@ export function TransactionsTable({
                 {row.getVisibleCells().map((cell) => {
                   if (cell.column.id === "actions") {
                     return (
-                      <td key={cell.id}>
+                      <td key={cell.id} className="action-cell">
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext(),
