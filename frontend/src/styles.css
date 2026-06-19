@@ -624,6 +624,68 @@ tbody tr:last-child td {
   font-size: inherit;
 }
 
+.gains-totals {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  align-items: stretch;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.gains-total-metric {
+  min-width: 0;
+  padding: 0 var(--space-5);
+  border-left: 1px solid var(--hairline);
+}
+
+.gains-total-metric:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.gains-total-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.gains-total-percent {
+  display: block;
+  min-height: 34px;
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.gains-total-percent .number {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.gains-total-amount {
+  display: block;
+  min-height: 22px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.gains-total-amount .number {
+  color: inherit;
+  font-size: inherit;
+}
+
+.gains-totals-warning {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-3);
+}
+
 .side-panel {
   padding-bottom: var(--space-3);
 }
@@ -918,6 +980,21 @@ th.number-head .sort-button {
 
   .summary-metrics {
     justify-content: flex-start;
+  }
+
+  .gains-totals {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .gains-total-metric {
+    padding: 0;
+    border-left: 0;
+  }
+
+  .gains-totals-warning {
+    position: static;
+    width: fit-content;
   }
 
   .segmented-control {

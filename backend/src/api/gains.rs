@@ -31,6 +31,7 @@ pub struct GainsResponse {
     pub base_currency: String,
     pub include_closed_positions: bool,
     pub summary: SummaryResponse,
+    pub totals: TotalsResponse,
     pub rows: Vec<GainRow>,
 }
 
@@ -44,6 +45,19 @@ pub struct SummaryResponse {
     pub unrealized_gain_percent: AvailabilityResponse,
     pub day_change_base: AvailabilityResponse,
     pub day_change_percent: AvailabilityResponse,
+    pub excluded_rows: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TotalsResponse {
+    pub capital_gain_base: AvailabilityResponse,
+    pub capital_gain_percent: AvailabilityResponse,
+    pub income_base: AvailabilityResponse,
+    pub income_percent: AvailabilityResponse,
+    pub currency_gain_base: AvailabilityResponse,
+    pub currency_gain_percent: AvailabilityResponse,
+    pub total_return_base: AvailabilityResponse,
+    pub total_return_percent: AvailabilityResponse,
     pub excluded_rows: usize,
 }
 
@@ -94,6 +108,7 @@ pub async fn list(
 
     let mut valued_holdings = Vec::new();
     let mut gain_rows = Vec::new();
+    let mut totals = TotalsAccumulator::default();
 
     for instrument in &instruments_list {
         let ledger = ledgers.remove(&instrument.id).unwrap_or_default();
@@ -105,6 +120,7 @@ pub async fn list(
         })?;
         if performance.position.quantity == 0 {
             if query.include_closed && performance.realized.sold_quantity > 0 {
+                totals.add_closed(&performance.realized);
                 gain_rows.push(closed_gain_row(instrument, &performance.realized)?);
             }
             continue;
@@ -124,6 +140,7 @@ pub async fn list(
         );
 
         valued_holdings.push(valued_holding.clone());
+        totals.add_open(&valued_holding);
 
         gain_rows.push(open_gain_row(instrument, &valued_holding)?);
     }
@@ -156,8 +173,132 @@ pub async fn list(
             }),
             excluded_rows: summary.excluded_rows,
         },
+        totals: totals.into_response(),
         rows: gain_rows,
     }))
+}
+
+#[derive(Default)]
+struct TotalsAccumulator {
+    cost_basis_base: Decimal,
+    capital_gain_base: Decimal,
+    currency_gain_base: Decimal,
+    total_return_base: Decimal,
+    included_rows: usize,
+    excluded_rows: usize,
+}
+
+impl TotalsAccumulator {
+    fn add_open(&mut self, value: &ValuedHolding) {
+        self.add_values(
+            value.cost_basis_base.clone(),
+            value.price_effect_base.clone(),
+            value.fx_effect_base.clone(),
+            value.unrealized_gain_base.clone(),
+        );
+    }
+
+    fn add_closed(&mut self, value: &RealizedGain) {
+        self.add_values(
+            base_amount_availability(&value.cost_basis_base),
+            base_amount_availability(&value.price_effect_base),
+            base_amount_availability(&value.fx_effect_base),
+            base_amount_availability(&value.gain_base),
+        );
+    }
+
+    fn add_values(
+        &mut self,
+        cost_basis_base: Availability<Decimal>,
+        capital_gain_base: Availability<Decimal>,
+        currency_gain_base: Availability<Decimal>,
+        total_return_base: Availability<Decimal>,
+    ) {
+        match (
+            cost_basis_base.as_ref(),
+            capital_gain_base.as_ref(),
+            currency_gain_base.as_ref(),
+            total_return_base.as_ref(),
+        ) {
+            (Some(cost_basis), Some(capital_gain), Some(currency_gain), Some(total_return)) => {
+                self.cost_basis_base += *cost_basis;
+                self.capital_gain_base += *capital_gain;
+                self.currency_gain_base += *currency_gain;
+                self.total_return_base += *total_return;
+                self.included_rows += 1;
+            }
+            _ => self.excluded_rows += 1,
+        }
+    }
+
+    fn into_response(self) -> TotalsResponse {
+        let has_totals = self.included_rows > 0;
+        let capital_gain_base = totals_money(has_totals, self.capital_gain_base);
+        let currency_gain_base = totals_money(has_totals, self.currency_gain_base);
+        let total_return_base = totals_money(has_totals, self.total_return_base);
+
+        TotalsResponse {
+            capital_gain_base,
+            capital_gain_percent: totals_percent(
+                has_totals,
+                self.capital_gain_base,
+                self.cost_basis_base,
+            ),
+            income_base: AvailabilityResponse::Unavailable {
+                reasons: vec!["income_not_tracked".to_string()],
+            },
+            income_percent: AvailabilityResponse::Unavailable {
+                reasons: vec!["income_not_tracked".to_string()],
+            },
+            currency_gain_base,
+            currency_gain_percent: totals_percent(
+                has_totals,
+                self.currency_gain_base,
+                self.cost_basis_base,
+            ),
+            total_return_base,
+            total_return_percent: totals_percent(
+                has_totals,
+                self.total_return_base,
+                self.cost_basis_base,
+            ),
+            excluded_rows: self.excluded_rows,
+        }
+    }
+}
+
+fn totals_money(has_totals: bool, value: Decimal) -> AvailabilityResponse {
+    if has_totals {
+        AvailabilityResponse::Available {
+            value: money_string(value),
+        }
+    } else {
+        AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        }
+    }
+}
+
+fn totals_percent(
+    has_totals: bool,
+    numerator: Decimal,
+    cost_basis_base: Decimal,
+) -> AvailabilityResponse {
+    if !has_totals {
+        return AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        };
+    }
+
+    if cost_basis_base == Decimal::ZERO {
+        return AvailabilityResponse::Unavailable {
+            reasons: vec!["zero_cost_basis".to_string()],
+        };
+    }
+
+    AvailabilityResponse::Available {
+        value: format!("{:.2}", (numerator / cost_basis_base) * Decimal::from(100)),
+    }
 }
 
 fn open_gain_row(
@@ -355,6 +496,9 @@ mod tests {
         assert_eq!(body["include_closed_positions"], false);
         assert_eq!(body["rows"].as_array().unwrap().len(), 0);
         assert_eq!(body["summary"]["excluded_rows"], 0);
+        assert_eq!(body["totals"]["excluded_rows"], 0);
+        assert_unavailable(&body["totals"]["capital_gain_base"], &[]);
+        assert_unavailable(&body["totals"]["income_base"], &["income_not_tracked"]);
     }
 
     #[tokio::test]
@@ -391,6 +535,13 @@ mod tests {
             body["summary"]["market_value_base"]["status"],
             "unavailable"
         );
+        assert_available(&body["totals"]["capital_gain_base"], "2175.00");
+        assert_available(&body["totals"]["capital_gain_percent"], "21.70");
+        assert_available(&body["totals"]["currency_gain_base"], "1000.00");
+        assert_available(&body["totals"]["currency_gain_percent"], "9.98");
+        assert_available(&body["totals"]["total_return_base"], "3175.00");
+        assert_available(&body["totals"]["total_return_percent"], "31.68");
+        assert_unavailable(&body["totals"]["income_base"], &["income_not_tracked"]);
 
         let row = &body["rows"][0];
         assert_eq!(row["instrument"]["symbol"], "MSFT");
@@ -452,6 +603,12 @@ mod tests {
         assert_available(&body["summary"]["price_effect_base"], "2200.00");
         assert_available(&body["summary"]["fx_effect_base"], "1000.00");
         assert_available(&body["summary"]["unrealized_gain_base"], "3200.00");
+        assert_available(&body["totals"]["capital_gain_base"], "2200.00");
+        assert_available(&body["totals"]["capital_gain_percent"], "22.00");
+        assert_available(&body["totals"]["currency_gain_base"], "1000.00");
+        assert_available(&body["totals"]["currency_gain_percent"], "10.00");
+        assert_available(&body["totals"]["total_return_base"], "3200.00");
+        assert_available(&body["totals"]["total_return_percent"], "32.00");
     }
 
     #[tokio::test]

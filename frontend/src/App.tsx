@@ -479,6 +479,7 @@ export function App() {
                 >
                   <GainsTable
                     rows={gainsQuery.data?.rows ?? []}
+                    totals={gainsQuery.data?.totals}
                     includeClosedPositions={uiState.includeClosedPositions}
                     onIncludeClosedPositionsChange={(includeClosedPositions) =>
                       dispatch({

@@ -220,3 +220,8 @@ Consequences: `import_batches.source` allows `AVANZA`; `source_currency` is pers
 Decision: The Gains view shall optionally include fully closed instruments as realized-gain rows derived from weighted-average ledger cost at each sell. The default remains open positions only, and the Gains summary remains based on current open positions so current portfolio value is not mixed with historical sale proceeds.
 Context: Sharesight exposes an "include closed positions" toggle, but this app's current Gains summary and top portfolio total are defined around open holdings and unrealized attribution.
 Consequences: Closed rows reuse the existing Gains columns for realized cost, sale proceeds, and realized gain where FX is available. Partially sold positions that remain open still show their current open-position unrealized gain only; period selection, dividend income, and fuller realized-gain attribution remain separate future work.
+
+## 2026-06-18 - Gains Totals Are View-Scoped
+Decision: The Gains page has its own totals strip for capital gain, income, currency gain, and total return. These totals follow the active Gains filter, so they include closed realized rows only when "Include closed positions" is enabled. The top portfolio summary remains current-position based.
+Context: Sharesight presents performance totals directly above the investment table, and those totals change with closed-position inclusion. This is useful on the Gains page but should not redefine the app-wide current portfolio value.
+Consequences: Gains API responses expose a `totals` object separate from `summary`. Income is explicitly unavailable until dividend/income accounting is implemented, rather than displayed as zero.

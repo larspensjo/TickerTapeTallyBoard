@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "ticker-tape-tally-board-backend"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "async-trait",
  "axum",

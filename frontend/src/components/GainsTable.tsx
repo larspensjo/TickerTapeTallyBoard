@@ -9,13 +9,15 @@ import {
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { AvailabilityValue, GainsRow } from "../api/types";
+import type { AvailabilityValue, GainsRow, GainsTotals } from "../api/types";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
+  formatGroupedNumber,
   freshnessLabel,
   reasonLabel,
   reasonSummary,
+  SummaryAvailabilityValue,
 } from "./valuationDisplay";
 
 interface RowView {
@@ -210,10 +212,12 @@ const columns = [
 
 export function GainsTable({
   rows,
+  totals,
   includeClosedPositions,
   onIncludeClosedPositionsChange,
 }: {
   rows: GainsRow[];
+  totals?: GainsTotals;
   includeClosedPositions: boolean;
   onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
 }) {
@@ -290,6 +294,7 @@ export function GainsTable({
 
   return (
     <>
+      {totals ? <GainsTotalsBand totals={totals} /> : null}
       <div className="table-toolbar">
         <input
           className="filter-input"
@@ -376,5 +381,72 @@ export function GainsTable({
         </table>
       </div>
     </>
+  );
+}
+
+function GainsTotalsBand({ totals }: { totals: GainsTotals }) {
+  return (
+    <section className="gains-totals" aria-label="Gains totals">
+      <GainsTotalMetric
+        label="Capital gain"
+        percent={totals.capital_gain_percent}
+        amount={totals.capital_gain_base}
+      />
+      <GainsTotalMetric
+        label="Income"
+        percent={totals.income_percent}
+        amount={totals.income_base}
+        unavailableLabel="Not tracked"
+      />
+      <GainsTotalMetric
+        label="Currency gain"
+        percent={totals.currency_gain_percent}
+        amount={totals.currency_gain_base}
+      />
+      <GainsTotalMetric
+        label="Total return"
+        percent={totals.total_return_percent}
+        amount={totals.total_return_base}
+      />
+      {totals.excluded_rows > 0 ? (
+        <span className="status-chip warning gains-totals-warning">
+          {formatGroupedNumber(totals.excluded_rows)} incomplete
+        </span>
+      ) : null}
+    </section>
+  );
+}
+
+function GainsTotalMetric({
+  label,
+  percent,
+  amount,
+  unavailableLabel = "Unavailable",
+}: {
+  label: string;
+  percent: AvailabilityValue<string>;
+  amount: AvailabilityValue<string>;
+  unavailableLabel?: string;
+}) {
+  return (
+    <div className="gains-total-metric">
+      <span className="gains-total-label">{label}</span>
+      <span className="gains-total-percent">
+        <SummaryAvailabilityValue
+          value={percent}
+          suffix="%"
+          tone="plain"
+          unavailableLabel={unavailableLabel}
+        />
+      </span>
+      <span className="gains-total-amount">
+        <SummaryAvailabilityValue
+          value={amount}
+          prefix="SEK "
+          tone="plain"
+          unavailableLabel={unavailableLabel}
+        />
+      </span>
+    </div>
   );
 }

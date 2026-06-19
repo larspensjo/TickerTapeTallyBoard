@@ -119,14 +119,16 @@ export function SummaryAvailabilityValue({
   prefix = "",
   suffix = "",
   tone = "signed",
+  unavailableLabel = "Unavailable",
 }: {
   value: AvailabilityValue<string> | undefined;
   prefix?: string;
   suffix?: string;
   tone?: ValueTone;
+  unavailableLabel?: string;
 }) {
   if (!value) {
-    return <span className="status-chip warning">Unavailable</span>;
+    return <span className="status-chip warning">{unavailableLabel}</span>;
   }
 
   if (!isAvailable(value)) {
@@ -135,7 +137,7 @@ export function SummaryAvailabilityValue({
         className="status-chip warning"
         title={reasonSummary(value.reasons)}
       >
-        Unavailable
+        {unavailableLabel}
       </span>
     );
   }
@@ -179,6 +181,8 @@ export function reasonLabel(code: string): string {
       return "Zero cost basis";
     case "zero_previous_market_value":
       return "Zero previous value";
+    case "income_not_tracked":
+      return "Income not tracked";
     default:
       return normalized.replaceAll("_", " ");
   }

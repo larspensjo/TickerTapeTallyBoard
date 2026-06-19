@@ -87,6 +87,18 @@ export interface GainsSummary {
   excluded_rows: number;
 }
 
+export interface GainsTotals {
+  capital_gain_base: MoneyValue;
+  capital_gain_percent: PercentValue;
+  income_base: MoneyValue;
+  income_percent: PercentValue;
+  currency_gain_base: MoneyValue;
+  currency_gain_percent: PercentValue;
+  total_return_base: MoneyValue;
+  total_return_percent: PercentValue;
+  excluded_rows: number;
+}
+
 export interface GainsRow {
   instrument: Instrument;
   quantity: number;
@@ -113,6 +125,7 @@ export interface GainsResponse {
   base_currency: string;
   include_closed_positions: boolean;
   summary: GainsSummary;
+  totals: GainsTotals;
   rows: GainsRow[];
 }
 
