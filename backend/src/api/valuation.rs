@@ -11,7 +11,7 @@ pub(super) const BASE_CURRENCY: &str = "SEK";
 pub(super) const PRICE_PROVIDER: &str = "YAHOO";
 pub(super) const FX_PROVIDER: &str = "FRANKFURTER";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum AvailabilityResponse {
     Available { value: String },
@@ -43,7 +43,6 @@ pub(super) struct ValuationInputs {
     pub previous_fx: Option<FxCandidate>,
 }
 
-#[allow(dead_code)]
 pub(super) struct PeriodInputs {
     pub start_price: Option<PriceCandidate>,
     pub end_price: Option<PriceCandidate>,
@@ -118,7 +117,6 @@ pub(super) async fn load_valuation_inputs(
     })
 }
 
-#[allow(dead_code)]
 pub(super) async fn load_period_inputs(
     pool: &SqlitePool,
     instrument: &instruments::InstrumentRow,
