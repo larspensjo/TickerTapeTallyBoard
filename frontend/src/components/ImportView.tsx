@@ -1,4 +1,5 @@
 import { type ChangeEvent, useReducer, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import {
   useCommitImport,
@@ -208,11 +209,8 @@ function hasBlockingErrors(
   return selectedHasErrors || hasGlobalErrors;
 }
 
-interface ImportViewProps {
-  onViewTransactions: () => void;
-}
-
-export function ImportView({ onViewTransactions }: ImportViewProps) {
+export function ImportView() {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
   const previewImport = usePreviewImport();
@@ -600,7 +598,9 @@ export function ImportView({ onViewTransactions }: ImportViewProps) {
                 <button
                   type="button"
                   className="button primary"
-                  onClick={onViewTransactions}
+                  onClick={() =>
+                    navigate("/", { state: { boardView: "transactions" } })
+                  }
                   disabled={rollbackImport.isPending}
                 >
                   View transactions
