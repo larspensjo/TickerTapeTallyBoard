@@ -146,12 +146,16 @@ pub fn compute_period_amounts(
         (sfx, efx)
     };
 
-    // end_price always required for simplicity.
-    let end_price = match end_price_native {
-        Some(p) => p,
-        None => {
-            return PeriodAmounts::unavailable(vec![ValuationReason::MissingEndPrice]);
+    // End price is only needed when shares remain at the end of the period.
+    let end_price = if period.end_position.quantity > 0 {
+        match end_price_native {
+            Some(p) => p,
+            None => {
+                return PeriodAmounts::unavailable(vec![ValuationReason::MissingEndPrice]);
+            }
         }
+    } else {
+        Decimal::ZERO
     };
 
     // start_price required when start_position has shares.
@@ -735,8 +739,7 @@ mod tests {
             sell_with_fx(2, "2026-06-20", 100, dec!(11), dec!(10)),
         ];
         let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
-        // end_position.quantity = 0, so end_price is not strictly needed but pass it anyway
-        let a = compute_period_amounts(&p, None, Some(dec!(11)), None, Some(dec!(10)), false);
+        let a = compute_period_amounts(&p, None, None, None, Some(dec!(10)), false);
         assert_eq!(avail(&a.begin_market_value_base), dec!(0));
         assert_eq!(avail(&a.end_market_value_base), dec!(0));
         assert_eq!(avail(&a.total_return_base), dec!(1000));

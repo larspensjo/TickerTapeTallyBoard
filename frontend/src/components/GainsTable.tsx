@@ -26,31 +26,15 @@ import {
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
 
-export type DatePreset =
-  | "today"
-  | "7d"
-  | "12m"
-  | "ytd"
-  | "fy"
-  | "all"
-  | "custom";
+export type DatePreset = "today" | "7d" | "12m" | "ytd" | "all" | "custom";
 
-const PRESETS: DatePreset[] = [
-  "today",
-  "7d",
-  "12m",
-  "ytd",
-  "fy",
-  "all",
-  "custom",
-];
+const PRESETS: DatePreset[] = ["today", "7d", "12m", "ytd", "all", "custom"];
 
 const PRESET_LABELS: Record<DatePreset, string> = {
   today: "Today",
   "7d": "7D",
   "12m": "12M",
   ytd: "YTD",
-  fy: "FY",
   all: "All",
   custom: "Custom",
 };
@@ -81,8 +65,6 @@ function presetToRange(
       return { startDate: fmt(start), endDate: fmt(today) };
     }
     case "ytd":
-      return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
-    case "fy":
       return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
     case "all":
       return { startDate: null, endDate: fmt(today) };
@@ -535,6 +517,10 @@ function GainsTotalsBand({
     displayPercentKind === "annualised"
       ? "Annualised return"
       : "Performance return";
+  const componentTitle =
+    displayPercentKind === "annualised"
+      ? "Holding-period percentage; total return is annualised."
+      : undefined;
   return (
     <section className="gains-totals" aria-label="Gains totals">
       <div className="gains-totals-header">
@@ -550,6 +536,7 @@ function GainsTotalsBand({
           label="Capital gain"
           percent={totals.capital_gain_percent}
           amount={totals.capital_gain_base}
+          title={componentTitle}
         />
         <GainsTotalMetric
           label="Income"
@@ -561,6 +548,7 @@ function GainsTotalsBand({
           label="Currency gain"
           percent={totals.currency_gain_percent}
           amount={totals.currency_gain_base}
+          title={componentTitle}
         />
         <GainsTotalMetric
           label="Total return"
@@ -577,15 +565,19 @@ function GainsTotalMetric({
   percent,
   amount,
   unavailableLabel = "Unavailable",
+  title,
 }: {
   label: string;
   percent: AvailabilityValue<string>;
   amount: AvailabilityValue<string>;
   unavailableLabel?: string;
+  title?: string;
 }) {
   return (
     <div className="gains-total-metric">
-      <span className="gains-total-label">{label}</span>
+      <span className="gains-total-label" title={title}>
+        {label}
+      </span>
       <span className="gains-total-percent">
         <SummaryAvailabilityValue
           value={percent}

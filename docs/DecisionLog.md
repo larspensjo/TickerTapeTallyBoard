@@ -254,3 +254,9 @@ Consequences: Instruments with splits in or after the report range will have adj
 Decision: total_return = end_mv − begin_mv − net_flows. Capital gain = same formula evaluated at constant end_fx. Currency gain = total_return − capital_gain. No held-quantity tracking or FIFO matching required.
 Context: A stateful "held vs sold" tracking approach risks negative held quantities when in-period sells exceed the start position. The market-value identity is equivalent and avoids this class of errors.
 Consequences: Decomposition into capital and currency gain is correct for all cases including buy-then-sell within the period, mixed pre/in-period sells, and inception mode.
+
+## 2026-06-20: Performance Totals Include Report-Period Closed Activity
+
+Decision: Modified Dietz Gains totals include every instrument with report-period exposure or cash flows, including instruments that are fully closed by the report end date. The "Include closed positions" toggle controls row rendering only; unavailable instruments are excluded from the aggregate totals and counted in `totals.excluded_rows` instead of making the whole totals band unavailable.
+Context: Period performance should include realized gains and losses inside the selected period, and one missing start price or FX rate should not blank otherwise computable portfolio totals.
+Consequences: Gains totals may include closed-position performance even when the closed row is hidden. The incomplete chip indicates how many instruments were excluded from performance aggregation due to missing valuation inputs.

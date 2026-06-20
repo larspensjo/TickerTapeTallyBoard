@@ -361,7 +361,7 @@ slots for them.
 ## Frontend Changes
 
 - Add a Gains date-range control matching the Sharesight comparison workflow:
-  Today, 7D, 12M, YTD, FY, All, and custom start/end.
+  Today, 7D, 12M, YTD, All, and custom start/end.
 - Make "All" map to the earliest transaction date through the selected end date.
 - Display percentage method context in the Gains totals, for example:
   `Performance return` or `Annualised return`.
