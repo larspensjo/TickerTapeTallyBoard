@@ -211,8 +211,28 @@ function Resolve-DatabaseUrl {
     }
 }
 
+function Stop-OrphanVite {
+    param([int]$Port)
+
+    $pids = netstat -ano |
+        Where-Object { $_ -match "TCP\s+127\.0\.0\.1:$Port\s+.*LISTENING\s+(\d+)" } |
+        ForEach-Object { if ($_ -match "\s(\d+)\s*$") { [int]$Matches[1] } }
+
+    foreach ($orphanPid in $pids) {
+        $proc = Get-Process -Id $orphanPid -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -eq "node") {
+            Write-Host "Stopping orphan Vite process (PID $orphanPid) on port $Port." -ForegroundColor Yellow
+            & taskkill.exe /PID $orphanPid /T /F | Out-Null
+        }
+    }
+}
+
 Assert-Command "cargo"
 Assert-Command "npm"
+
+# Kill any leftover Vite dev servers (e.g. orphaned by AI tooling) so the
+# preferred port is always available to this script.
+Stop-OrphanVite -Port $FrontendPort
 
 if (-not (Test-Path $BackendDir)) {
     throw "Backend directory not found: $BackendDir"
