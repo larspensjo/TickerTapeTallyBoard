@@ -20,7 +20,7 @@ import type {
   RefreshRunSummary,
 } from "../api/types";
 import { AddTransactionForm } from "./AddTransactionForm";
-import { GainsTable } from "./GainsTable";
+import { type DatePreset, GainsTable } from "./GainsTable";
 import { HoldingsTable } from "./HoldingsTable";
 import { TransactionsTable } from "./TransactionsTable";
 import {
@@ -38,6 +38,7 @@ interface UiState {
   boardFilter: string;
   includeClosedPositions: boolean;
   formOpen: boolean;
+  datePreset: DatePreset;
   dateRange: DateRange;
 }
 
@@ -46,6 +47,7 @@ type UiAction =
   | { type: "boardFilterChanged"; filter: string }
   | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
   | { type: "formToggled"; open: boolean }
+  | { type: "datePresetChanged"; datePreset: DatePreset }
   | { type: "dateRangeChanged"; dateRange: DateRange };
 
 interface HealthResponse {
@@ -67,6 +69,8 @@ function uiReducer(state: UiState, action: UiAction): UiState {
       };
     case "formToggled":
       return { ...state, formOpen: action.open };
+    case "datePresetChanged":
+      return { ...state, datePreset: action.datePreset };
     case "dateRangeChanged":
       return { ...state, dateRange: action.dateRange };
   }
@@ -166,6 +170,7 @@ export function BoardView() {
     boardFilter: "",
     includeClosedPositions: false,
     formOpen: false,
+    datePreset: "all",
     dateRange: { startDate: null, endDate: null },
   });
 
@@ -456,6 +461,10 @@ export function BoardView() {
                   })
                 }
                 dateRange={uiState.dateRange}
+                selectedDatePreset={uiState.datePreset}
+                onDatePresetChange={(datePreset) =>
+                  dispatch({ type: "datePresetChanged", datePreset })
+                }
                 onDateRangeChange={(dateRange) =>
                   dispatch({ type: "dateRangeChanged", dateRange })
                 }

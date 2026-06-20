@@ -26,7 +26,14 @@ import {
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
 
-type DatePreset = "today" | "7d" | "12m" | "ytd" | "fy" | "all" | "custom";
+export type DatePreset =
+  | "today"
+  | "7d"
+  | "12m"
+  | "ytd"
+  | "fy"
+  | "all"
+  | "custom";
 
 const PRESETS: DatePreset[] = [
   "today",
@@ -286,6 +293,8 @@ export function GainsTable({
   includeClosedPositions,
   onIncludeClosedPositionsChange,
   dateRange,
+  selectedDatePreset,
+  onDatePresetChange,
   onDateRangeChange,
   displayPercentKind = "absolute",
 }: {
@@ -296,13 +305,14 @@ export function GainsTable({
   includeClosedPositions: boolean;
   onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
   dateRange: DateRange;
+  selectedDatePreset: DatePreset;
+  onDatePresetChange: (preset: DatePreset) => void;
   onDateRangeChange: (range: DateRange) => void;
   displayPercentKind?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "unrealized_gain_base", desc: true },
   ]);
-  const [selectedPreset, setSelectedPreset] = useState<DatePreset>("all");
   const [customStart, setCustomStart] = useState(dateRange.startDate ?? "");
   const [customEnd, setCustomEnd] = useState(dateRange.endDate ?? "");
 
@@ -385,18 +395,24 @@ export function GainsTable({
             <button
               key={p}
               type="button"
-              className={`preset-btn${selectedPreset === p ? " active" : ""}`}
+              className={`preset-btn${
+                selectedDatePreset === p ? " active" : ""
+              }`}
+              aria-pressed={selectedDatePreset === p}
               onClick={() => {
-                setSelectedPreset(p);
-                onDateRangeChange(presetToRange(p, customStart, customEnd));
+                onDatePresetChange(p);
+                if (p !== "custom") {
+                  onDateRangeChange(presetToRange(p, customStart, customEnd));
+                }
               }}
             >
               {PRESET_LABELS[p]}
             </button>
           ))}
-          {selectedPreset === "custom" && (
+          {selectedDatePreset === "custom" && (
             <>
               <input
+                className="date-range-input"
                 type="date"
                 value={customStart}
                 onChange={(e) => {
@@ -407,6 +423,7 @@ export function GainsTable({
                 }}
               />
               <input
+                className="date-range-input"
                 type="date"
                 value={customEnd}
                 onChange={(e) => {

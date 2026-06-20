@@ -760,6 +760,66 @@ tbody tr:last-child td {
   padding: var(--space-3) var(--space-4) 0;
 }
 
+.date-range-presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 34px;
+  padding: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+
+.preset-btn {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  color: var(--text-primary);
+}
+
+.preset-btn.active {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.preset-btn:focus-visible,
+.date-range-input:focus-visible,
+.filter-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.date-range-input {
+  min-height: 28px;
+  min-width: 136px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color-scheme: dark;
+}
+
+.date-range-input::-webkit-calendar-picker-indicator {
+  opacity: 0.72;
+  filter: invert(1);
+}
+
 .filter-input {
   min-height: 32px;
   min-width: 220px;

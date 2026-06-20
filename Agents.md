@@ -4,6 +4,7 @@
 - Build with `cargo build` from `backend/`.
 - When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt` from `backend/`.
 - For changes under `frontend/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
+- When launching npm through `Start-Process`, use `npm.cmd` explicitly instead of bare `npm`; PowerShell may resolve bare `npm` to `npm.ps1`, which can open in Notepad depending on file association.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 - The UI displays two version values: frontend from `frontend/package.json` and backend from `backend/Cargo.toml` via `/api/health`. Bump these versions as needed.
 - The UI should follow the visual design in docs\VisualDesign.DarkTheme.md.

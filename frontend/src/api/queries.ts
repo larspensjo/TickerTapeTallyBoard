@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiGet, apiSend, apiSendBytes } from "./client";
 import type {
   DateRange,
@@ -61,6 +66,7 @@ export function useGains(params: GainsParams = {}) {
       const qs = search.toString();
       return apiGet<GainsResponse>(`/api/gains${qs ? `?${qs}` : ""}`);
     },
+    placeholderData: keepPreviousData,
   });
 }
 
