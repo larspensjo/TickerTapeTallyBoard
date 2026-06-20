@@ -983,11 +983,22 @@ th.number-head .sort-button {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  border-top: 1px solid var(--hairline);
+  height: 44px;
+  border-top: 2px solid var(--accent);
   border-bottom: 0;
-  background: var(--surface-1);
+  background: var(--surface-2);
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.holdings-table tfoot th {
+  color: var(--text-primary);
+  letter-spacing: 0.06em;
+}
+
+.holdings-table tfoot .number,
+.holdings-table tfoot strong {
+  font-weight: 700;
 }
 
 .gains-table tfoot th,
@@ -995,15 +1006,26 @@ th.number-head .sort-button {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  border-top: 1px solid var(--hairline);
+  height: 44px;
+  border-top: 2px solid var(--accent);
   border-bottom: 0;
-  background: var(--surface-1);
+  background: var(--surface-2);
   color: var(--text-primary);
   font-weight: 600;
 }
 
 .gains-table tfoot th:first-child {
   z-index: 4;
+}
+
+.gains-table tfoot th {
+  color: var(--text-primary);
+  letter-spacing: 0.06em;
+}
+
+.gains-table tfoot .number,
+.gains-table tfoot strong {
+  font-weight: 700;
 }
 
 .skeleton-bar {

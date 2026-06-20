@@ -110,6 +110,8 @@ export interface GainsRow {
   previous_fx: FxSnapshot | null;
   market_value_native: MoneyValue;
   market_value_base: MoneyValue;
+  proceeds_native: MoneyValue;
+  proceeds_base: MoneyValue;
   unrealized_gain_base: MoneyValue;
   unrealized_gain_percent: PercentValue;
   price_effect_base: MoneyValue;

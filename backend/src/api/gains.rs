@@ -88,6 +88,8 @@ pub struct GainRow {
     pub previous_fx: Option<FxSnapshotResponse>,
     pub market_value_native: AvailabilityResponse,
     pub market_value_base: AvailabilityResponse,
+    pub proceeds_native: AvailabilityResponse,
+    pub proceeds_base: AvailabilityResponse,
     pub unrealized_gain_base: AvailabilityResponse,
     pub unrealized_gain_percent: AvailabilityResponse,
     pub day_change_base: AvailabilityResponse,
@@ -504,6 +506,12 @@ fn open_gain_row(
         market_value_base: serialize_availability(&valued_holding.market_value_base, |v| {
             money_string(*v)
         }),
+        proceeds_native: AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        },
+        proceeds_base: AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        },
         unrealized_gain_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
             money_string(*v)
         }),
@@ -564,9 +572,15 @@ fn closed_gain_row(
         latest_fx: None,
         previous_fx: None,
         market_value_native: AvailabilityResponse::Available {
+            value: money_string(Decimal::ZERO),
+        },
+        market_value_base: AvailabilityResponse::Available {
+            value: money_string(Decimal::ZERO),
+        },
+        proceeds_native: AvailabilityResponse::Available {
             value: money_string(realized.proceeds_native),
         },
-        market_value_base: serialize_base_amount(&realized.proceeds_base),
+        proceeds_base: serialize_base_amount(&realized.proceeds_base),
         unrealized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
         unrealized_gain_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
         day_change_base: AvailabilityResponse::Unavailable {
@@ -715,8 +729,10 @@ mod tests {
         assert_eq!(row["quantity"], 0);
         assert_eq!(row["cost_basis_native"], "1000.00");
         assert_available(&row["cost_basis_base"], "10020.00");
-        assert_available(&row["market_value_native"], "1200.00");
-        assert_available(&row["market_value_base"], "13195.00");
+        assert_available(&row["market_value_native"], "0.00");
+        assert_available(&row["market_value_base"], "0.00");
+        assert_available(&row["proceeds_native"], "1200.00");
+        assert_available(&row["proceeds_base"], "13195.00");
         assert_available(&row["unrealized_gain_base"], "3175.00");
         assert_available(&row["unrealized_gain_percent"], "31.68");
         assert_available(&row["price_effect_base"], "2175.00");
@@ -843,6 +859,8 @@ mod tests {
         assert_eq!(row["latest_fx"]["quote"], BASE_CURRENCY);
         assert_available(&row["market_value_native"], "1200.00");
         assert_available(&row["market_value_base"], "13200.00");
+        assert_unavailable(&row["proceeds_native"], &[]);
+        assert_unavailable(&row["proceeds_base"], &[]);
         assert_available(&row["unrealized_gain_base"], "3200.00");
         assert_available(&row["unrealized_gain_percent"], "32.00");
         assert_available(&row["day_change_base"], "1650.00");

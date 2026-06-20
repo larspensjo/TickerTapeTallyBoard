@@ -164,7 +164,7 @@ export function tilesView(
       status: "closed",
       realizedGain: gain.unrealized_gain_base,
       realizedPercent: gain.unrealized_gain_percent,
-      proceeds: gain.market_value_base,
+      proceeds: gain.proceeds_base,
       costBasis: gain.cost_basis_base,
       sharesSold: sharesSold(transactions),
     };

@@ -260,3 +260,9 @@ Consequences: Decomposition into capital and currency gain is correct for all ca
 Decision: Modified Dietz Gains totals include every instrument with report-period exposure or cash flows, including instruments that are fully closed by the report end date. The "Include closed positions" toggle controls row rendering only; unavailable instruments are excluded from the aggregate totals and counted in `totals.excluded_rows` instead of making the whole totals band unavailable.
 Context: Period performance should include realized gains and losses inside the selected period, and one missing start price or FX rate should not blank otherwise computable portfolio totals.
 Consequences: Gains totals may include closed-position performance even when the closed row is hidden. The incomplete chip indicates how many instruments were excluded from performance aggregation due to missing valuation inputs.
+
+## 2026-06-20: Closed Position Market Value Is Current Exposure
+
+Decision: Fully closed Gains rows report `market_value_native` and `market_value_base` as zero current exposure. Realized sale proceeds are exposed through separate `proceeds_native` and `proceeds_base` fields.
+Context: Closed rows previously reused the market-value fields for sale proceeds, which made the Gains table show non-zero "Market value" for positions with quantity zero.
+Consequences: Market-value totals remain current-exposure totals even when closed rows are visible. UI surfaces that need realized proceeds must read the explicit proceeds fields instead of inferring them from market value.
