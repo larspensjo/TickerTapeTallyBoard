@@ -29,6 +29,15 @@ interface RowView {
 const columnHelper = createColumnHelper<RowView>();
 type PortfolioPercentage = AvailabilityValue<string>;
 
+interface HoldingsSummary {
+  marketValueBase: AvailabilityValue<string>;
+  portfolioPercentage: PortfolioPercentage;
+  unrealizedGainBase: AvailabilityValue<string>;
+  unrealizedGainPercent: AvailabilityValue<string>;
+  excludedMarketValueRows: number;
+  excludedPnlRows: number;
+}
+
 function valuationUnavailableReasons(holding: Holding): string[] {
   return [
     ...(holding.valuation?.market_value_base.status === "unavailable"
@@ -151,6 +160,128 @@ function portfolioPercentageCell(value: PortfolioPercentage) {
     <span title="Excluded from portfolio weight (valuation unavailable)">
       --
     </span>
+  );
+}
+
+function parseFiniteNumber(value: string | number): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function availableNumber(
+  value: AvailabilityValue<string> | undefined,
+): number | null {
+  if (!value || value.status === "unavailable") {
+    return null;
+  }
+
+  return parseFiniteNumber(value.value);
+}
+
+function holdingCostBasisBaseNumber(holding: Holding): number | null {
+  if (holding.base.status !== "available") {
+    return null;
+  }
+
+  return parseFiniteNumber(holding.base.cost_basis_base);
+}
+
+function moneyValue(value: number): AvailabilityValue<string> {
+  return { status: "available", value: value.toFixed(2) };
+}
+
+function percentValue(
+  value: number,
+  fractionDigits = 1,
+): AvailabilityValue<string> {
+  return { status: "available", value: value.toFixed(fractionDigits) };
+}
+
+function computeHoldingsSummary(
+  rows: RowView[],
+  portfolioPercentages: Map<number, PortfolioPercentage>,
+): HoldingsSummary {
+  let marketValueBase = 0;
+  let marketValueCount = 0;
+  let portfolioPercentage = 0;
+  let portfolioPercentageCount = 0;
+  let unrealizedGainBase = 0;
+  let pnlCostBasisBase = 0;
+  let pnlCount = 0;
+
+  for (const { holding } of rows) {
+    const currentMarketValue = availableNumber(
+      holding.valuation?.market_value_base,
+    );
+    if (currentMarketValue !== null) {
+      marketValueBase += currentMarketValue;
+      marketValueCount += 1;
+    }
+
+    const currentPortfolioPercentage = availableNumber(
+      portfolioPercentages.get(holding.instrument.id),
+    );
+    if (currentPortfolioPercentage !== null) {
+      portfolioPercentage += currentPortfolioPercentage;
+      portfolioPercentageCount += 1;
+    }
+
+    const currentUnrealizedGain = availableNumber(
+      holding.valuation?.unrealized_gain_base,
+    );
+    const currentCostBasisBase = holdingCostBasisBaseNumber(holding);
+    if (currentUnrealizedGain !== null && currentCostBasisBase !== null) {
+      unrealizedGainBase += currentUnrealizedGain;
+      pnlCostBasisBase += currentCostBasisBase;
+      pnlCount += 1;
+    }
+  }
+
+  const excludedMarketValueRows = rows.length - marketValueCount;
+  const excludedPnlRows = rows.length - pnlCount;
+
+  return {
+    marketValueBase:
+      marketValueCount > 0
+        ? moneyValue(marketValueBase)
+        : unavailableValue("valuation_unavailable"),
+    portfolioPercentage:
+      portfolioPercentageCount > 0
+        ? percentValue(portfolioPercentage)
+        : unavailableValue("valuation_unavailable"),
+    unrealizedGainBase:
+      pnlCount > 0
+        ? moneyValue(unrealizedGainBase)
+        : unavailableValue("valuation_unavailable"),
+    unrealizedGainPercent:
+      pnlCount > 0 && pnlCostBasisBase !== 0
+        ? percentValue((unrealizedGainBase / pnlCostBasisBase) * 100, 2)
+        : unavailableValue("base_cost_basis_unavailable"),
+    excludedMarketValueRows,
+    excludedPnlRows,
+  };
+}
+
+function summaryTitle(excludedRows: number): string | undefined {
+  return excludedRows > 0
+    ? `${formatGroupedNumber(excludedRows)} rows excluded from this summary`
+    : undefined;
+}
+
+function holdingsSummaryPnlCell(summary: HoldingsSummary) {
+  return (
+    <div className="metric-stack" title={summaryTitle(summary.excludedPnlRows)}>
+      <AvailabilityValueCell value={summary.unrealizedGainBase} tone="signed" />
+      {summary.unrealizedGainBase.status === "available" ? (
+        <span className="metric-subtle">
+          <AvailabilityValueCell
+            value={summary.unrealizedGainPercent}
+            suffix="%"
+            tone="signed"
+          />
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -294,6 +425,8 @@ export function HoldingsTable({
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });
+  const visibleRows = table.getRowModel().rows.map((row) => row.original);
+  const summary = computeHoldingsSummary(visibleRows, portfolioPercentages);
 
   return (
     <>
@@ -359,6 +492,30 @@ export function HoldingsTable({
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td />
+              <td />
+              <td />
+              <td
+                className="number"
+                title={summaryTitle(summary.excludedMarketValueRows)}
+              >
+                <AvailabilityValueCell
+                  value={summary.marketValueBase}
+                  prefix="SEK "
+                />
+              </td>
+              <td
+                className="number"
+                title={summaryTitle(summary.excludedMarketValueRows)}
+              >
+                {portfolioPercentageCell(summary.portfolioPercentage)}
+              </td>
+              <td>{holdingsSummaryPnlCell(summary)}</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </>

@@ -81,6 +81,23 @@ interface RowView {
   search: string;
 }
 
+interface SummaryValue {
+  value: AvailabilityValue<string>;
+  excludedRows: number;
+}
+
+interface GainsColumnSummary {
+  costBasisBase: SummaryValue;
+  marketValueBase: SummaryValue;
+  unrealizedGainBase: SummaryValue;
+  unrealizedGainPercent: SummaryValue;
+  priceEffectBase: SummaryValue;
+  fxEffectBase: SummaryValue;
+  dayChangeBase: SummaryValue;
+  dayChangePercent: SummaryValue;
+  incompleteRows: number;
+}
+
 const columnHelper = createColumnHelper<RowView>();
 
 const numericColumns = new Set([
@@ -106,6 +123,182 @@ function stackedMetricCell(
       ) : null}
     </div>
   );
+}
+
+function parseFiniteNumber(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function availableNumber(value: AvailabilityValue<string>): number | null {
+  if (value.status === "unavailable") {
+    return null;
+  }
+
+  return parseFiniteNumber(value.value);
+}
+
+function moneyValue(value: number): AvailabilityValue<string> {
+  return { status: "available", value: value.toFixed(2) };
+}
+
+function percentValue(value: number): AvailabilityValue<string> {
+  return { status: "available", value: value.toFixed(2) };
+}
+
+function summarizeMoneyValues(values: Array<AvailabilityValue<string>>) {
+  let total = 0;
+  let availableRows = 0;
+
+  for (const value of values) {
+    const numberValue = availableNumber(value);
+    if (numberValue !== null) {
+      total += numberValue;
+      availableRows += 1;
+    }
+  }
+
+  return {
+    value:
+      availableRows > 0 ? moneyValue(total) : unavailableValue("unavailable"),
+    excludedRows: values.length - availableRows,
+  };
+}
+
+function unavailableValue(reason: string): AvailabilityValue<string> {
+  return { status: "unavailable", reasons: [reason] };
+}
+
+function summaryTitle(excludedRows: number): string | undefined {
+  return excludedRows > 0
+    ? `${formatGroupedNumber(excludedRows)} rows excluded from this summary`
+    : undefined;
+}
+
+function metricSummaryCell(
+  amount: SummaryValue,
+  percent: SummaryValue,
+  unavailableLabel = "Unavailable",
+) {
+  return (
+    <div className="metric-stack" title={summaryTitle(amount.excludedRows)}>
+      <AvailabilityValueCell
+        value={amount.value}
+        tone="signed"
+        unavailableLabel={unavailableLabel}
+      />
+      {amount.value.status === "available" ? (
+        <span
+          className="metric-subtle"
+          title={summaryTitle(percent.excludedRows)}
+        >
+          <AvailabilityValueCell
+            value={percent.value}
+            suffix="%"
+            tone="signed"
+            unavailableLabel={unavailableLabel}
+          />
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function plainSummaryCell(summary: SummaryValue, signed = false) {
+  return (
+    <span title={summaryTitle(summary.excludedRows)}>
+      <AvailabilityValueCell
+        value={summary.value}
+        tone={signed ? "signed" : "plain"}
+      />
+    </span>
+  );
+}
+
+function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
+  let unrealizedGainBase = 0;
+  let unrealizedGainCostBasis = 0;
+  let unrealizedPercentRows = 0;
+  let dayChangeBase = 0;
+  let dayChangePreviousMarketValue = 0;
+  let dayChangePercentRows = 0;
+  let incompleteRows = 0;
+
+  for (const { gain } of rows) {
+    const values = [
+      gain.cost_basis_base,
+      gain.market_value_base,
+      gain.unrealized_gain_base,
+      gain.price_effect_base,
+      gain.fx_effect_base,
+      gain.day_change_base,
+    ];
+
+    if (
+      values.some((value) => value.status === "unavailable") ||
+      gain.reasons.length > 0
+    ) {
+      incompleteRows += 1;
+    }
+
+    const currentUnrealizedGain = availableNumber(gain.unrealized_gain_base);
+    const currentCostBasis = availableNumber(gain.cost_basis_base);
+    if (currentUnrealizedGain !== null && currentCostBasis !== null) {
+      unrealizedGainBase += currentUnrealizedGain;
+      unrealizedGainCostBasis += currentCostBasis;
+      unrealizedPercentRows += 1;
+    }
+
+    const currentDayChange = availableNumber(gain.day_change_base);
+    const currentMarketValue = availableNumber(gain.market_value_base);
+    if (currentDayChange !== null && currentMarketValue !== null) {
+      const previousMarketValue = currentMarketValue - currentDayChange;
+      dayChangeBase += currentDayChange;
+      dayChangePreviousMarketValue += previousMarketValue;
+      dayChangePercentRows += 1;
+    }
+  }
+
+  const costBasisBase = summarizeMoneyValues(
+    rows.map(({ gain }) => gain.cost_basis_base),
+  );
+  const marketValueBase = summarizeMoneyValues(
+    rows.map(({ gain }) => gain.market_value_base),
+  );
+  const unrealizedGainBaseSummary = summarizeMoneyValues(
+    rows.map(({ gain }) => gain.unrealized_gain_base),
+  );
+  const dayChangeBaseSummary = summarizeMoneyValues(
+    rows.map(({ gain }) => gain.day_change_base),
+  );
+
+  return {
+    costBasisBase,
+    marketValueBase,
+    unrealizedGainBase: unrealizedGainBaseSummary,
+    unrealizedGainPercent: {
+      value:
+        unrealizedPercentRows > 0 && unrealizedGainCostBasis !== 0
+          ? percentValue((unrealizedGainBase / unrealizedGainCostBasis) * 100)
+          : unavailableValue("base_cost_basis_unavailable"),
+      excludedRows: rows.length - unrealizedPercentRows,
+    },
+    priceEffectBase: summarizeMoneyValues(
+      rows.map(({ gain }) => gain.price_effect_base),
+    ),
+    fxEffectBase: summarizeMoneyValues(
+      rows.map(({ gain }) => gain.fx_effect_base),
+    ),
+    dayChangeBase: dayChangeBaseSummary,
+    dayChangePercent: {
+      value:
+        dayChangePercentRows > 0 && dayChangePreviousMarketValue !== 0
+          ? percentValue((dayChangeBase / dayChangePreviousMarketValue) * 100)
+          : unavailableValue("zero_previous_market_value"),
+      excludedRows: rows.length - dayChangePercentRows,
+    },
+    incompleteRows,
+  };
 }
 
 function stackedHeader(label: string, detail: string) {
@@ -362,6 +555,8 @@ export function GainsTable({
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });
+  const visibleRows = table.getRowModel().rows.map((row) => row.original);
+  const summary = computeGainsColumnSummary(visibleRows);
 
   return (
     <>
@@ -500,6 +695,47 @@ export function GainsTable({
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td className="number">
+                {plainSummaryCell(summary.costBasisBase)}
+              </td>
+              <td className="number">
+                {plainSummaryCell(summary.marketValueBase)}
+              </td>
+              <td>
+                {metricSummaryCell(
+                  summary.unrealizedGainBase,
+                  summary.unrealizedGainPercent,
+                )}
+              </td>
+              <td className="number">
+                {plainSummaryCell(summary.priceEffectBase, true)}
+              </td>
+              <td className="number">
+                {plainSummaryCell(summary.fxEffectBase, true)}
+              </td>
+              <td>
+                {metricSummaryCell(
+                  summary.dayChangeBase,
+                  summary.dayChangePercent,
+                )}
+              </td>
+              <td>
+                {summary.incompleteRows > 0 ? (
+                  <span
+                    className="status-chip compact warning"
+                    title="Rows with unavailable values or valuation warnings"
+                  >
+                    {formatGroupedNumber(summary.incompleteRows)} incomplete
+                  </span>
+                ) : (
+                  <span className="status-empty" title="All summarized" />
+                )}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </>
