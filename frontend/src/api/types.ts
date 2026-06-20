@@ -104,6 +104,8 @@ export interface GainsRow {
   quantity: number;
   cost_basis_native: string;
   cost_basis_base: MoneyValue;
+  performance_start_date: string | null;
+  performance_denominator_base: MoneyValue;
   capital_gain_base: MoneyValue;
   capital_gain_percent: PercentValue;
   currency_gain_base: MoneyValue;

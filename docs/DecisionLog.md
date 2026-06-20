@@ -266,3 +266,9 @@ Consequences: Gains totals may include closed-position performance even when the
 Decision: Fully closed Gains rows report `market_value_native` and `market_value_base` as zero current exposure. Realized sale proceeds are exposed through separate `proceeds_native` and `proceeds_base` fields.
 Context: Closed rows previously reused the market-value fields for sale proceeds, which made the Gains table show non-zero "Market value" for positions with quantity zero.
 Consequences: Market-value totals remain current-exposure totals even when closed rows are visible. UI surfaces that need realized proceeds must read the explicit proceeds fields instead of inferring them from market value.
+
+## 2026-06-20: Canonical Performance Period For Additive Subtotals
+
+Decision: Every Gains response uses one canonical `report_period.start_date` for Modified Dietz performance. In all-time mode this is the earliest included transaction date in the portfolio; explicit `start_date` queries use that requested date. Row-level performance denominators are computed against this same canonical start so visible-row table footers can sum row amount and denominator contributions.
+Context: Modified Dietz percentages are not additive, and denominators computed from different instrument-specific inception dates cannot be safely summed. A Gains footer that filters visible rows needs additive backend-provided row contributions, not frontend-inferred per-row percentages.
+Consequences: `report_period.start_date` is populated in all-time mode when the portfolio has included transactions. Frontend subtotals may sum row `total_return_base` and `performance_denominator_base`, then apply the shared report period annualisation rule. Rows whose support fields are unavailable or whose start date does not match the response period are excluded from that subtotal and counted as incomplete.

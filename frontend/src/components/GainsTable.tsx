@@ -14,6 +14,7 @@ import type {
   DateRange,
   GainsRow,
   GainsTotals,
+  ReportPeriod,
 } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import {
@@ -215,7 +216,102 @@ function plainSummaryCell(summary: SummaryValue, signed = false) {
   );
 }
 
-function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
+function utcDate(date: string): number | null {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return Date.UTC(year, month - 1, day);
+}
+
+function daysBetween(startDate: string, endDate: string): number | null {
+  const start = utcDate(startDate);
+  const end = utcDate(endDate);
+  if (start === null || end === null) {
+    return null;
+  }
+
+  return Math.floor((end - start) / 86_400_000);
+}
+
+function applyAnnualisation(
+  holdingPeriodReturn: number,
+  periodDays: number,
+): number {
+  if (periodDays <= 0) {
+    return holdingPeriodReturn;
+  }
+
+  const years = periodDays / 365.25;
+  if (years < 1 || 1 + holdingPeriodReturn <= 0) {
+    return holdingPeriodReturn;
+  }
+
+  const annualised = (1 + holdingPeriodReturn) ** (1 / years) - 1;
+  return Number.isFinite(annualised) ? annualised : holdingPeriodReturn;
+}
+
+function visibleTotalReturnPercent(
+  rows: RowView[],
+  reportPeriod?: ReportPeriod,
+): SummaryValue {
+  const reportStartDate = reportPeriod?.start_date;
+  let totalReturn = 0;
+  let denominator = 0;
+  let includedRows = 0;
+
+  if (!reportPeriod || reportStartDate == null) {
+    return {
+      value: unavailableValue("performance_denominator_unavailable"),
+      excludedRows: rows.length,
+    };
+  }
+
+  for (const { gain } of rows) {
+    const rowReturn = availableNumber(gain.total_return_base);
+    const rowDenominator = availableNumber(gain.performance_denominator_base);
+
+    if (
+      rowReturn === null ||
+      rowDenominator === null ||
+      gain.performance_start_date !== reportStartDate
+    ) {
+      continue;
+    }
+
+    totalReturn += rowReturn;
+    denominator += rowDenominator;
+    includedRows += 1;
+  }
+
+  if (includedRows === 0 || denominator === 0) {
+    return {
+      value: unavailableValue("performance_denominator_unavailable"),
+      excludedRows: rows.length,
+    };
+  }
+
+  const periodDays = daysBetween(reportStartDate, reportPeriod.end_date);
+  if (periodDays === null) {
+    return {
+      value: unavailableValue("performance_denominator_unavailable"),
+      excludedRows: rows.length - includedRows,
+    };
+  }
+
+  const percent = applyAnnualisation(totalReturn / denominator, periodDays);
+
+  return {
+    value: percentValue(percent * 100),
+    excludedRows: rows.length - includedRows,
+  };
+}
+
+function computeGainsColumnSummary(
+  rows: RowView[],
+  reportPeriod?: ReportPeriod,
+): GainsColumnSummary {
   let dayChangeBase = 0;
   let dayChangePreviousMarketValue = 0;
   let dayChangePercentRows = 0;
@@ -231,10 +327,7 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
       gain.day_change_base,
     ];
 
-    if (
-      values.some((value) => value.status === "unavailable") ||
-      gain.reasons.length > 0
-    ) {
+    if (values.some((value) => value.status === "unavailable")) {
       incompleteRows += 1;
     }
 
@@ -265,10 +358,7 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
     costBasisBase,
     marketValueBase,
     totalReturnBase: unrealizedGainBaseSummary,
-    totalReturnPercent: {
-      value: unavailableValue("performance_denominator_unavailable"),
-      excludedRows: rows.length,
-    },
+    totalReturnPercent: visibleTotalReturnPercent(rows, reportPeriod),
     capitalGainBase: summarizeMoneyValues(
       rows.map(({ gain }) => gain.capital_gain_base),
     ),
@@ -458,6 +548,7 @@ export function GainsTable({
   onDatePresetChange,
   onDateRangeChange,
   displayPercentKind = "absolute",
+  reportPeriod,
 }: {
   rows: GainsRow[];
   totals?: GainsTotals;
@@ -470,6 +561,7 @@ export function GainsTable({
   onDatePresetChange: (preset: DatePreset) => void;
   onDateRangeChange: (range: DateRange) => void;
   displayPercentKind?: string;
+  reportPeriod?: ReportPeriod;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "total_return_base", desc: true },
@@ -542,7 +634,7 @@ export function GainsTable({
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });
   const visibleRows = table.getRowModel().rows.map((row) => row.original);
-  const summary = computeGainsColumnSummary(visibleRows);
+  const summary = computeGainsColumnSummary(visibleRows, reportPeriod);
 
   return (
     <>

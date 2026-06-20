@@ -80,6 +80,8 @@ pub struct GainRow {
     pub quantity: i64,
     pub cost_basis_native: String,
     pub cost_basis_base: AvailabilityResponse,
+    pub performance_start_date: Option<String>,
+    pub performance_denominator_base: AvailabilityResponse,
     pub capital_gain_base: AvailabilityResponse,
     pub capital_gain_percent: AvailabilityResponse,
     pub currency_gain_base: AvailabilityResponse,
@@ -153,6 +155,17 @@ pub async fn list(
         }
     }
 
+    let report_start_date = match start_date {
+        Some(d) => d,
+        None => ledgers
+            .values()
+            .flat_map(|ledger| ledger.iter().map(|tx| tx.trade_date))
+            .min()
+            .unwrap_or(end_date),
+    };
+    let has_report_start =
+        start_date.is_some() || ledgers.values().any(|ledger| !ledger.is_empty());
+
     let mut valued_holdings = Vec::new();
     let mut gain_rows = Vec::new();
     let mut perf_accum = PerformanceAccumulator::default();
@@ -170,38 +183,22 @@ pub async fn list(
             ))
         })?;
 
-        // Derive the effective start date for this instrument.
-        let effective_start_date = match start_date {
-            Some(d) => d,
-            None => {
-                // Inception mode: use the earliest trade_date in the (already truncated) ledger.
-                ledger
-                    .iter()
-                    .map(|tx| tx.trade_date)
-                    .min()
-                    .unwrap_or(end_date)
-            }
-        };
-
         // Reconstruct period and compute Modified Dietz inputs.
-        let period =
-            reconstruct_period(&ledger, effective_start_date, end_date).map_err(|error| {
-                ApiError::internal(format!(
-                    "failed to reconstruct period for instrument {}: {error:?}",
-                    instrument.id
-                ))
-            })?;
+        let period = reconstruct_period(&ledger, report_start_date, end_date).map_err(|error| {
+            ApiError::internal(format!(
+                "failed to reconstruct period for instrument {}: {error:?}",
+                instrument.id
+            ))
+        })?;
 
         let has_period_exposure = period.start_position.quantity > 0
             || !period.period_transactions.is_empty()
             || period.end_position.quantity > 0;
         let mut row_performance = RowPerformanceResponse::unavailable_empty();
         if has_period_exposure {
-            // Track the global earliest for portfolio-level calculation.
-            perf_accum.update_earliest_tx_date(effective_start_date);
-
             let period_inputs =
-                load_period_inputs(&state.pool, instrument, start_date, end_date).await?;
+                load_period_inputs(&state.pool, instrument, Some(report_start_date), end_date)
+                    .await?;
             let is_sek = instrument.currency.eq_ignore_ascii_case(BASE_CURRENCY);
 
             let start_price = period_inputs.start_price.map(|p| p.close);
@@ -213,12 +210,8 @@ pub async fn list(
                 compute_period_amounts(&period, start_price, end_price, start_fx, end_fx, is_sek);
             let cash_flows = period_cash_flows(&period, is_sek);
 
-            row_performance = row_performance_response(
-                &period_amounts,
-                &cash_flows,
-                effective_start_date,
-                end_date,
-            );
+            row_performance =
+                row_performance_response(&period_amounts, &cash_flows, report_start_date, end_date);
             perf_accum.add(&period_amounts, &cash_flows);
         }
 
@@ -252,12 +245,6 @@ pub async fn list(
 
     let summary = summarize_holdings(&valued_holdings);
 
-    // Derive global effective_start_date for portfolio-level percents.
-    let global_effective_start_date = match start_date {
-        Some(d) => d,
-        None => perf_accum.earliest_tx_date.unwrap_or(end_date),
-    };
-
     // Snapshot the accumulated amounts before consuming the accumulator.
     let perf_capital_gain = perf_accum.capital_gain;
     let perf_currency_gain = perf_accum.currency_gain;
@@ -267,14 +254,14 @@ pub async fn list(
     let perf_excluded_rows = perf_accum.excluded_rows;
 
     let (capital_gain_percent, currency_gain_percent, total_return_percent, display_percent_kind) =
-        perf_accum.into_percents(global_effective_start_date, end_date);
+        perf_accum.into_percents(report_start_date, end_date);
 
     Ok(Json(GainsResponse {
         as_of_date: end_date.format("%Y-%m-%d").to_string(),
         base_currency: BASE_CURRENCY.to_string(),
         include_closed_positions: query.include_closed,
         report_period: ReportPeriodResponse {
-            start_date: start_date.map(|d| d.format("%Y-%m-%d").to_string()),
+            start_date: has_report_start.then(|| report_start_date.format("%Y-%m-%d").to_string()),
             end_date: end_date.format("%Y-%m-%d").to_string(),
         },
         percentage_method: "modified_dietz".to_string(),
@@ -369,6 +356,8 @@ fn component_percent(gain: Decimal, denominator: &Availability<Decimal>) -> Avai
 
 #[derive(Clone)]
 struct RowPerformanceResponse {
+    start_date: Option<NaiveDate>,
+    denominator_base: AvailabilityResponse,
     capital_gain_base: AvailabilityResponse,
     capital_gain_percent: AvailabilityResponse,
     currency_gain_base: AvailabilityResponse,
@@ -383,6 +372,8 @@ impl RowPerformanceResponse {
             reasons: Vec::new(),
         };
         Self {
+            start_date: None,
+            denominator_base: unavailable.clone(),
             capital_gain_base: unavailable.clone(),
             capital_gain_percent: unavailable.clone(),
             currency_gain_base: unavailable.clone(),
@@ -412,6 +403,8 @@ fn row_performance_response(
     };
 
     RowPerformanceResponse {
+        start_date: Some(effective_start_date),
+        denominator_base: serialize_availability(&denominator, |v| money_string(*v)),
         capital_gain_base: serialize_availability(&amounts.capital_gain_base, |v| money_string(*v)),
         capital_gain_percent: row_component_percent(&amounts.capital_gain_base, &denominator),
         currency_gain_base: serialize_availability(&amounts.currency_gain_base, |v| {
@@ -483,18 +476,10 @@ struct PerformanceAccumulator {
     cash_flows: Vec<CashFlow>,
     unavailable_reasons: Vec<ValuationReason>,
     excluded_rows: usize,
-    earliest_tx_date: Option<NaiveDate>,
     has_data: bool,
 }
 
 impl PerformanceAccumulator {
-    fn update_earliest_tx_date(&mut self, date: NaiveDate) {
-        self.earliest_tx_date = Some(match self.earliest_tx_date {
-            Some(existing) => existing.min(date),
-            None => date,
-        });
-    }
-
     fn add(&mut self, amounts: &PeriodAmounts, flows: &Availability<Vec<CashFlow>>) {
         match (
             &amounts.begin_market_value_base,
@@ -606,6 +591,10 @@ fn open_gain_row(
         cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
             money_string(*v)
         }),
+        performance_start_date: row_performance
+            .start_date
+            .map(|d| d.format("%Y-%m-%d").to_string()),
+        performance_denominator_base: row_performance.denominator_base,
         capital_gain_base: row_performance.capital_gain_base,
         capital_gain_percent: row_performance.capital_gain_percent,
         currency_gain_base: row_performance.currency_gain_base,
@@ -697,6 +686,10 @@ fn closed_gain_row(
         quantity: 0,
         cost_basis_native: money_string(realized.cost_basis_native),
         cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),
+        performance_start_date: row_performance
+            .start_date
+            .map(|d| d.format("%Y-%m-%d").to_string()),
+        performance_denominator_base: row_performance.denominator_base,
         capital_gain_base: row_performance.capital_gain_base,
         capital_gain_percent: row_performance.capital_gain_percent,
         currency_gain_base: row_performance.currency_gain_base,
@@ -961,6 +954,7 @@ mod tests {
         let open_row = &rows[0];
         assert_eq!(open_row["position_status"], "open");
         assert_eq!(open_row["quantity"], 6);
+        assert_available_status(&open_row["performance_denominator_base"]);
         assert_available(&open_row["unrealized_gain_base"], "1908.00");
         assert_available(&open_row["capital_gain_base"], "2175.00");
         assert_available(&open_row["currency_gain_base"], "1000.00");
@@ -994,6 +988,8 @@ mod tests {
         let row = &body["rows"][0];
         assert_eq!(row["instrument"]["symbol"], "MSFT");
         assert_eq!(row["quantity"], 10);
+        assert_eq!(row["performance_start_date"], trade_date);
+        assert_available(&row["performance_denominator_base"], "10000.00");
         assert_eq!(row["cost_basis_native"], "1000.00");
         assert_available(&row["cost_basis_base"], "10000.00");
         assert_available(&row["price_effect_base"], "2200.00");
@@ -1092,6 +1088,53 @@ mod tests {
         assert_available(&body["totals"]["total_return_base"], "3200.00");
         assert_available_status(&body["totals"]["total_return_percent"]);
         assert_eq!(body["totals"]["excluded_rows"], 1);
+    }
+
+    #[tokio::test]
+    async fn gains_all_mode_uses_one_report_start_for_row_denominators() {
+        let state = AppState::for_tests().await;
+        let early_id = instrument(&state, "EARLY", "STO", BASE_CURRENCY).await;
+        let later_id = instrument(&state, "LATER", "STO", BASE_CURRENCY).await;
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":early_id,"type":"Buy","trade_date":"2026-01-01",
+                   "quantity":100,"price":"10","currency":BASE_CURRENCY}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":later_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":100,"price":"10","currency":BASE_CURRENCY}),
+        )
+        .await;
+
+        seed_sek_prices(&state, early_id, "EARLY").await;
+        seed_sek_prices(&state, later_id, "LATER").await;
+
+        let (status, body) = send(&state, "GET", "/api/gains?end_date=2026-06-30", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["report_period"]["start_date"], "2026-01-01");
+
+        let rows = body["rows"].as_array().expect("rows");
+        assert_eq!(rows.len(), 2);
+        let early_row = rows
+            .iter()
+            .find(|row| row["instrument"]["symbol"] == "EARLY")
+            .expect("early row");
+        let later_row = rows
+            .iter()
+            .find(|row| row["instrument"]["symbol"] == "LATER")
+            .expect("later row");
+
+        assert_eq!(early_row["performance_start_date"], "2026-01-01");
+        assert_available(&early_row["performance_denominator_base"], "1000.00");
+        assert_eq!(later_row["performance_start_date"], "2026-01-01");
+        assert_available(&later_row["performance_denominator_base"], "161.11");
     }
 
     #[tokio::test]
@@ -1251,6 +1294,44 @@ mod tests {
         }
     }
 
+    async fn seed_sek_prices(state: &AppState, instrument_id: i64, symbol: &str) {
+        let fetched_at = now_iso8601();
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: PRICE_PROVIDER.to_owned(),
+                provider_symbol: symbol.to_owned(),
+                currency: Some(BASE_CURRENCY.to_owned()),
+                enabled: true,
+                created_at: fetched_at.clone(),
+                updated_at: fetched_at.clone(),
+            },
+        )
+        .await
+        .expect("provider symbol inserted");
+
+        for date in [
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 29).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+        ] {
+            prices::upsert(
+                &state.pool,
+                &prices::NewPrice {
+                    instrument_id,
+                    provider: PRICE_PROVIDER.to_owned(),
+                    provider_symbol: symbol.to_owned(),
+                    date,
+                    close: dec!(12),
+                    currency: BASE_CURRENCY.to_owned(),
+                    fetched_at: fetched_at.clone(),
+                },
+            )
+            .await
+            .expect("price inserted");
+        }
+    }
+
     fn assert_available(value: &serde_json::Value, expected: &str) {
         assert_eq!(value["status"], "available");
         assert_eq!(value["value"], expected);
@@ -1310,9 +1391,19 @@ mod tests {
     #[tokio::test]
     async fn gains_with_no_dates_returns_inception_period() {
         let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "ERIC B", "STO", BASE_CURRENCY).await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-15",
+                   "quantity":10,"price":"100","currency":BASE_CURRENCY}),
+        )
+        .await;
+
         let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body["report_period"]["start_date"].is_null());
+        assert_eq!(body["report_period"]["start_date"], "2026-01-15");
     }
 
     #[tokio::test]
