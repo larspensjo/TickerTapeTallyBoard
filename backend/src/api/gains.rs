@@ -80,6 +80,12 @@ pub struct GainRow {
     pub quantity: i64,
     pub cost_basis_native: String,
     pub cost_basis_base: AvailabilityResponse,
+    pub capital_gain_base: AvailabilityResponse,
+    pub capital_gain_percent: AvailabilityResponse,
+    pub currency_gain_base: AvailabilityResponse,
+    pub currency_gain_percent: AvailabilityResponse,
+    pub total_return_base: AvailabilityResponse,
+    pub total_return_percent: AvailabilityResponse,
     pub price_effect_base: AvailabilityResponse,
     pub fx_effect_base: AvailabilityResponse,
     pub latest_price: Option<PriceSnapshotResponse>,
@@ -189,6 +195,7 @@ pub async fn list(
         let has_period_exposure = period.start_position.quantity > 0
             || !period.period_transactions.is_empty()
             || period.end_position.quantity > 0;
+        let mut row_performance = RowPerformanceResponse::unavailable_empty();
         if has_period_exposure {
             // Track the global earliest for portfolio-level calculation.
             perf_accum.update_earliest_tx_date(effective_start_date);
@@ -206,12 +213,22 @@ pub async fn list(
                 compute_period_amounts(&period, start_price, end_price, start_fx, end_fx, is_sek);
             let cash_flows = period_cash_flows(&period, is_sek);
 
+            row_performance = row_performance_response(
+                &period_amounts,
+                &cash_flows,
+                effective_start_date,
+                end_date,
+            );
             perf_accum.add(&period_amounts, &cash_flows);
         }
 
         if performance.position.quantity == 0 {
             if query.include_closed && performance.realized.sold_quantity > 0 {
-                gain_rows.push(closed_gain_row(instrument, &performance.realized)?);
+                gain_rows.push(closed_gain_row(
+                    instrument,
+                    &performance.realized,
+                    row_performance,
+                )?);
             }
             continue;
         }
@@ -230,7 +247,7 @@ pub async fn list(
 
         valued_holdings.push(valued_holding.clone());
 
-        gain_rows.push(open_gain_row(instrument, &valued_holding)?);
+        gain_rows.push(open_gain_row(instrument, &valued_holding, row_performance)?);
     }
 
     let summary = summarize_holdings(&valued_holdings);
@@ -348,6 +365,113 @@ fn component_percent(gain: Decimal, denominator: &Availability<Decimal>) -> Avai
             reasons: serialize_reasons(reasons),
         },
     }
+}
+
+#[derive(Clone)]
+struct RowPerformanceResponse {
+    capital_gain_base: AvailabilityResponse,
+    capital_gain_percent: AvailabilityResponse,
+    currency_gain_base: AvailabilityResponse,
+    currency_gain_percent: AvailabilityResponse,
+    total_return_base: AvailabilityResponse,
+    total_return_percent: AvailabilityResponse,
+}
+
+impl RowPerformanceResponse {
+    fn unavailable_empty() -> Self {
+        let unavailable = AvailabilityResponse::Unavailable {
+            reasons: Vec::new(),
+        };
+        Self {
+            capital_gain_base: unavailable.clone(),
+            capital_gain_percent: unavailable.clone(),
+            currency_gain_base: unavailable.clone(),
+            currency_gain_percent: unavailable.clone(),
+            total_return_base: unavailable.clone(),
+            total_return_percent: unavailable,
+        }
+    }
+}
+
+fn row_performance_response(
+    amounts: &PeriodAmounts,
+    flows: &Availability<Vec<CashFlow>>,
+    effective_start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> RowPerformanceResponse {
+    let denominator = match (amounts.begin_market_value_base.as_ref(), flows.as_ref()) {
+        (Some(begin), Some(cash_flows)) => {
+            compute_modified_dietz_denominator(*begin, cash_flows, effective_start_date, end_date)
+        }
+        _ => Availability::Unavailable {
+            reasons: merge_response_reasons(&[
+                amounts.begin_market_value_base.reasons(),
+                flows.reasons(),
+            ]),
+        },
+    };
+
+    RowPerformanceResponse {
+        capital_gain_base: serialize_availability(&amounts.capital_gain_base, |v| money_string(*v)),
+        capital_gain_percent: row_component_percent(&amounts.capital_gain_base, &denominator),
+        currency_gain_base: serialize_availability(&amounts.currency_gain_base, |v| {
+            money_string(*v)
+        }),
+        currency_gain_percent: row_component_percent(&amounts.currency_gain_base, &denominator),
+        total_return_base: serialize_availability(&amounts.total_return_base, |v| money_string(*v)),
+        total_return_percent: row_total_return_percent(
+            &amounts.total_return_base,
+            &denominator,
+            (end_date - effective_start_date).num_days(),
+        ),
+    }
+}
+
+fn row_component_percent(
+    amount: &Availability<Decimal>,
+    denominator: &Availability<Decimal>,
+) -> AvailabilityResponse {
+    match (amount.as_ref(), denominator.as_ref()) {
+        (Some(gain), Some(d)) => AvailabilityResponse::Available {
+            value: format!("{:.2}", (*gain / *d) * Decimal::from(100)),
+        },
+        _ => AvailabilityResponse::Unavailable {
+            reasons: serialize_reasons(&merge_response_reasons(&[
+                amount.reasons(),
+                denominator.reasons(),
+            ])),
+        },
+    }
+}
+
+fn row_total_return_percent(
+    amount: &Availability<Decimal>,
+    denominator: &Availability<Decimal>,
+    period_days: i64,
+) -> AvailabilityResponse {
+    match (amount.as_ref(), denominator.as_ref()) {
+        (Some(total), Some(d)) => {
+            let (value, _) = apply_annualisation(*total / *d, period_days);
+            AvailabilityResponse::Available {
+                value: format!("{:.2}", value * Decimal::from(100)),
+            }
+        }
+        _ => AvailabilityResponse::Unavailable {
+            reasons: serialize_reasons(&merge_response_reasons(&[
+                amount.reasons(),
+                denominator.reasons(),
+            ])),
+        },
+    }
+}
+
+fn merge_response_reasons(sources: &[Vec<ValuationReason>]) -> Vec<ValuationReason> {
+    let mut reasons = Vec::new();
+    for source in sources {
+        reasons.extend_from_slice(source);
+    }
+    dedup_valuation_reasons(&mut reasons);
+    reasons
 }
 
 #[derive(Default)]
@@ -473,6 +597,7 @@ impl PerformanceAccumulator {
 fn open_gain_row(
     instrument: &instruments::InstrumentRow,
     valued_holding: &ValuedHolding,
+    row_performance: RowPerformanceResponse,
 ) -> Result<GainRow, ApiError> {
     Ok(GainRow {
         instrument: InstrumentResponse::from_row(instrument)?,
@@ -481,6 +606,12 @@ fn open_gain_row(
         cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
             money_string(*v)
         }),
+        capital_gain_base: row_performance.capital_gain_base,
+        capital_gain_percent: row_performance.capital_gain_percent,
+        currency_gain_base: row_performance.currency_gain_base,
+        currency_gain_percent: row_performance.currency_gain_percent,
+        total_return_base: row_performance.total_return_base,
+        total_return_percent: row_performance.total_return_percent,
         price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
             money_string(*v)
         }),
@@ -537,6 +668,7 @@ fn open_gain_row(
 fn closed_gain_row(
     instrument: &instruments::InstrumentRow,
     realized: &RealizedGain,
+    row_performance: RowPerformanceResponse,
 ) -> Result<GainRow, ApiError> {
     let cost_basis_base = base_amount_availability(&realized.cost_basis_base);
     let gain_base = base_amount_availability(&realized.gain_base);
@@ -565,6 +697,12 @@ fn closed_gain_row(
         quantity: 0,
         cost_basis_native: money_string(realized.cost_basis_native),
         cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),
+        capital_gain_base: row_performance.capital_gain_base,
+        capital_gain_percent: row_performance.capital_gain_percent,
+        currency_gain_base: row_performance.currency_gain_base,
+        currency_gain_percent: row_performance.currency_gain_percent,
+        total_return_base: row_performance.total_return_base,
+        total_return_percent: row_performance.total_return_percent,
         price_effect_base: serialize_base_amount(&realized.price_effect_base),
         fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
         latest_price: None,
@@ -737,6 +875,9 @@ mod tests {
         assert_available(&row["unrealized_gain_percent"], "31.68");
         assert_available(&row["price_effect_base"], "2175.00");
         assert_available(&row["fx_effect_base"], "1000.00");
+        assert_unavailable(&row["capital_gain_base"], &["missing_end_fx"]);
+        assert_unavailable(&row["currency_gain_base"], &["missing_end_fx"]);
+        assert_unavailable(&row["total_return_base"], &["missing_end_fx"]);
     }
 
     #[tokio::test]
@@ -821,6 +962,9 @@ mod tests {
         assert_eq!(open_row["position_status"], "open");
         assert_eq!(open_row["quantity"], 6);
         assert_available(&open_row["unrealized_gain_base"], "1908.00");
+        assert_available(&open_row["capital_gain_base"], "2175.00");
+        assert_available(&open_row["currency_gain_base"], "1000.00");
+        assert_available(&open_row["total_return_base"], "3175.00");
     }
 
     #[tokio::test]
@@ -863,6 +1007,12 @@ mod tests {
         assert_unavailable(&row["proceeds_base"], &[]);
         assert_available(&row["unrealized_gain_base"], "3200.00");
         assert_available(&row["unrealized_gain_percent"], "32.00");
+        assert_available(&row["capital_gain_base"], "2200.00");
+        assert_available(&row["capital_gain_percent"], "22.00");
+        assert_available(&row["currency_gain_base"], "1000.00");
+        assert_available(&row["currency_gain_percent"], "10.00");
+        assert_available(&row["total_return_base"], "3200.00");
+        assert_available(&row["total_return_percent"], "32.00");
         assert_available(&row["day_change_base"], "1650.00");
         assert_available(&row["day_change_percent"], "14.28");
 

@@ -233,9 +233,9 @@ Consequences: Navigation moves from `appView` reducer state to routes; `boardVie
 
 ## 2026-06-19: Sharesight-Style Performance Returns Method
 
-Decision: The Gains view uses Modified Dietz money-weighted performance returns for all percentage totals, replacing cost-basis percentages. The denominator uses calendar-day weights. Component percentages (capital, currency) share the Modified Dietz denominator but are not individually annualised; only `total_return_percent` is annualised when average years invested ≥ 1. Period years are approximated as `period_days / 365.25`.
+Decision: The Gains view uses Modified Dietz money-weighted performance returns for totals and row-level `capital_gain`, `currency_gain`, and `total_return` fields, replacing cost-basis percentages in the comparison-oriented Gains table. The denominator uses calendar-day weights. Component percentages (capital, currency) share the Modified Dietz denominator but are not individually annualised; only `total_return_percent` is annualised when average years invested ≥ 1. Period years are approximated as `period_days / 365.25`.
 Context: Sharesight documents its Performance Report as dollar-weighted / money-weighted using a Modified Dietz variation. Cost-basis ratios were misleading when compared against Sharesight exports.
-Consequences: The Gains API accepts `start_date` and `end_date` query params; missing prices/FX surface as explicit unavailable reasons, never zero. Income/dividends remain unavailable until Phase 5. Row-level percentages retain cost-basis semantics; only totals are Modified Dietz.
+Consequences: The Gains API accepts `start_date` and `end_date` query params; missing prices/FX surface as explicit unavailable reasons, never zero. Income/dividends remain unavailable until Phase 5. The existing row-level `unrealized_*`, `price_effect_base`, and `fx_effect_base` fields remain current-position values for surfaces that need open-exposure semantics.
 
 ## 2026-06-19: Period Reconstruction Boundary Convention
 

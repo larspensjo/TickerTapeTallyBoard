@@ -89,10 +89,10 @@ interface SummaryValue {
 interface GainsColumnSummary {
   costBasisBase: SummaryValue;
   marketValueBase: SummaryValue;
-  unrealizedGainBase: SummaryValue;
-  unrealizedGainPercent: SummaryValue;
-  priceEffectBase: SummaryValue;
-  fxEffectBase: SummaryValue;
+  totalReturnBase: SummaryValue;
+  totalReturnPercent: SummaryValue;
+  capitalGainBase: SummaryValue;
+  currencyGainBase: SummaryValue;
   dayChangeBase: SummaryValue;
   dayChangePercent: SummaryValue;
   incompleteRows: number;
@@ -103,9 +103,9 @@ const columnHelper = createColumnHelper<RowView>();
 const numericColumns = new Set([
   "cost_basis_base",
   "market_value_base",
-  "unrealized_gain_base",
-  "price_effect_base",
-  "fx_effect_base",
+  "total_return_base",
+  "capital_gain_base",
+  "currency_gain_base",
   "day_change_base",
 ]);
 
@@ -216,9 +216,6 @@ function plainSummaryCell(summary: SummaryValue, signed = false) {
 }
 
 function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
-  let unrealizedGainBase = 0;
-  let unrealizedGainCostBasis = 0;
-  let unrealizedPercentRows = 0;
   let dayChangeBase = 0;
   let dayChangePreviousMarketValue = 0;
   let dayChangePercentRows = 0;
@@ -228,9 +225,9 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
     const values = [
       gain.cost_basis_base,
       gain.market_value_base,
-      gain.unrealized_gain_base,
-      gain.price_effect_base,
-      gain.fx_effect_base,
+      gain.total_return_base,
+      gain.capital_gain_base,
+      gain.currency_gain_base,
       gain.day_change_base,
     ];
 
@@ -239,14 +236,6 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
       gain.reasons.length > 0
     ) {
       incompleteRows += 1;
-    }
-
-    const currentUnrealizedGain = availableNumber(gain.unrealized_gain_base);
-    const currentCostBasis = availableNumber(gain.cost_basis_base);
-    if (currentUnrealizedGain !== null && currentCostBasis !== null) {
-      unrealizedGainBase += currentUnrealizedGain;
-      unrealizedGainCostBasis += currentCostBasis;
-      unrealizedPercentRows += 1;
     }
 
     const currentDayChange = availableNumber(gain.day_change_base);
@@ -266,7 +255,7 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
     rows.map(({ gain }) => gain.market_value_base),
   );
   const unrealizedGainBaseSummary = summarizeMoneyValues(
-    rows.map(({ gain }) => gain.unrealized_gain_base),
+    rows.map(({ gain }) => gain.total_return_base),
   );
   const dayChangeBaseSummary = summarizeMoneyValues(
     rows.map(({ gain }) => gain.day_change_base),
@@ -275,19 +264,16 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
   return {
     costBasisBase,
     marketValueBase,
-    unrealizedGainBase: unrealizedGainBaseSummary,
-    unrealizedGainPercent: {
-      value:
-        unrealizedPercentRows > 0 && unrealizedGainCostBasis !== 0
-          ? percentValue((unrealizedGainBase / unrealizedGainCostBasis) * 100)
-          : unavailableValue("base_cost_basis_unavailable"),
-      excludedRows: rows.length - unrealizedPercentRows,
+    totalReturnBase: unrealizedGainBaseSummary,
+    totalReturnPercent: {
+      value: unavailableValue("performance_denominator_unavailable"),
+      excludedRows: rows.length,
     },
-    priceEffectBase: summarizeMoneyValues(
-      rows.map(({ gain }) => gain.price_effect_base),
+    capitalGainBase: summarizeMoneyValues(
+      rows.map(({ gain }) => gain.capital_gain_base),
     ),
-    fxEffectBase: summarizeMoneyValues(
-      rows.map(({ gain }) => gain.fx_effect_base),
+    currencyGainBase: summarizeMoneyValues(
+      rows.map(({ gain }) => gain.currency_gain_base),
     ),
     dayChangeBase: dayChangeBaseSummary,
     dayChangePercent: {
@@ -397,27 +383,27 @@ const columns = [
     sortingFn: availabilitySortRows,
     cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
-  columnHelper.accessor((row) => row.gain.unrealized_gain_base, {
-    id: "unrealized_gain_base",
+  columnHelper.accessor((row) => row.gain.total_return_base, {
+    id: "total_return_base",
     header: () => stackedHeader("Total gain", "SEK + %"),
     sortingFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
         info.getValue(),
-        info.row.original.gain.unrealized_gain_percent,
+        info.row.original.gain.total_return_percent,
       ),
   }),
-  columnHelper.accessor((row) => row.gain.price_effect_base, {
-    id: "price_effect_base",
-    header: () => stackedHeader("Price effect", "SEK"),
+  columnHelper.accessor((row) => row.gain.capital_gain_base, {
+    id: "capital_gain_base",
+    header: () => stackedHeader("Capital gain", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
   }),
-  columnHelper.accessor((row) => row.gain.fx_effect_base, {
-    id: "fx_effect_base",
-    header: () => stackedHeader("FX effect", "SEK"),
+  columnHelper.accessor((row) => row.gain.currency_gain_base, {
+    id: "currency_gain_base",
+    header: () => stackedHeader("Currency gain", "SEK"),
     sortingFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
@@ -486,7 +472,7 @@ export function GainsTable({
   displayPercentKind?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
-    { id: "unrealized_gain_base", desc: true },
+    { id: "total_return_base", desc: true },
   ]);
   const [customStart, setCustomStart] = useState(dateRange.startDate ?? "");
   const [customEnd, setCustomEnd] = useState(dateRange.endDate ?? "");
@@ -515,17 +501,17 @@ export function GainsTable({
             gain.market_value_base.status === "available"
               ? gain.market_value_base.value
               : "",
-            gain.unrealized_gain_base.status === "available"
-              ? gain.unrealized_gain_base.value
+            gain.total_return_base.status === "available"
+              ? gain.total_return_base.value
               : "",
-            gain.unrealized_gain_percent.status === "available"
-              ? gain.unrealized_gain_percent.value
+            gain.total_return_percent.status === "available"
+              ? gain.total_return_percent.value
               : "",
-            gain.price_effect_base.status === "available"
-              ? gain.price_effect_base.value
+            gain.capital_gain_base.status === "available"
+              ? gain.capital_gain_base.value
               : "",
-            gain.fx_effect_base.status === "available"
-              ? gain.fx_effect_base.value
+            gain.currency_gain_base.status === "available"
+              ? gain.currency_gain_base.value
               : "",
             gain.day_change_base.status === "available"
               ? gain.day_change_base.value
@@ -706,15 +692,15 @@ export function GainsTable({
               </td>
               <td>
                 {metricSummaryCell(
-                  summary.unrealizedGainBase,
-                  summary.unrealizedGainPercent,
+                  summary.totalReturnBase,
+                  summary.totalReturnPercent,
                 )}
               </td>
               <td className="number">
-                {plainSummaryCell(summary.priceEffectBase, true)}
+                {plainSummaryCell(summary.capitalGainBase, true)}
               </td>
               <td className="number">
-                {plainSummaryCell(summary.fxEffectBase, true)}
+                {plainSummaryCell(summary.currencyGainBase, true)}
               </td>
               <td>
                 {metricSummaryCell(

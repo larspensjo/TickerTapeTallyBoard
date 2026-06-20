@@ -104,6 +104,12 @@ export interface GainsRow {
   quantity: number;
   cost_basis_native: string;
   cost_basis_base: MoneyValue;
+  capital_gain_base: MoneyValue;
+  capital_gain_percent: PercentValue;
+  currency_gain_base: MoneyValue;
+  currency_gain_percent: PercentValue;
+  total_return_base: MoneyValue;
+  total_return_percent: PercentValue;
   latest_price: PriceSnapshot | null;
   previous_price: PriceSnapshot | null;
   latest_fx: FxSnapshot | null;
