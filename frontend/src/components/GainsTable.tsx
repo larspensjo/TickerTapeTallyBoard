@@ -537,33 +537,37 @@ function GainsTotalsBand({
       : "Performance return";
   return (
     <section className="gains-totals" aria-label="Gains totals">
-      <span className="gains-totals-method">{label}</span>
-      <GainsTotalMetric
-        label="Capital gain"
-        percent={totals.capital_gain_percent}
-        amount={totals.capital_gain_base}
-      />
-      <GainsTotalMetric
-        label="Income"
-        percent={totals.income_percent}
-        amount={totals.income_base}
-        unavailableLabel="Not tracked"
-      />
-      <GainsTotalMetric
-        label="Currency gain"
-        percent={totals.currency_gain_percent}
-        amount={totals.currency_gain_base}
-      />
-      <GainsTotalMetric
-        label="Total return"
-        percent={totals.total_return_percent}
-        amount={totals.total_return_base}
-      />
-      {totals.excluded_rows > 0 ? (
-        <span className="status-chip warning gains-totals-warning">
-          {formatGroupedNumber(totals.excluded_rows)} incomplete
-        </span>
-      ) : null}
+      <div className="gains-totals-header">
+        <span className="gains-totals-method">{label}</span>
+        {totals.excluded_rows > 0 ? (
+          <span className="status-chip warning gains-totals-warning">
+            {formatGroupedNumber(totals.excluded_rows)} incomplete
+          </span>
+        ) : null}
+      </div>
+      <div className="gains-totals-grid">
+        <GainsTotalMetric
+          label="Capital gain"
+          percent={totals.capital_gain_percent}
+          amount={totals.capital_gain_base}
+        />
+        <GainsTotalMetric
+          label="Income"
+          percent={totals.income_percent}
+          amount={totals.income_base}
+          unavailableLabel="Not tracked"
+        />
+        <GainsTotalMetric
+          label="Currency gain"
+          percent={totals.currency_gain_percent}
+          amount={totals.currency_gain_base}
+        />
+        <GainsTotalMetric
+          label="Total return"
+          percent={totals.total_return_percent}
+          amount={totals.total_return_base}
+        />
+      </div>
     </section>
   );
 }

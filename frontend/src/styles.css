@@ -640,13 +640,31 @@ tbody tr:last-child td {
 }
 
 .gains-totals {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.gains-totals-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.gains-totals-method {
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.gains-totals-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   align-items: stretch;
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--hairline);
 }
 
 .gains-total-metric {
@@ -693,12 +711,6 @@ tbody tr:last-child td {
 .gains-total-amount .number {
   color: inherit;
   font-size: inherit;
-}
-
-.gains-totals-warning {
-  position: absolute;
-  right: var(--space-4);
-  bottom: var(--space-3);
 }
 
 .side-panel {
@@ -1051,7 +1063,7 @@ th.number-head .sort-button {
     justify-content: flex-start;
   }
 
-  .gains-totals {
+  .gains-totals-grid {
     grid-template-columns: 1fr;
     gap: var(--space-4);
   }
@@ -1061,9 +1073,9 @@ th.number-head .sort-button {
     border-left: 0;
   }
 
-  .gains-totals-warning {
-    position: static;
-    width: fit-content;
+  .gains-totals-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .segmented-control {
