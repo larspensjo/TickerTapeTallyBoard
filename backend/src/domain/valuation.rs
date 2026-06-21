@@ -45,6 +45,7 @@ pub enum ValuationReason {
     MissingTransactionPrice { transaction_id: i64 },
     MissingTransactionFx { transaction_id: i64 },
     ZeroOrInvalidPerformanceDenominator,
+    PerformanceDidNotConverge,
 }
 
 #[derive(Clone, Debug, PartialEq)]

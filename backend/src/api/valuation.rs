@@ -222,6 +222,7 @@ pub(super) fn serialize_valuation_reason(reason: &ValuationReason) -> String {
         ValuationReason::ZeroOrInvalidPerformanceDenominator => {
             "zero_or_invalid_performance_denominator".to_string()
         }
+        ValuationReason::PerformanceDidNotConverge => "performance_did_not_converge".to_string(),
     }
 }
 
