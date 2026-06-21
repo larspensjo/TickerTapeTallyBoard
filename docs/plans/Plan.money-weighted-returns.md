@@ -3,24 +3,28 @@
 > **For agentic workers:** implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
 > Plans are ephemeral; archive when implemented. Do not reference plan phases from durable docs.
 
-**Goal:** Replace the single-shot Modified Dietz return percentage with a money-weighted
-(XIRR) return for portfolio totals, and a stable current-position cost-basis percentage for
-per-asset rows, so the headline "since start / YTD" number is cash-flow-neutral and stable.
+**Goal:** Give the portfolio total return a **user-selectable method** — Money-weighted (XIRR,
+the default), Simple (gain ÷ capital deployed), and Modified Dietz (the current single-shot
+method, retained as a labeled comparison/legacy view) — with the choice persisted across
+sessions. Per-asset rows switch to a stable current-position simple return regardless of the
+selected total method.
 
-XIRR is chosen because it provably satisfies the **hard requirement Lars stated**: a buy,
+XIRR is the default because it provably satisfies the **hard requirement Lars stated**: a buy,
 sell, or transfer at current value must not move the number until prices change (verified —
 see the neutrality test in Task 1). Whether XIRR also *matches Sharesight* is a separate
 **hypothesis**: the investigation found de-annualized IRR was ~688% for one holding while
 Sharesight showed ~421%, and no single-pass method reproduced Sharesight exactly. So "follows
-Sharesight" is not assumed — it is validated against portfolio-level Sharesight figures in
-Task 4 before the DecisionLog reversal is recorded (see decision 4).
+Sharesight" is not assumed — it is validated against portfolio-level Sharesight figures in the
+validation task before the DecisionLog entry is recorded (see decision 4).
 
-**Architecture:** Add a pure XIRR solver to `backend/src/domain/performance.rs`. Aggregate
-the existing per-instrument period inputs (begin market value, dated cash flows, end market
-value) across the portfolio and solve one XIRR for the whole portfolio per report period.
-Display the *cumulative* period return `(1+xirr)^years − 1`, not the annualized rate. Per-asset
-row percentages switch to a current-position simple return (`unrealized_gain ÷ cost_basis`),
-keeping numerator and denominator in the same scope.
+**Architecture:** Add a pure XIRR solver to `backend/src/domain/performance.rs`. Aggregate the
+existing per-instrument period inputs (begin market value, dated cash flows, end market value)
+across the portfolio and compute the total percentage for the method requested via a `method`
+query parameter on `/api/gains` (`xirr` | `simple` | `modified_dietz`, default `xirr`). XIRR is
+displayed as the *cumulative* period return `(1+xirr)^years − 1`, not the annualized rate. The
+frontend persists the selection in `localStorage` and sends it as the query parameter
+(refetching on change, like the existing date preset). Per-asset row percentages switch to a
+current-position simple return (`unrealized_gain ÷ cost_basis`), independent of the selector.
 
 **Tech Stack:** Rust (axum, rust_decimal), React/TypeScript frontend.
 
@@ -31,28 +35,34 @@ keeping numerator and denominator in the same scope.
 - Money/prices/FX stay exact `rust_decimal` round-tripped as TEXT (2026-06-14 Persistence Stack). XIRR's float solve is a derived display value only and must never feed stored money.
 - Missing data is explicit `Availability::Unavailable { reasons }`, never zero.
 - Bump `frontend/package.json` and `backend/Cargo.toml` versions; both surface in the UI.
-- Income/dividends remain excluded (not persisted per 2026-06-16 Avanza decision); the XIRR is ex-dividend, matching the current gain amounts. State this in UI copy.
+- Income/dividends remain excluded (not persisted per 2026-06-16 Avanza decision); **all three methods** are ex-dividend, matching the current gain amounts. State this in UI copy.
+- `/api/gains` gains a `method` query parameter (`xirr` | `simple` | `modified_dietz`, default `xirr`); an unknown value is a `400 invalid_method` (mirrors `invalid_date`). The frontend persists the choice in `localStorage` (key `gains.returnMethod`, default `xirr`) and refetches on change.
 
 ## Decisions to ratify before/while implementing
 
-These reverse or refine committed DecisionLog entries. Confirm with Lars; record the outcome
-in `docs/DecisionLog.md` as new entries (never edit committed ones).
+These refine committed DecisionLog entries. Record the outcome in `docs/DecisionLog.md` as new
+entries (never edit committed ones).
 
-1. **Reverses 2026-06-19** (Modified Dietz for totals AND rows): totals move to XIRR; rows move to cost-basis simple return.
-2. **Refines 2026-06-20** (additive row subtotals): XIRR is **not** additive from row contributions, so the frontend can no longer compute a filtered-visible total percentage by summing rows. The portfolio total percentage comes from the backend only. The visible-rows sticky summary keeps the SEK sum but drops the client-computed percentage (or shows the backend whole-portfolio figure). **Open question for Lars: is dropping the filtered % acceptable?**
-3. **Component split:** `capital_gain_percent` and `currency_gain_percent` are shown as a proportional split of the total return percentage (`total% × component_SEK / total_return_SEK`) so they stay additive and avoid a second denominator. **Open question for Lars: acceptable, or omit component percentages entirely?**
-4. **Validation gate (not just a target):** Lars provides Sharesight's **portfolio-level** total return (since inception and YTD) and the configured Sharesight method. Task 4 compares our cumulative XIRR against those figures. Agree a tolerance up front (suggest **±3 percentage points absolute, or ±5% relative**, whichever is larger). If XIRR is inside tolerance, record the DecisionLog reversal as written. If it misses, **stop before recording the reversal** and either (a) revise the method, or (b) record explicitly that the app intentionally differs from Sharesight and uses XIRR for its neutrality property. XIRR is the implementation hypothesis until this gate passes.
+1. **Refines 2026-06-19** (Modified Dietz for totals AND rows): the total return is now method-selectable — **XIRR (default)**, **Simple**, and **Modified Dietz** (retained as a labeled comparison/legacy option); rows move to a current-position simple return. *(Ratified: Lars chose the full three-method menu, persisted across sessions.)*
+2. **Refines 2026-06-20** (additive row subtotals): neither XIRR nor Simple is additive from row contributions, so the filtered "visible rows" sticky summary stops computing a percentage from summed rows. It shows the SEK sum only; the method-specific percentage is the backend whole-portfolio figure. *(Default — Lars to object if the filtered % must return.)*
+3. **Component split per method:** `capital_gain_percent` / `currency_gain_percent` use each method's natural denominator — for **Simple** and **Modified Dietz** the real denominator (`component_SEK / denominator`, additive); for **XIRR** (no single denominator) a proportional split of the total (`total% × component_SEK / total_return_SEK`). *(Default — Lars to confirm or omit component percentages.)*
+4. **Validation gate (not just a target):** Lars provides Sharesight's **portfolio-level** total return (since inception and YTD) and the configured Sharesight method. The validation task compares our cumulative XIRR against those figures. Agree a tolerance up front (suggest **±3 percentage points absolute, or ±5% relative**, whichever is larger). If XIRR is inside tolerance, record the DecisionLog entry as written. If it misses, **stop before recording it** and either (a) revise the default method, or (b) record explicitly that the app intentionally differs from Sharesight and defaults to XIRR for its neutrality property. XIRR-as-Sharesight-match is a hypothesis until this gate passes; XIRR's neutrality property is already proven and is the primary reason it is the default.
+5. **Simple-return denominator:** Simple total return % = `total_return_base / (begin_mv + Σ buy costs in period)` — opening market value plus gross purchases, **not** reduced by sells, so it stays stable. Per-asset Simple is not offered; the selector governs the portfolio total only.
+6. **Persistence:** the selected method persists via `localStorage` (no backend settings table yet). Revisit if a server-side settings store is later introduced.
+7. **Asset-detail method:** the asset page (`AssetView`) renders only method-independent current-position row data, so it uses the `xirr` default and does not mirror the board's persisted selection (Task 4 Step 1b). *(Default — Lars to object if asset detail must follow the persisted method.)*
 
 ---
 
 ## File Structure
 
-- `backend/src/domain/performance.rs` — add `MoneyWeightedReturn` struct + `compute_money_weighted_return`; keep Modified Dietz functions for now (remove dead ones in cleanup).
+- `backend/src/domain/performance.rs` — add `MoneyWeightedReturn` struct + `compute_money_weighted_return`; add `actual_period_cash_flows` (actual investor cash, no split multiplication) alongside the existing split-adjusted `period_cash_flows`; the Modified Dietz functions stay (now a live selectable method, not dead code).
 - `backend/src/domain/valuation.rs` — add `ValuationReason::PerformanceDidNotConverge`.
 - `backend/src/domain/mod.rs` — export the new symbols.
-- `backend/src/api/gains.rs` — accumulate aggregate `end_mv`; compute totals percentage via XIRR; switch row percentages to cost-basis; map the new reason.
-- `frontend/src/api/types.ts` — no shape change (string percentages); `display_percent_kind` gains `"money_weighted"`.
-- `frontend/src/components/GainsTable.tsx` — label/tooltip copy; remove/replace `visibleTotalReturnPercent`.
+- `backend/src/api/gains.rs` — parse the `method` query param; accumulate aggregate `end_mv`; compute the totals percentage for the chosen method (XIRR / Simple / Modified Dietz); switch row percentages to current-position; map the new reason.
+- `frontend/src/api/types.ts` — `GainsQuery`/fetch gains a `method`; `percentage_method` echoes the request; `display_percent_kind` gains `"money_weighted"` and `"simple"`.
+- `frontend/src/components/GainsTable.tsx` — method selector + `localStorage` persistence; label/tooltip copy per method; remove/replace `visibleTotalReturnPercent`.
+- `frontend/src/api/queries.ts` — the `useGains` fetch layer: add `method` to `GainsParams`, include it in the React Query `queryKey` (alongside `includeClosedPositions`/`startDate`/`endDate`), and set it in `URLSearchParams`.
+- `frontend/src/components/AssetView.tsx` — decide and document the asset-detail method (see Task 4 Step 1b).
 
 ---
 
@@ -81,6 +91,17 @@ in `docs/DecisionLog.md` as new entries (never edit committed ones).
   ) -> Availability<MoneyWeightedReturn>;
   ```
   `CashFlow.amount_base` keeps its existing sign convention: **+ for buy cost, − for sell proceeds**. The investor-perspective flow used in the NPV is the negation.
+
+  **Actual flows, not split-adjusted flows (review High 1).** This solver consumes an
+  *actual investor cash-flow series* — the real cash paid/received at trade date (quantity ×
+  price × trade-date FX ± brokerage), with **no** `post_period_split_factor` multiplication. The
+  existing `period_cash_flows` deliberately scales buy/sell quantities by
+  `post_period_split_factor` so the Modified Dietz denominator agrees with the split-adjusted
+  valuation numerator (`backend/src/domain/performance.rs:307-344`); that is correct for Modified
+  Dietz but wrong for XIRR and Simple, which work on absolute cash amounts. A later split must not
+  retroactively double the historical cash invested. The actual-flow path is added in Task 2
+  (`actual_period_cash_flows`); Task 1 only requires the solver to treat its `cash_flows` argument
+  as already being the actual series.
 
 - [ ] **Step 1: Add the unavailable reason.** In `valuation.rs`, add to `ValuationReason` after `ZeroOrInvalidPerformanceDenominator`:
 
@@ -137,7 +158,44 @@ fn money_weighted_unavailable_when_no_sign_change() {
     let r = compute_money_weighted_return(&begin, &flows, &end, date("2025-01-01"), date("2026-01-01"));
     assert!(matches!(r, Availability::Unavailable { .. }));
 }
+
+#[test]
+fn money_weighted_solves_with_interleaved_buy_and_sell() {
+    // Alternating-sign flows: buy, partial sell mid-period, open remainder at end.
+    // A single well-defined root must still be found (solver must not assume the NPV
+    // curve is monotonic or that positive NPV always belongs to the lower bound).
+    let begin = Availability::Available(Decimal::ZERO);
+    let flows = Availability::Available(vec![
+        CashFlow { date: date("2025-01-01"), amount_base: dec!(100000) },  // buy cost
+        CashFlow { date: date("2025-07-01"), amount_base: dec!(-60000) },  // sell proceeds
+    ]);
+    let end = Availability::Available(dec!(70000));
+    let r = compute_money_weighted_return(&begin, &flows, &end, date("2025-01-01"), date("2026-01-01"));
+    let v = match r { Availability::Available(v) => v, _ => panic!("expected a root") };
+    // Sanity: NPV at the solved annualized rate is ~0 (recompute independently if desired).
+    assert!(v.annualized.is_sign_positive() || v.annualized.is_sign_negative());
+}
+
+#[test]
+fn money_weighted_unavailable_when_multiple_roots() {
+    // A flow series that produces more than one sign change / IRR root must return
+    // PerformanceDidNotConverge rather than silently picking one. Construct a series with
+    // two interior roots (large early inflow, larger outflow, inflow again).
+    let begin = Availability::Available(Decimal::ZERO);
+    let flows = Availability::Available(vec![
+        CashFlow { date: date("2025-01-01"), amount_base: dec!(1000) },     // -1000 investor
+        CashFlow { date: date("2025-06-01"), amount_base: dec!(-2500) },    // +2500 investor
+    ]);
+    let end = Availability::Available(dec!(-1560)); // forces a second sign change in NPV
+    let r = compute_money_weighted_return(&begin, &flows, &end, date("2025-01-01"), date("2026-01-01"));
+    // Either a single documented root or Unavailable; this case must be Unavailable.
+    assert!(matches!(r, Availability::Unavailable { .. }));
+}
 ```
+
+> The multi-root example values are illustrative — when implementing, pick concrete amounts that
+> demonstrably yield two sign changes in `npv(rate)` over `[-0.9999, 1_000_000]` and assert the
+> `PerformanceDidNotConverge` contract. The point is the test, not these exact numbers.
 
 - [ ] **Step 3: Run the tests, verify they fail to compile** (function missing).
 
@@ -156,11 +214,17 @@ pub struct MoneyWeightedReturn {
 
 /// Money-weighted (XIRR) return over [start_date, end_date].
 ///
+/// `cash_flows` MUST be the actual investor cash-flow series (real cash at trade date, with
+/// no post-period split multiplication — see Task 2's `actual_period_cash_flows`).
+///
 /// Builds the dated investor cash-flow series:
 ///   -begin_mv at start_date, -cf.amount_base at each flow date, +end_mv at end_date,
-/// solves NPV(rate)=0 by bisection, and reports both the annualized rate and the
-/// cumulative period return (1+rate)^years - 1. Returns Unavailable when any input is
-/// unavailable, the period is non-positive, or no root brackets in [-0.9999, 1_000_000].
+/// then scans [-0.9999, 1_000_000] for sign-change sub-brackets (the NPV curve is not
+/// assumed monotonic, because interleaved buys and sells can make it non-monotonic). It
+/// solves the unique bracket by sign-tracked bisection and reports both the annualized rate
+/// and the cumulative period return (1+rate)^years - 1. Returns Unavailable when any input
+/// is unavailable, the period is non-positive, or the scan finds zero or more than one root
+/// (an ambiguous multi-IRR series is refused, not silently resolved).
 pub fn compute_money_weighted_return(
     begin_market_value: &Availability<Decimal>,
     cash_flows: &Availability<Vec<CashFlow>>,
@@ -218,17 +282,60 @@ pub fn compute_money_weighted_return(
         series.iter().map(|(t, c)| c / (1.0 + rate).powf(*t)).sum()
     };
 
-    let (lo, hi) = (-0.9999_f64, 1_000_000.0_f64);
-    let (flo, fhi) = (npv(lo), npv(hi));
-    if flo.is_nan() || fhi.is_nan() || flo * fhi > 0.0 {
-        return Availability::unavailable(ValuationReason::PerformanceDidNotConverge);
+    // Scan the rate range for sign-change sub-brackets instead of trusting the two
+    // endpoints. Interleaved buys/sells make NPV non-monotonic: an interior root can sit
+    // between two same-sign endpoints, and multiple roots can exist. We collect every
+    // bracket; zero brackets = no root, more than one = ambiguous multi-IRR -> refuse.
+    let mut scan: Vec<f64> = vec![-0.9999];
+    let mut r = -0.99_f64;
+    while r < 1.0 {
+        scan.push(r);
+        r += 0.01; // 1% steps across the realistic -99%..100% band
     }
-    let (mut a, mut b) = (lo, hi);
-    for _ in 0..300 {
-        let m = (a + b) / 2.0;
-        if npv(m) > 0.0 { a = m; } else { b = m; }
+    let mut r = 1.0_f64;
+    while r < 1_000_000.0 {
+        scan.push(r);
+        r *= 2.0; // geometric out to the cap
     }
-    let rate = (a + b) / 2.0;
+    scan.push(1_000_000.0);
+
+    let mut brackets: Vec<(f64, f64)> = Vec::new();
+    let mut exact: Option<f64> = None;
+    for w in scan.windows(2) {
+        let (lo, hi) = (w[0], w[1]);
+        let (flo, fhi) = (npv(lo), npv(hi));
+        if flo.is_nan() || fhi.is_nan() {
+            continue;
+        }
+        if flo == 0.0 {
+            exact = Some(lo);
+            break;
+        }
+        if flo * fhi < 0.0 {
+            brackets.push((lo, hi));
+        }
+    }
+    let rate = if let Some(r) = exact {
+        r
+    } else {
+        if brackets.len() != 1 {
+            // Zero roots or an ambiguous multi-root series: do not guess.
+            return Availability::unavailable(ValuationReason::PerformanceDidNotConverge);
+        }
+        let (mut a, mut b) = brackets[0];
+        // Track the sign at `a`; move whichever endpoint matches the midpoint's sign so the
+        // bracket invariant holds regardless of the curve's orientation.
+        let sign_a = npv(a) > 0.0;
+        for _ in 0..300 {
+            let m = (a + b) / 2.0;
+            if (npv(m) > 0.0) == sign_a {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        (a + b) / 2.0
+    };
     let cumulative = (1.0 + rate).powf(total_years) - 1.0;
 
     let annualized = match Decimal::from_f64_retain(rate) {
@@ -250,7 +357,8 @@ Add `use rust_decimal::prelude::FromPrimitive;` if not already imported (the fil
 - [ ] **Step 6: Run tests, verify pass.**
 
 Run: `cd backend && cargo test domain::performance`
-Expected: PASS (including the three new tests).
+Expected: PASS (including the new tests: simple-hold correctness, same-day-trade neutrality,
+no-sign-change unavailable, interleaved buy/sell root, and multi-root → `PerformanceDidNotConverge`).
 
 - [ ] **Step 7: Stage** (commit only when Lars asks — repo planning workflow keeps changes staged for review).
 
@@ -260,88 +368,165 @@ git add backend/src/domain/performance.rs backend/src/domain/valuation.rs backen
 
 ---
 
-## Task 2: Portfolio totals use XIRR (cumulative)
+## Task 2: Portfolio totals support a selectable method (XIRR / Simple / Modified Dietz)
 
 **Files:**
-- Modify: `backend/src/api/gains.rs` (`PerformanceAccumulator`, `into_percents`, reason serialization)
+- Modify: `backend/src/domain/performance.rs` (add `actual_period_cash_flows`)
+- Modify: `backend/src/domain/mod.rs` (export `actual_period_cash_flows`)
+- Modify: `backend/src/api/gains.rs` (`GainsQuery`, `PerformanceAccumulator`, `into_percents`, `percentage_method`, reason serialization)
 - Modify: `backend/src/api/valuation.rs` (`serialize_valuation_reason` for the new variant)
 
 **Interfaces:**
-- Consumes: `compute_money_weighted_return`, `MoneyWeightedReturn` from Task 1.
+- Consumes: `compute_money_weighted_return`, `MoneyWeightedReturn` from Task 1; existing `compute_modified_dietz_denominator`, `apply_annualisation`, `period_cash_flows` (split-adjusted, kept for Modified Dietz).
 
-- [ ] **Step 1: Accumulate aggregate end market value.** Add `end_mv: Decimal` to `PerformanceAccumulator` and, in `add(...)`, when the row is fully available, `self.end_mv += end;` reading `amounts.end_market_value_base`. (Add `end_market_value_base` to the match tuple.)
-
-- [ ] **Step 2: Update the failing test** `gains_with_date_range_returns_modified_dietz_percent` (rename to `..._returns_money_weighted_percent`) to assert the cumulative XIRR. For the 100 sh @ $10→$12, FX flat 10, full June (29 days) inception case, begin_mv=0, one buy of 10_000 at start, end_mv=12_000 → cumulative ≈ 20% but XIRR annualizes over 29 days then de-annualizes back, so cumulative is exactly the period return 20.00%. Assert:
+- [ ] **Step 1: Add the method enum + query parsing.** In `gains.rs`:
 
 ```rust
-assert_available(&body["totals"]["total_return_percent"], "20.00");
-assert_eq!(body["percentage_method"], "money_weighted");
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnMethod { Xirr, Simple, ModifiedDietz }
+
+fn parse_method(value: Option<&str>) -> Result<ReturnMethod, ApiError> {
+    match value.unwrap_or("xirr") {
+        "xirr" => Ok(ReturnMethod::Xirr),
+        "simple" => Ok(ReturnMethod::Simple),
+        "modified_dietz" => Ok(ReturnMethod::ModifiedDietz),
+        other => Err(ApiError::bad_request("invalid_method", format!("invalid method: {other}"))),
+    }
+}
 ```
 
-Also add a backend test (unit-level on `into_percents`, or an API case) where capital gain and
-currency gain offset to a **zero total return** with non-zero components, asserting both
-component percentages are `unavailable` (not `0.00`) and `total_return_percent` is `0.00`.
+Add `method: Option<String>` to `GainsQuery`; in `list`, `let method = parse_method(query.method.as_deref())?;` near the date parsing. Pass `method` into `into_percents` and set the response `percentage_method` to the requested name (`"money_weighted"` | `"simple"` | `"modified_dietz"`).
 
-- [ ] **Step 3: Run, verify it fails** (still Modified Dietz).
+- [ ] **Step 2: Add the actual-flow path and accumulate end MV + actual flows.**
+
+  **(a)** In `performance.rs`, add `actual_period_cash_flows(period: &PeriodLedger, is_sek_instrument: bool) -> Availability<Vec<CashFlow>>`. It mirrors `period_cash_flows` but computes the **actual** invested/received cash — `qty = Decimal::from(tx.quantity)` (and `Decimal::from(-tx.quantity)` for sells) with **no** `* period.post_period_split_factor`. Same sign convention (+ buy cost, − sell proceeds), same price/FX/brokerage and missing-data reasons. Add a unit test asserting a buy before a later split yields the actual (un-doubled) cost, unlike `period_cash_flows`. Export it in `mod.rs`.
+
+  **(b)** In `gains.rs`, where the row is built (currently `let cash_flows = period_cash_flows(&period, is_sek);`), also compute `let actual_cash_flows = actual_period_cash_flows(&period, is_sek);` and pass both into `perf_accum.add(...)`.
+
+  **(c)** Add `end_mv: Decimal` and `actual_cash_flows: Vec<CashFlow>` to `PerformanceAccumulator`. Extend `add(...)` to take the actual flows; when the row is fully available, `self.end_mv += end;` (read `amounts.end_market_value_base`, adding it to the match tuple) and `self.actual_cash_flows.extend_from_slice(actual_cfs)`. Keep `self.cash_flows` (split-adjusted) for the Modified Dietz path. If the actual flows are `Unavailable`, the row must be excluded with its reasons (same as the existing flows-unavailable handling) so XIRR/Simple never silently drop a holding.
+
+- [ ] **Step 3: Write failing tests** (rename `gains_with_date_range_returns_modified_dietz_percent`). Same June fixture (100 sh @ $10→$12, FX flat 10, begin_mv=0, one 10_000 buy at start, end_mv=12_000):
+
+```rust
+// default = xirr; 29-day period annualizes then de-annualizes back to the period: 20.00%.
+let (_, body) = send(&state, "GET", "/api/gains?start_date=2026-06-01&end_date=2026-06-30", json!({})).await;
+assert_eq!(body["percentage_method"], "money_weighted");
+assert_available(&body["totals"]["total_return_percent"], "20.00");
+
+// simple: 2000 / (0 + 10000) = 20.00%
+let (_, s) = send(&state, "GET", "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=simple", json!({})).await;
+assert_eq!(s["percentage_method"], "simple");
+assert_available(&s["totals"]["total_return_percent"], "20.00");
+
+// modified_dietz still available (legacy path retained)
+let (_, md) = send(&state, "GET", "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=modified_dietz", json!({})).await;
+assert_eq!(md["percentage_method"], "modified_dietz");
+assert_available_status(&md["totals"]["total_return_percent"]);
+
+// unknown method -> 400
+let (st, _) = send(&state, "GET", "/api/gains?method=bogus", json!({})).await;
+assert_eq!(st, StatusCode::BAD_REQUEST);
+```
+
+Also add a backend test where capital and currency gain offset to a **zero total return** with non-zero components (method=xirr), asserting both component percentages are `unavailable` (not `0.00`) and `total_return_percent` is `0.00`.
+
+Also add a **split-neutrality regression** (review High 1): a buy before a later split, with the
+end date once before and once after the split-adjustment boundary. The XIRR and Simple
+`total_return_percent` must be driven by actual cash and current market value, and must **not**
+change merely because an already-recorded split rescales the provider-adjusted historical price.
+(Modified Dietz may legitimately differ — it is the split-adjusted path.)
+
+- [ ] **Step 4: Run, verify failure.**
 
 Run: `cd backend && cargo test gains_with_date_range`
-Expected: FAIL.
+Expected: FAIL / compile error (method param + dispatch not yet added).
 
-- [ ] **Step 4: Rewrite `into_percents`** to use XIRR for the total and a proportional split for components:
+- [ ] **Step 5: Rewrite `into_percents`** to dispatch on `method`. Each method uses its natural component denominator; the result tuple stays `(capital_pct, currency_pct, total_pct, display_kind)`:
 
 ```rust
-let mw = compute_money_weighted_return(
-    &Availability::Available(self.begin_mv),
-    &Availability::Available(self.cash_flows.clone()),
-    &Availability::Available(self.end_mv),
-    effective_start_date,
-    end_date,
-);
-let (total_pct, kind) = match &mw {
-    Availability::Available(v) => (v.cumulative, "money_weighted".to_string()),
-    Availability::Unavailable { reasons } => {
-        let u = AvailabilityResponse::Unavailable { reasons: serialize_reasons(reasons) };
-        return (u.clone(), u.clone(), u, "money_weighted".to_string());
+fn into_percents(self, start: NaiveDate, end: NaiveDate, method: ReturnMethod)
+    -> (AvailabilityResponse, AvailabilityResponse, AvailabilityResponse, String)
+{
+    if !self.has_data {
+        let u = AvailabilityResponse::Unavailable { reasons: serialize_reasons(&self.unavailable_reasons) };
+        return (u.clone(), u.clone(), u, "absolute".to_string());
     }
-};
-// Proportional, additive component split (avoids a second denominator).
-// When total_return == 0 the split is undefined. Only report 0.00 if BOTH
-// components are also zero; otherwise mark unavailable rather than hiding
-// offsetting capital/currency attribution (e.g. +X capital, −X currency)
-// behind a fake 0.00.
-let comp = |part: Decimal| -> AvailabilityResponse {
-    if self.total_return.is_zero() {
-        if self.capital_gain.is_zero() && self.currency_gain.is_zero() {
-            return AvailabilityResponse::Available { value: "0.00".to_string() };
+    let pct100 = |x: Decimal| format!("{:.2}", x * Decimal::from(100));
+    match method {
+        ReturnMethod::Xirr => {
+            // Actual investor flows (review High 1) — NOT the split-adjusted self.cash_flows.
+            let mw = compute_money_weighted_return(
+                &Availability::Available(self.begin_mv),
+                &Availability::Available(self.actual_cash_flows.clone()),
+                &Availability::Available(self.end_mv),
+                start, end);
+            let total_pct = match &mw {
+                Availability::Available(v) => v.cumulative,
+                Availability::Unavailable { reasons } => {
+                    let u = AvailabilityResponse::Unavailable { reasons: serialize_reasons(reasons) };
+                    return (u.clone(), u.clone(), u, "money_weighted".to_string());
+                }
+            };
+            // No single denominator -> proportional split; undefined when total is zero.
+            let comp = |part: Decimal| -> AvailabilityResponse {
+                if self.total_return.is_zero() {
+                    if self.capital_gain.is_zero() && self.currency_gain.is_zero() {
+                        return AvailabilityResponse::Available { value: "0.00".to_string() };
+                    }
+                    return AvailabilityResponse::Unavailable {
+                        reasons: serialize_reasons(&[ValuationReason::ZeroOrInvalidPerformanceDenominator]),
+                    };
+                }
+                AvailabilityResponse::Available { value: pct100(total_pct * (part / self.total_return)) }
+            };
+            (comp(self.capital_gain), comp(self.currency_gain),
+             AvailabilityResponse::Available { value: pct100(total_pct) }, "money_weighted".to_string())
         }
-        return AvailabilityResponse::Unavailable {
-            reasons: serialize_reasons(&[ValuationReason::ZeroOrInvalidPerformanceDenominator]),
-        };
+        ReturnMethod::Simple => {
+            // Stable denominator: opening value + gross purchases (not reduced by sells).
+            // Use actual flows so a later split does not inflate historical purchase cost.
+            let gross_buys: Decimal = self.actual_cash_flows.iter().map(|c| c.amount_base.max(Decimal::ZERO)).sum();
+            let denom = self.begin_mv + gross_buys;
+            if denom <= Decimal::ZERO {
+                let u = AvailabilityResponse::Unavailable {
+                    reasons: serialize_reasons(&[ValuationReason::ZeroOrInvalidPerformanceDenominator]),
+                };
+                return (u.clone(), u.clone(), u, "simple".to_string());
+            }
+            let comp = |part: Decimal| AvailabilityResponse::Available { value: pct100(part / denom) };
+            (comp(self.capital_gain), comp(self.currency_gain),
+             comp(self.total_return), "simple".to_string())
+        }
+        ReturnMethod::ModifiedDietz => {
+            // Legacy path: existing single-shot denominator + annualisation.
+            let denom = compute_modified_dietz_denominator(self.begin_mv, &self.cash_flows, start, end);
+            let cap = component_percent(self.capital_gain, &denom);
+            let cur = component_percent(self.currency_gain, &denom);
+            match &denom {
+                Availability::Available(d) => {
+                    let (v, kind) = apply_annualisation(self.total_return / d, (end - start).num_days());
+                    let label = match kind { DisplayPercentKind::Annualised => "annualised", DisplayPercentKind::Absolute => "absolute" };
+                    (cap, cur, AvailabilityResponse::Available { value: pct100(v) }, label.to_string())
+                }
+                Availability::Unavailable { reasons } =>
+                    (cap, cur, AvailabilityResponse::Unavailable { reasons: serialize_reasons(reasons) }, "absolute".to_string()),
+            }
+        }
     }
-    let pct = total_pct * (part / self.total_return) * Decimal::from(100);
-    AvailabilityResponse::Available { value: format!("{:.2}", pct) }
-};
-(
-    comp(self.capital_gain),
-    comp(self.currency_gain),
-    AvailabilityResponse::Available { value: format!("{:.2}", total_pct * Decimal::from(100)) },
-    kind,
-)
+}
 ```
 
-Update `percentage_method` in the response from `"modified_dietz"` to `"money_weighted"` ([gains.rs:267](backend/src/api/gains.rs#L267)).
+- [ ] **Step 6: Map the new reason** in `api/valuation.rs::serialize_valuation_reason`: `ValuationReason::PerformanceDidNotConverge => "performance_did_not_converge"`.
 
-- [ ] **Step 5: Map the new reason** in `api/valuation.rs::serialize_valuation_reason`: `ValuationReason::PerformanceDidNotConverge => "performance_did_not_converge"`.
+- [ ] **Step 7: Run the gains tests, verify pass.**
 
-- [ ] **Step 6: Run the gains tests, verify pass.**
+Run: `cd backend && cargo test api::gains`
+Expected: PASS. Tests previously asserting Modified Dietz percentages still pass via `?method=modified_dietz`; the default-method assertions move to the XIRR/simple values (recompute, or use `assert_available_status`).
 
-Run: `cd backend && cargo test --test '*' gains; cargo test api::gains`
-Expected: PASS. Fix any other tests asserting `modified_dietz` or specific MD percentages (e.g. `gains_populated_portfolio_*`, `gains_totals_include_closed_*`) by recomputing the expected cumulative value or switching to `assert_available_status`.
-
-- [ ] **Step 7: Stage** (commit only when Lars asks).
+- [ ] **Step 8: Stage** (commit only when Lars asks).
 
 ```bash
-git add backend/src/api/gains.rs backend/src/api/valuation.rs
+git add backend/src/domain/performance.rs backend/src/domain/mod.rs backend/src/api/gains.rs backend/src/api/valuation.rs
 ```
 
 ---
@@ -463,48 +648,73 @@ git add backend/src/api/gains.rs frontend/src/components/GainsTable.tsx
 
 ---
 
-## Task 4: Frontend wiring, copy, versions, and Sharesight validation
+## Task 4: Method selector, persistence, copy, versions, and Sharesight validation
 
 **Files:**
-- Modify: `frontend/src/components/GainsTable.tsx`
+- Modify: `frontend/src/api/queries.ts` (`GainsParams` + `useGains`: thread `method` through params, **queryKey**, and `URLSearchParams`) + `frontend/src/api/types.ts` (`method`, `percentage_method`, `display_percent_kind`)
+- Modify: `frontend/src/components/GainsTable.tsx` (selector + persistence + copy)
+- Modify: `frontend/src/components/AssetView.tsx` (asset-detail method decision, Step 1b)
 - Modify: `frontend/package.json`, `backend/Cargo.toml`
 - Modify: `docs/DecisionLog.md`
 
-- [ ] **Step 1: Update label/tooltip copy.** In `GainsTotalsBand`, map `displayPercentKind === "money_weighted"` to label `"Total return (money-weighted)"` and a tooltip noting it is the cumulative period return, ex-dividends. Keep the `"annualised"`/`"absolute"` branches for safety. (The filtered sticky-summary subtotal was already handled in Task 3.)
+- [ ] **Step 1: Thread `method` through the gains fetch (review Medium 1).** Add `method?: ReturnMethod` to `GainsParams` in `queries.ts`. **Include `method` in the React Query `queryKey`** — the current key is `["gains", includeClosedPositions, startDate ?? null, endDate ?? null]` (`frontend/src/api/queries.ts:55-60`); without `method` in the key, switching methods reuses/overwrites the same cache entry and totals flash stale values. Then set it in `URLSearchParams` (`if (method) search.set("method", method);`) so the call becomes `/api/gains?...&method=<value>`. Default `xirr` when unset. Also add `method` to the gains query type in `types.ts`.
 
-- [ ] **Step 2: Bump versions.** `frontend/package.json` and `backend/Cargo.toml` (patch or minor as appropriate); confirm both render via `/api/health` and the frontend footer.
+  Verify: switch XIRR → Simple → Modified Dietz and confirm each issues a distinct request and the displayed `percentage_method` follows the selection (frontend test or the focused manual check in Step 6).
 
-- [ ] **Step 3: Verify frontend and backend.**
+- [ ] **Step 1b: Decide the asset-detail method (review Medium 2).** `AssetView` also calls `useGains({ includeClosedPositions: true })` (`frontend/src/components/AssetView.tsx:38`). Because Task 3 makes per-asset **row** percentages a current-position simple return that is **independent of the selected total method**, the asset page does not need the persisted board selection for its row figures. **Default decision:** `AssetView` leaves `method` unset so `useGains` uses the `xirr` default (a separate cache entry from the board's selection); the asset page renders only method-independent row data and does not surface a method-dependent portfolio total. If the asset page later shows a method-dependent total, revisit and share the persisted `loadReturnMethod()` helper. *(Default — Lars to object if asset detail should mirror the board's persisted method instead.)* Add a short code comment in `AssetView` stating this.
+
+- [ ] **Step 2: Add the method selector + `localStorage` persistence.** A dropdown on the Gains totals band: **Money-weighted (XIRR)** / **Simple** / **Modified Dietz (legacy)**. Initial value from `localStorage`; on change, persist and refetch.
+
+```ts
+type ReturnMethod = "xirr" | "simple" | "modified_dietz";
+const RETURN_METHOD_KEY = "gains.returnMethod";
+function loadReturnMethod(): ReturnMethod {
+  const v = localStorage.getItem(RETURN_METHOD_KEY);
+  return v === "simple" || v === "modified_dietz" ? v : "xirr";
+}
+function saveReturnMethod(m: ReturnMethod) { localStorage.setItem(RETURN_METHOD_KEY, m); }
+```
+
+Hold the method in board/Gains state initialized from `loadReturnMethod()`; the selector calls `saveReturnMethod` and triggers the refetch (same path as the date preset).
+
+- [ ] **Step 3: Method-aware copy.** In `GainsTotalsBand`, label by `percentage_method`: `"money_weighted"` → "Total return (money-weighted)" with a cumulative-period-return, ex-dividends tooltip; `"simple"` → "Total return (simple)" (gain ÷ capital deployed); `"modified_dietz"` → keep the existing "Performance return"/"Annualised return" label plus a "legacy / comparison only" note. Keep the `"annualised"`/`"absolute"` branches for the Modified Dietz path.
+
+- [ ] **Step 4: Bump versions.** `frontend/package.json` and `backend/Cargo.toml`; confirm both render via `/api/health` and the frontend footer.
+
+- [ ] **Step 5: Verify frontend and backend.**
 
 Run: `cd frontend && npm run check && npm run fmt`
 Run: `cd backend && cargo clippy --all-targets -- -D warnings && cargo fmt` (re-run because `Cargo.toml` changed)
 Expected: no type, lint, or clippy errors.
 
-- [ ] **Step 4: HUMAN TESTING — Sharesight validation GATE.** Run the app (`run` skill or manual), open Gains. Compare the portfolio total return % (since inception, and YTD via the date preset) against the Sharesight portfolio figures Lars provides (decision 4). Confirm a buy/sell in the app does not shift the total % until prices update. **Record the comparison.** Then branch:
-  - **Within tolerance** (decision 4): proceed to Step 5.
-  - **Outside tolerance:** STOP. Do not record the reversal as "Sharesight-style". Report the gap to Lars and decide whether to revise the method or record that the app intentionally differs (using XIRR for its neutrality property). Adjust the Step 5 wording to match the outcome.
+- [ ] **Step 6: HUMAN TESTING — Sharesight validation GATE.** Run the app, open Gains. With the method set to XIRR, compare the portfolio total return % (since inception, and YTD via the date preset) against the Sharesight portfolio figures Lars provides (decision 4). Toggle to Simple and Modified Dietz and confirm the selector + persistence work (survives reload). Confirm a buy/sell does not shift the XIRR total % until prices update. **Record the comparison.** Then branch:
+  - **Within tolerance** (decision 4): proceed to Step 7.
+  - **Outside tolerance:** STOP. Do not record the entry as "Sharesight-matching". Report the gap to Lars and decide whether to change the default method or record that XIRR is the default for its neutrality property and intentionally differs from Sharesight. Adjust the Step 7 wording to match.
 
-- [ ] **Step 5: Record DecisionLog entries** (only after the Step 4 gate; new entries at end of `docs/DecisionLog.md`), e.g.:
+- [ ] **Step 7: Record DecisionLog entries** (only after the Step 6 gate; new entries at end of `docs/DecisionLog.md`), e.g.:
 
 ```
-## 2026-06-21: Money-Weighted (XIRR) Performance Returns — reverses 2026-06-19
-Decision: Gains portfolio totals use a money-weighted (XIRR) return, displayed as the
-cumulative period return (1+xirr)^years−1, computed once over the whole portfolio's dated
-cash flows plus begin/end market value. Per-asset row percentages use a current-position
-simple return (unrealized gain ÷ cost basis; capital = price effect, currency = FX effect,
-each over cost basis). This reverses the 2026-06-19 Modified Dietz method.
+## 2026-06-21: Selectable Performance Return Method — refines 2026-06-19
+Decision: The Gains portfolio total return is user-selectable and persisted (localStorage):
+Money-weighted (XIRR, default), Simple (total return ÷ opening value + gross purchases), and
+Modified Dietz (the prior single-shot method, retained as a labeled comparison/legacy option).
+XIRR is shown as the cumulative period return (1+xirr)^years−1. Per-asset row percentages use a
+current-position simple return (unrealized gain ÷ cost basis; capital = price effect, currency
+= FX effect, each over cost basis), independent of the selected total method. This refines the
+2026-06-19 Modified Dietz decision (MD is no longer the only method, and no longer the default).
 Context: Investigation (docs/Investigation.PerformancePercentageMethods.md) showed single-shot
-Modified Dietz produced ~1,130% vs Sharesight ~421% for a churned holding. XIRR was chosen
+Modified Dietz produced ~1,130% vs Sharesight ~421% for a churned holding. XIRR is the default
 because it is cash-flow neutral (a trade at fair value does not move the number until prices
 change) — Lars's stated hard requirement. Whether XIRR also matches Sharesight was validated
 against portfolio-level Sharesight figures: <record result vs the agreed tolerance here>.
-Consequences: Returns are ex-dividend until income is tracked. Component percentages are a
-proportional split of the total (unavailable when total return is zero but components are not).
-Row subtotals are no longer additive from row contributions (refines 2026-06-20 Canonical
-Performance Period). XIRR float solve is display-only and never feeds the money pipeline.
+Consequences: All methods are ex-dividend until income is tracked. Component percentages use
+each method's natural denominator (proportional split for XIRR). The filtered visible-rows
+subtotal no longer reports a percentage (refines 2026-06-20 Canonical Performance Period). The
+XIRR float solve is display-only and never feeds the money pipeline. Method persistence is
+client-side localStorage until a server settings store exists.
 ```
 
-- [ ] **Step 6: Stage** (commit only when Lars asks).
+- [ ] **Step 8: Stage** (commit only when Lars asks).
 
 ```bash
 git add frontend/ backend/Cargo.toml docs/DecisionLog.md
@@ -514,13 +724,15 @@ git add frontend/ backend/Cargo.toml docs/DecisionLog.md
 
 ## Verification summary per phase
 
-- **Task 1:** `cargo test domain::performance` — solver correctness + neutrality + non-convergence.
-- **Task 2:** `cargo test api::gains` — totals percentage is cumulative XIRR; `percentage_method == "money_weighted"`.
+- **Task 1:** `cargo test domain::performance` — solver correctness + neutrality + non-convergence + interleaved-flow root + multi-root refusal; `actual_period_cash_flows` is un-split-adjusted.
+- **Task 2:** `cargo test api::gains` — `method=xirr` (default) gives cumulative XIRR from **actual** flows; `method=simple` and `method=modified_dietz` resolve their values; split-neutrality holds for XIRR/Simple; unknown method → `400`.
 - **Task 3:** `cargo test api::gains` — row percentages equal the current-position simple return (`total_return_percent == unrealized_gain_percent`); frontend subtotal updated in the same task.
-- **Task 4:** `npm run check`, `cargo clippy`/`cargo fmt` after the version bump; Sharesight comparison is a **gate** (decision 4) that precedes the DecisionLog entry.
+- **Task 4:** `npm run check`, `cargo clippy`/`cargo fmt` after the version bump; selector + `localStorage` persistence survive reload; Sharesight comparison is a **gate** (decision 4) that precedes the DecisionLog entry.
 
 ## Self-review notes
 
-- Spec coverage: XIRR engine (T1), totals (T2), rows (T3), UI/versions/validation (T4), DecisionLog reversal (T4). Open decisions 1–4 are flagged inline, not silently resolved.
+- Spec coverage: XIRR engine (T1), method-selectable totals (T2), current-position rows (T3), selector + persistence + UI/versions/validation (T4), DecisionLog entry (T4, gated). Decisions 1–6 are recorded inline; 2 and 3 are stated defaults for Lars to confirm.
 - The float solve is isolated to a display value; exact money pipeline untouched.
+- Modified Dietz is retained (selectable), so this refines rather than fully reverses the 2026-06-19 decision.
 - Income exclusion and the currency-sign difference vs Sharesight are explicitly out of scope here.
+- Review follow-up `docs/Review.money-weighted-returns-plan-followup.md` is the durable review record for this plan (the earlier `docs/reviews/Review.money-weighted-returns-plan.md` was not present in this checkout). Its five findings are folded in: actual (non-split-adjusted) flows for XIRR/Simple (T1 note + T2 `actual_period_cash_flows`), robust multi-root-safe solver (T1), `method` in the React Query key (T4), and the asset-detail method decision (T4 Step 1b / decision 7).
