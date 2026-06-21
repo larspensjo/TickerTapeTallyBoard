@@ -100,6 +100,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Deliverable:** live (EOD) portfolio valuation in SEK.
 
 ### Phase 4 — Charts & dashboard (~1 week)
+- We will need a value-history or per-instrument price-history API.
 - Portfolio value-over-time chart (Lightweight Charts), per-instrument price chart, allocation breakdown (by instrument, currency, type).
 - Dashboard landing page: total value, day/total change, top movers.
 - **Deliverable:** v1 feature-complete.
