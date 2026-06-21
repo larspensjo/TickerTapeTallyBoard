@@ -102,7 +102,6 @@ interface GainsColumnSummary {
   costBasisBase: SummaryValue;
   marketValueBase: SummaryValue;
   totalReturnBase: SummaryValue;
-  totalReturnPercent: SummaryValue;
   capitalGainBase: SummaryValue;
   currencyGainBase: SummaryValue;
   dayChangeBase: SummaryValue;
@@ -276,10 +275,6 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
     costBasisBase,
     marketValueBase,
     totalReturnBase: unrealizedGainBaseSummary,
-    totalReturnPercent: {
-      value: unavailableValue("no_row_subtotal_percent"),
-      excludedRows: 0,
-    },
     capitalGainBase: summarizeMoneyValues(
       rows.map(({ gain }) => gain.capital_gain_base),
     ),
@@ -713,11 +708,10 @@ export function GainsTable({
               <td className="number">
                 {plainSummaryCell(summary.marketValueBase)}
               </td>
-              <td>
-                {metricSummaryCell(
-                  summary.totalReturnBase,
-                  summary.totalReturnPercent,
-                )}
+              <td className="number">
+                {/* SEK sum only — a method-specific return % is not additive across rows;
+                    the whole-portfolio percentage lives in the totals band above. */}
+                {plainSummaryCell(summary.totalReturnBase, true)}
               </td>
               <td className="number">
                 {plainSummaryCell(summary.capitalGainBase, true)}

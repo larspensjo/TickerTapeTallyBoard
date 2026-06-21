@@ -558,7 +558,10 @@ pub fn apply_annualisation(
 
 #[derive(Debug, Clone)]
 pub struct MoneyWeightedReturn {
-    pub annualized: Decimal,
+    /// Annualized XIRR rate. `None` when it exceeds `Decimal`'s range — which happens for a
+    /// large return over a very short period, where the annualized rate is astronomical even
+    /// though `cumulative` (the displayed value) is modest and well-defined.
+    pub annualized: Option<Decimal>,
     pub cumulative: Decimal,
     pub period_days: i64,
 }
@@ -602,9 +605,14 @@ pub fn compute_money_weighted_return(
         return Availability::unavailable(ValuationReason::ZeroOrInvalidPerformanceDenominator);
     }
 
-    // Investor-perspective dated flows in f64 (display-only solve).
+    // Investor-perspective dated flows in f64 (display-only solve). Time is measured in
+    // *period fractions* (0.0 at start_date, 1.0 at end_date), not years. Solving in period
+    // units means the solved root is the cumulative period return directly; its magnitude is
+    // bounded by the actual return. Solving in annual units instead makes the root explode
+    // for short periods (a large return over days annualizes beyond any fixed scan cap),
+    // which would falsely report non-convergence.
     let mut series: Vec<(f64, f64)> = Vec::with_capacity(flows.len() + 2);
-    let years_at = |d: NaiveDate| (d - start_date).num_days() as f64 / 365.25;
+    let period_fraction_at = |d: NaiveDate| (d - start_date).num_days() as f64 / period_days as f64;
     // Fallible conversion: a value that cannot become a finite f64 must surface as
     // unavailable, never silently become zero (which would alter the cash flows and
     // violate the "missing data is explicit, never zero" constraint).
@@ -621,18 +629,17 @@ pub fn compute_money_weighted_return(
             Some(v) => v,
             None => return Availability::unavailable(ValuationReason::PerformanceDidNotConverge),
         };
-        series.push((years_at(cf.date), -cf_f));
+        series.push((period_fraction_at(cf.date), -cf_f));
     }
-    let total_years = period_days as f64 / 365.25;
     let end_f = match to_finite_f64(end_mv) {
         Some(v) => v,
         None => return Availability::unavailable(ValuationReason::PerformanceDidNotConverge),
     };
-    series.push((total_years, end_f));
+    series.push((1.0, end_f));
 
     let npv = |rate: f64| -> f64 { series.iter().map(|(t, c)| c / (1.0 + rate).powf(*t)).sum() };
 
-    // Scan the rate range for sign-change sub-brackets instead of trusting the two
+    // Scan the period-return range for sign-change sub-brackets instead of trusting the two
     // endpoints. Interleaved buys/sells make NPV non-monotonic: an interior root can sit
     // between two same-sign endpoints, and multiple roots can exist. We collect every
     // bracket; zero brackets = no root, more than one = ambiguous multi-IRR -> refuse.
@@ -690,16 +697,19 @@ pub fn compute_money_weighted_return(
         }
         (a + b) / 2.0
     };
-    let cumulative = (1.0 + rate).powf(total_years) - 1.0;
-
-    let annualized = match Decimal::from_f64_retain(rate) {
+    // `rate` is the cumulative period return (time was measured in period fractions).
+    let cumulative = match Decimal::from_f64_retain(rate) {
         Some(v) => v,
         None => return Availability::unavailable(ValuationReason::PerformanceDidNotConverge),
     };
-    let cumulative = match Decimal::from_f64_retain(cumulative) {
-        Some(v) => v,
-        None => return Availability::unavailable(ValuationReason::PerformanceDidNotConverge),
-    };
+    // Annualize: (1 + period_return)^(365.25 / period_days) - 1. May exceed Decimal's range
+    // for a large return over a short period; that is recorded as None, not a failure, since
+    // the displayed value is `cumulative`.
+    let annualized_f64 = (1.0 + rate).powf(365.25 / period_days as f64) - 1.0;
+    let annualized = annualized_f64
+        .is_finite()
+        .then(|| Decimal::from_f64_retain(annualized_f64))
+        .flatten();
     Availability::Available(MoneyWeightedReturn {
         annualized,
         cumulative,
@@ -1155,6 +1165,39 @@ mod tests {
     }
 
     #[test]
+    fn money_weighted_converges_for_large_return_over_short_period() {
+        // Regression: a ~29x return over 9 days has an astronomically large *annualized*
+        // rate (~10^59), but a well-defined cumulative period return (~28.0 = 2804%). The
+        // solver must bracket on the bounded period return, not the annualized rate, or it
+        // finds no root within any fixed scan cap and falsely reports non-convergence.
+        let begin = Availability::Available(Decimal::ZERO);
+        let flows = Availability::Available(vec![CashFlow {
+            date: date("2026-06-12"),
+            amount_base: dec!(1250), // buy cost (10 sh @ $12.50, fx 10)
+        }]);
+        let end = Availability::Available(dec!(36300));
+        let r = compute_money_weighted_return(
+            &begin,
+            &flows,
+            &end,
+            date("2026-06-12"),
+            date("2026-06-21"),
+        );
+        let v = match r {
+            Availability::Available(v) => v,
+            Availability::Unavailable { reasons } => {
+                panic!("expected available, got {reasons:?}")
+            }
+        };
+        // Cumulative period return ≈ 36300 / 1250 - 1 = 28.04.
+        assert!(
+            (v.cumulative - dec!(28.04)).abs() < dec!(0.1),
+            "cumulative {}",
+            v.cumulative
+        );
+    }
+
+    #[test]
     fn money_weighted_is_cash_flow_neutral_for_same_day_trade() {
         // A buy today (cash out + equal market-value in) must not change the result.
         let start = date("2025-01-01");
@@ -1189,11 +1232,11 @@ mod tests {
         );
 
         let a = match r1 {
-            Availability::Available(v) => v.annualized,
+            Availability::Available(v) => v.annualized.expect("annualized representable"),
             _ => panic!(),
         };
         let b = match r2 {
-            Availability::Available(v) => v.annualized,
+            Availability::Available(v) => v.annualized.expect("annualized representable"),
             _ => panic!(),
         };
         assert!(
@@ -1250,7 +1293,11 @@ mod tests {
             _ => panic!("expected a root"),
         };
         // Verify: NPV at the solved rate is negligible (< 1.0 in SEK absolute terms).
-        let rate_f64 = v.annualized.to_f64().expect("finite");
+        let rate_f64 = v
+            .annualized
+            .expect("annualized representable")
+            .to_f64()
+            .expect("finite");
         let t_sell = 181.0_f64 / 365.25;
         let t_end = 365.0_f64 / 365.25;
         let npv_residual = -100000.0_f64
