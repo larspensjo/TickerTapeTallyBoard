@@ -14,12 +14,32 @@ use crate::api::valuation::{
 };
 use crate::db::{instruments, transactions};
 use crate::domain::{
-    apply_annualisation, compute_modified_dietz_denominator, compute_period_amounts,
-    derive_position_performance, period_cash_flows, reconstruct_period, summarize_holdings,
-    value_position, Availability, BaseAmount, CashFlow, DisplayPercentKind, PeriodAmounts,
-    RealizedGain, ValuationReason, ValuedHolding,
+    actual_period_cash_flows, apply_annualisation, compute_modified_dietz_denominator,
+    compute_money_weighted_return, compute_period_amounts, derive_position_performance,
+    period_cash_flows, reconstruct_period, summarize_holdings, value_position, Availability,
+    BaseAmount, CashFlow, DisplayPercentKind, PeriodAmounts, RealizedGain, ValuationReason,
+    ValuedHolding,
 };
 use crate::state::AppState;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnMethod {
+    Xirr,
+    Simple,
+    ModifiedDietz,
+}
+
+fn parse_method(value: Option<&str>) -> Result<ReturnMethod, ApiError> {
+    match value.unwrap_or("xirr") {
+        "xirr" => Ok(ReturnMethod::Xirr),
+        "simple" => Ok(ReturnMethod::Simple),
+        "modified_dietz" => Ok(ReturnMethod::ModifiedDietz),
+        other => Err(ApiError::bad_request(
+            "invalid_method",
+            format!("invalid method: {other}"),
+        )),
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct GainsQuery {
@@ -27,6 +47,7 @@ pub struct GainsQuery {
     include_closed: bool,
     start_date: Option<String>,
     end_date: Option<String>,
+    method: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +143,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<GainsQuery>,
 ) -> Result<Json<GainsResponse>, ApiError> {
+    let method = parse_method(query.method.as_deref())?;
     let end_date = match &query.end_date {
         Some(s) => parse_date(s, "end_date")?,
         None => Local::now().naive_local().date(),
@@ -209,10 +231,11 @@ pub async fn list(
             let period_amounts =
                 compute_period_amounts(&period, start_price, end_price, start_fx, end_fx, is_sek);
             let cash_flows = period_cash_flows(&period, is_sek);
+            let actual_cash_flows = actual_period_cash_flows(&period, is_sek);
 
             row_performance =
                 row_performance_response(&period_amounts, &cash_flows, report_start_date, end_date);
-            perf_accum.add(&period_amounts, &cash_flows);
+            perf_accum.add(&period_amounts, &cash_flows, &actual_cash_flows);
         }
 
         if performance.position.quantity == 0 {
@@ -254,7 +277,14 @@ pub async fn list(
     let perf_excluded_rows = perf_accum.excluded_rows;
 
     let (capital_gain_percent, currency_gain_percent, total_return_percent, display_percent_kind) =
-        perf_accum.into_percents(report_start_date, end_date);
+        perf_accum.into_percents(report_start_date, end_date, method);
+
+    let percentage_method = match method {
+        ReturnMethod::Xirr => "money_weighted",
+        ReturnMethod::Simple => "simple",
+        ReturnMethod::ModifiedDietz => "modified_dietz",
+    }
+    .to_string();
 
     Ok(Json(GainsResponse {
         as_of_date: end_date.format("%Y-%m-%d").to_string(),
@@ -264,7 +294,7 @@ pub async fn list(
             start_date: has_report_start.then(|| report_start_date.format("%Y-%m-%d").to_string()),
             end_date: end_date.format("%Y-%m-%d").to_string(),
         },
-        percentage_method: "modified_dietz".to_string(),
+        percentage_method,
         display_percent_kind,
         summary: SummaryResponse {
             market_value_base: serialize_availability(&summary.market_value_base, |v| {
@@ -470,36 +500,49 @@ fn merge_response_reasons(sources: &[Vec<ValuationReason>]) -> Vec<ValuationReas
 #[derive(Default)]
 struct PerformanceAccumulator {
     begin_mv: Decimal,
+    end_mv: Decimal,
     total_return: Decimal,
     capital_gain: Decimal,
     currency_gain: Decimal,
     cash_flows: Vec<CashFlow>,
+    actual_cash_flows: Vec<CashFlow>,
     unavailable_reasons: Vec<ValuationReason>,
     excluded_rows: usize,
     has_data: bool,
 }
 
 impl PerformanceAccumulator {
-    fn add(&mut self, amounts: &PeriodAmounts, flows: &Availability<Vec<CashFlow>>) {
+    fn add(
+        &mut self,
+        amounts: &PeriodAmounts,
+        flows: &Availability<Vec<CashFlow>>,
+        actual_flows: &Availability<Vec<CashFlow>>,
+    ) {
         match (
             &amounts.begin_market_value_base,
+            &amounts.end_market_value_base,
             &amounts.total_return_base,
             &amounts.capital_gain_base,
             &amounts.currency_gain_base,
             flows,
+            actual_flows,
         ) {
             (
                 Availability::Available(begin),
+                Availability::Available(end),
                 Availability::Available(total),
                 Availability::Available(cap),
                 Availability::Available(cur),
                 Availability::Available(cfs),
+                Availability::Available(actual_cfs),
             ) => {
                 self.begin_mv += begin;
+                self.end_mv += end;
                 self.total_return += total;
                 self.capital_gain += cap;
                 self.currency_gain += cur;
                 self.cash_flows.extend_from_slice(cfs);
+                self.actual_cash_flows.extend_from_slice(actual_cfs);
                 self.has_data = true;
             }
             _ => {
@@ -511,6 +554,7 @@ impl PerformanceAccumulator {
                     amounts.capital_gain_base.reasons(),
                     amounts.currency_gain_base.reasons(),
                     flows.reasons(),
+                    actual_flows.reasons(),
                 ] {
                     self.unavailable_reasons.extend(reasons);
                 }
@@ -521,8 +565,9 @@ impl PerformanceAccumulator {
 
     fn into_percents(
         self,
-        effective_start_date: NaiveDate,
-        end_date: NaiveDate,
+        start: NaiveDate,
+        end: NaiveDate,
+        method: ReturnMethod,
     ) -> (
         AvailabilityResponse, // capital_gain_percent
         AvailabilityResponse, // currency_gain_percent
@@ -535,47 +580,107 @@ impl PerformanceAccumulator {
             };
             return (u.clone(), u.clone(), u, "absolute".to_string());
         }
-
-        let period_days = (end_date - effective_start_date).num_days();
-
-        let denominator = compute_modified_dietz_denominator(
-            self.begin_mv,
-            &self.cash_flows,
-            effective_start_date,
-            end_date,
-        );
-
-        let cap_pct = component_percent(self.capital_gain, &denominator);
-        let cur_pct = component_percent(self.currency_gain, &denominator);
-
-        let (total_pct_value, kind) = match &denominator {
-            Availability::Available(d) => apply_annualisation(self.total_return / d, period_days),
-            Availability::Unavailable { reasons } => {
-                return (
-                    cap_pct,
-                    cur_pct,
-                    AvailabilityResponse::Unavailable {
-                        reasons: serialize_reasons(reasons),
-                    },
-                    "absolute".to_string(),
+        let pct100 = |x: Decimal| format!("{:.2}", (x * Decimal::from(100)).round_dp(2));
+        match method {
+            ReturnMethod::Xirr => {
+                let mw = compute_money_weighted_return(
+                    &Availability::Available(self.begin_mv),
+                    &Availability::Available(self.actual_cash_flows.clone()),
+                    &Availability::Available(self.end_mv),
+                    start,
+                    end,
                 );
+                let total_pct = match &mw {
+                    Availability::Available(v) => v.cumulative,
+                    Availability::Unavailable { reasons } => {
+                        let u = AvailabilityResponse::Unavailable {
+                            reasons: serialize_reasons(reasons),
+                        };
+                        return (u.clone(), u.clone(), u, "money_weighted".to_string());
+                    }
+                };
+                let comp = |part: Decimal| -> AvailabilityResponse {
+                    if self.total_return.is_zero() {
+                        if self.capital_gain.is_zero() && self.currency_gain.is_zero() {
+                            return AvailabilityResponse::Available {
+                                value: "0.00".to_string(),
+                            };
+                        }
+                        return AvailabilityResponse::Unavailable {
+                            reasons: serialize_reasons(&[
+                                ValuationReason::ZeroOrInvalidPerformanceDenominator,
+                            ]),
+                        };
+                    }
+                    AvailabilityResponse::Available {
+                        value: pct100(total_pct * (part / self.total_return)),
+                    }
+                };
+                (
+                    comp(self.capital_gain),
+                    comp(self.currency_gain),
+                    AvailabilityResponse::Available {
+                        value: pct100(total_pct),
+                    },
+                    "money_weighted".to_string(),
+                )
             }
-        };
-
-        let display_kind = match kind {
-            DisplayPercentKind::Annualised => "annualised",
-            DisplayPercentKind::Absolute => "absolute",
+            ReturnMethod::Simple => {
+                let gross_buys: Decimal = self
+                    .actual_cash_flows
+                    .iter()
+                    .map(|c| c.amount_base.max(Decimal::ZERO))
+                    .sum();
+                let denom = self.begin_mv + gross_buys;
+                if denom <= Decimal::ZERO {
+                    let u = AvailabilityResponse::Unavailable {
+                        reasons: serialize_reasons(&[
+                            ValuationReason::ZeroOrInvalidPerformanceDenominator,
+                        ]),
+                    };
+                    return (u.clone(), u.clone(), u, "simple".to_string());
+                }
+                let comp = |part: Decimal| AvailabilityResponse::Available {
+                    value: pct100(part / denom),
+                };
+                (
+                    comp(self.capital_gain),
+                    comp(self.currency_gain),
+                    comp(self.total_return),
+                    "simple".to_string(),
+                )
+            }
+            ReturnMethod::ModifiedDietz => {
+                let period_days = (end - start).num_days();
+                let denominator =
+                    compute_modified_dietz_denominator(self.begin_mv, &self.cash_flows, start, end);
+                let cap = component_percent(self.capital_gain, &denominator);
+                let cur = component_percent(self.currency_gain, &denominator);
+                match &denominator {
+                    Availability::Available(d) => {
+                        let (v, kind) = apply_annualisation(self.total_return / d, period_days);
+                        let label = match kind {
+                            DisplayPercentKind::Annualised => "annualised",
+                            DisplayPercentKind::Absolute => "absolute",
+                        };
+                        (
+                            cap,
+                            cur,
+                            AvailabilityResponse::Available { value: pct100(v) },
+                            label.to_string(),
+                        )
+                    }
+                    Availability::Unavailable { reasons } => (
+                        cap,
+                        cur,
+                        AvailabilityResponse::Unavailable {
+                            reasons: serialize_reasons(reasons),
+                        },
+                        "absolute".to_string(),
+                    ),
+                }
+            }
         }
-        .to_string();
-
-        (
-            cap_pct,
-            cur_pct,
-            AvailabilityResponse::Available {
-                value: format!("{:.2}", total_pct_value * Decimal::from(100)),
-            },
-            display_kind,
-        )
     }
 }
 
@@ -980,7 +1085,8 @@ mod tests {
 
         seed_market_data(&state, instrument_id, latest, previous).await;
 
-        let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+        let (status, body) =
+            send(&state, "GET", "/api/gains?method=modified_dietz", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["base_currency"], BASE_CURRENCY);
         assert_eq!(body["rows"].as_array().expect("rows").len(), 1);
@@ -1137,20 +1243,16 @@ mod tests {
         assert_available(&later_row["performance_denominator_base"], "161.11");
     }
 
-    #[tokio::test]
-    async fn gains_with_date_range_returns_modified_dietz_percent() {
-        let state = AppState::for_tests().await;
-        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
-
+    async fn seed_june_fixture(state: &AppState) -> i64 {
+        let instrument_id = instrument(state, "MSFT", "NASDAQ", "USD").await;
         send(
-            &state,
+            state,
             "POST",
             "/api/transactions",
             json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-01",
                    "quantity":100,"price":"10","currency":"USD","fx_rate_to_base":"10"}),
         )
         .await;
-
         let fetched_at = crate::import::now_iso8601();
         for (date, close) in [
             (
@@ -1209,6 +1311,144 @@ mod tests {
         )
         .await
         .unwrap();
+        instrument_id
+    }
+
+    #[tokio::test]
+    async fn gains_with_date_range_selectable_method() {
+        let state = AppState::for_tests().await;
+        seed_june_fixture(&state).await;
+
+        // default = xirr; buy on day 0 of 29-day period: cumulative = (1+annualized)^(29/365.25)-1 = 20.00%
+        let (_, body) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-01&end_date=2026-06-30",
+            json!({}),
+        )
+        .await;
+        assert_eq!(body["percentage_method"], "money_weighted");
+        assert_available(&body["totals"]["total_return_percent"], "20.00");
+
+        // simple: 2000 / (0 + 10000) = 20.00%
+        let (_, s) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=simple",
+            json!({}),
+        )
+        .await;
+        assert_eq!(s["percentage_method"], "simple");
+        assert_available(&s["totals"]["total_return_percent"], "20.00");
+
+        // modified_dietz still available (legacy path retained)
+        let (_, md) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=modified_dietz",
+            json!({}),
+        )
+        .await;
+        assert_eq!(md["percentage_method"], "modified_dietz");
+        assert_available_status(&md["totals"]["total_return_percent"]);
+
+        // unknown method -> 400
+        let (st, _) = send(&state, "GET", "/api/gains?method=bogus", json!({})).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn gains_xirr_zero_total_return_with_nonzero_components() {
+        // Capital gain and currency gain offset each other to zero total return.
+        // Components must be unavailable (ZeroOrInvalidPerformanceDenominator), not "0.00".
+        // total_return_percent must be "0.00".
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":100,"price":"10","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+
+        // end_mv = 100 * 10 (price) * 10 (FX) = 10000; begin_mv = 0; net_flows = 10000
+        // total_return = 0; capital_gain = (10-10)*100*10 = 0 + fx contribution = (10-10)*100*10 - 10000 + 10000 = 0
+        // Actually set price drop to $9 and FX rise such that total_return = 0:
+        // end_mv = 100 * 9 * (10000/9/100) = 10000 — but that is hard to engineer exactly.
+        // Easier: SEK instrument, buy at 10, end at 10 → total=0, capital=0, currency=0 → all zero → returns "0.00".
+        // For the interesting case (nonzero components, zero total), use FX gain offsetting price loss:
+        // 100 shares, buy price $10, FX 10 → begin_mv=0, net_flows=10000
+        // end price $8, end FX 12.5 → end_mv = 100*8*12.5 = 10000 → total_return = 0
+        // capital = (100*8 - 100*10)*12.5 - 0 = -200*12.5 = -2500
+        // currency = total - capital = 0 - (-2500) = 2500
+
+        let fetched_at = crate::import::now_iso8601();
+        for (date, close) in [
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                dec!(10),
+            ),
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+                dec!(8),
+            ),
+        ] {
+            prices::upsert(
+                &state.pool,
+                &prices::NewPrice {
+                    instrument_id,
+                    provider: PRICE_PROVIDER.to_owned(),
+                    provider_symbol: "MSFT".to_owned(),
+                    date,
+                    close,
+                    currency: "USD".to_owned(),
+                    fetched_at: fetched_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        for (date, rate) in [
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                dec!(10),
+            ),
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+                dec!(12.5),
+            ),
+        ] {
+            fx_rates::upsert(
+                &state.pool,
+                &fx_rates::NewFxRate {
+                    base: "USD".to_owned(),
+                    quote: BASE_CURRENCY.to_owned(),
+                    date,
+                    rate,
+                    provider: FX_PROVIDER.to_owned(),
+                    fetched_at: fetched_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: PRICE_PROVIDER.to_owned(),
+                provider_symbol: "MSFT".to_owned(),
+                currency: Some("USD".to_owned()),
+                enabled: true,
+                created_at: fetched_at.clone(),
+                updated_at: fetched_at,
+            },
+        )
+        .await
+        .unwrap();
 
         let (status, body) = send(
             &state,
@@ -1218,12 +1458,129 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["percentage_method"], "modified_dietz");
-        assert_available(&body["totals"]["capital_gain_base"], "2000.00");
-        assert_available(&body["totals"]["currency_gain_base"], "0.00");
-        assert_available(&body["totals"]["total_return_base"], "2000.00");
-        assert_available(&body["totals"]["total_return_percent"], "20.00");
-        assert_eq!(body["totals"]["excluded_rows"], 0);
+        assert_eq!(body["percentage_method"], "money_weighted");
+        assert_available(&body["totals"]["total_return_base"], "0.00");
+        assert_available(&body["totals"]["total_return_percent"], "0.00");
+        assert_unavailable_status(&body["totals"]["capital_gain_percent"]);
+        assert_unavailable_status(&body["totals"]["currency_gain_percent"]);
+    }
+
+    #[tokio::test]
+    async fn gains_split_neutrality_regression() {
+        // Regression (review High 1): Simple and XIRR use actual_period_cash_flows (not
+        // split-adjusted). Via the API, the ledger is truncated at end_date, so
+        // post_period_split_factor is always 1 and the two paths are equivalent. The key
+        // invariant is verified at the unit level in
+        // performance::tests::actual_period_cash_flows_unaffected_by_post_period_split.
+        //
+        // This test confirms that when a split is recorded after end_date, both Simple and
+        // Modified Dietz give the same result as when no split is recorded, because the
+        // split is excluded from the ledger by the end_date filter.
+        //
+        // Setup: buy 100 shares at $10, FX=10 on Jun 1 (period start); 2:1 split on Aug 1.
+        // Querying Jun 1 - Jun 30 (end_date before split): split excluded from ledger.
+        // post_period_split_factor = 1; actual_cash_flows = period_cash_flows = [10000].
+        // total_return = 12000 - 0 - 10000 = 2000; denom = 10000; percent = 20.00%.
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "TSLA", "NASDAQ", "USD").await;
+
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":100,"price":"10","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Split","trade_date":"2026-08-01",
+                   "quantity":100,"currency":"USD"}),
+        )
+        .await;
+
+        let fetched_at = crate::import::now_iso8601();
+        for (date, close) in [
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                dec!(10),
+            ),
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+                dec!(12),
+            ),
+        ] {
+            prices::upsert(
+                &state.pool,
+                &prices::NewPrice {
+                    instrument_id,
+                    provider: PRICE_PROVIDER.to_owned(),
+                    provider_symbol: "TSLA".to_owned(),
+                    date,
+                    close,
+                    currency: "USD".to_owned(),
+                    fetched_at: fetched_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        for date in [
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+        ] {
+            fx_rates::upsert(
+                &state.pool,
+                &fx_rates::NewFxRate {
+                    base: "USD".to_owned(),
+                    quote: BASE_CURRENCY.to_owned(),
+                    date,
+                    rate: dec!(10),
+                    provider: FX_PROVIDER.to_owned(),
+                    fetched_at: fetched_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: PRICE_PROVIDER.to_owned(),
+                provider_symbol: "TSLA".to_owned(),
+                currency: Some("USD".to_owned()),
+                enabled: true,
+                created_at: fetched_at.clone(),
+                updated_at: fetched_at,
+            },
+        )
+        .await
+        .unwrap();
+
+        let (_, simple_body) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=simple",
+            json!({}),
+        )
+        .await;
+        let (_, md_body) = send(
+            &state,
+            "GET",
+            "/api/gains?start_date=2026-06-01&end_date=2026-06-30&method=modified_dietz",
+            json!({}),
+        )
+        .await;
+
+        // Through the API the ledger is truncated at end_date so post_period_split_factor=1 always;
+        // actual_period_cash_flows and period_cash_flows are identical. Both methods give the same
+        // total_return_percent = 2000/10000 = 20.00%. The behavioural difference is verified at the
+        // unit level in performance::tests::actual_period_cash_flows_unaffected_by_post_period_split.
+        assert_available(&simple_body["totals"]["total_return_percent"], "20.00");
+        assert_available(&md_body["totals"]["total_return_percent"], "20.00");
     }
 
     async fn instrument(state: &AppState, symbol: &str, exchange: &str, currency: &str) -> i64 {

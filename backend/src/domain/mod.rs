@@ -10,9 +10,10 @@ mod valuation;
 
 #[allow(unused_imports)]
 pub use performance::{
-    apply_annualisation, compute_modified_dietz, compute_modified_dietz_denominator,
-    compute_money_weighted_return, compute_period_amounts, period_cash_flows, reconstruct_period,
-    CashFlow, DisplayPercentKind, MoneyWeightedReturn, PeriodAmounts, PeriodLedger,
+    actual_period_cash_flows, apply_annualisation, compute_modified_dietz,
+    compute_modified_dietz_denominator, compute_money_weighted_return, compute_period_amounts,
+    period_cash_flows, reconstruct_period, CashFlow, DisplayPercentKind, MoneyWeightedReturn,
+    PeriodAmounts, PeriodLedger,
 };
 #[allow(unused_imports)]
 pub use position::{

@@ -353,6 +353,87 @@ pub fn period_cash_flows(
     Availability::Available(flows)
 }
 
+/// Collect all buy/sell cash flows from a period ledger in base currency using the actual
+/// quantities traded (no post-period split adjustment).
+///
+/// Sign convention: + for buy cost (qty × price × fx + brokerage), − for sell proceeds.
+/// Returns `Unavailable` if any transaction is missing a price or (for non-SEK) an FX rate.
+pub fn actual_period_cash_flows(
+    period: &PeriodLedger,
+    is_sek_instrument: bool,
+) -> Availability<Vec<CashFlow>> {
+    let mut flows = Vec::new();
+    for tx in &period.period_transactions {
+        match tx.kind {
+            TransactionKind::Buy => {
+                let p = match tx.price {
+                    Some(p) => p,
+                    None => {
+                        return Availability::Unavailable {
+                            reasons: vec![ValuationReason::MissingTransactionPrice {
+                                transaction_id: tx.id,
+                            }],
+                        }
+                    }
+                };
+                let f = if is_sek_instrument {
+                    Decimal::ONE
+                } else {
+                    match tx.fx_rate_to_base {
+                        Some(f) => f,
+                        None => {
+                            return Availability::Unavailable {
+                                reasons: vec![ValuationReason::MissingTransactionFx {
+                                    transaction_id: tx.id,
+                                }],
+                            }
+                        }
+                    }
+                };
+                let qty = Decimal::from(tx.quantity);
+                flows.push(CashFlow {
+                    date: tx.trade_date,
+                    amount_base: qty * p * f + tx.brokerage_base,
+                });
+            }
+            TransactionKind::Sell => {
+                let p = match tx.price {
+                    Some(p) => p,
+                    None => {
+                        return Availability::Unavailable {
+                            reasons: vec![ValuationReason::MissingTransactionPrice {
+                                transaction_id: tx.id,
+                            }],
+                        }
+                    }
+                };
+                let f = if is_sek_instrument {
+                    Decimal::ONE
+                } else {
+                    match tx.fx_rate_to_base {
+                        Some(f) => f,
+                        None => {
+                            return Availability::Unavailable {
+                                reasons: vec![ValuationReason::MissingTransactionFx {
+                                    transaction_id: tx.id,
+                                }],
+                            }
+                        }
+                    }
+                };
+                let qty = Decimal::from(-tx.quantity);
+                let proceeds = qty * p * f - tx.brokerage_base;
+                flows.push(CashFlow {
+                    date: tx.trade_date,
+                    amount_base: -proceeds,
+                });
+            }
+            TransactionKind::Split | TransactionKind::Dividend => {}
+        }
+    }
+    Availability::Available(flows)
+}
+
 /// Compute the Modified Dietz weighted denominator (begin_mv + Σ weight_i × cf_i).
 ///
 /// Returns `Unavailable` when the denominator is zero or negative, or `period_days ≤ 0`.
@@ -1170,6 +1251,32 @@ mod tests {
         };
         // Sanity: NPV at the solved annualized rate is ~0 (recompute independently if desired).
         assert!(v.annualized.is_sign_positive() || v.annualized.is_sign_negative());
+    }
+
+    #[test]
+    fn actual_period_cash_flows_unaffected_by_post_period_split() {
+        // 100 shares bought at $10, FX 10; 2:1 split happens after end_date.
+        // post_period_split_factor = 2, but actual_period_cash_flows must NOT apply it.
+        // Expected: 100 × $10 × 10 = 10_000 (vs period_cash_flows which would yield 20_000).
+        let txs = vec![
+            buy_with_fx(1, "2026-06-05", 100, dec!(10), dec!(10), Decimal::ZERO),
+            split_tx(2, "2026-08-01", 100),
+        ];
+        let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
+        assert_eq!(p.post_period_split_factor, dec!(2));
+
+        let actual_flows = match actual_period_cash_flows(&p, false) {
+            Availability::Available(v) => v,
+            _ => panic!("expected available flows"),
+        };
+        assert_eq!(actual_flows.len(), 1);
+        assert_eq!(actual_flows[0].amount_base, dec!(10000));
+
+        let split_adjusted_flows = match period_cash_flows(&p, false) {
+            Availability::Available(v) => v,
+            _ => panic!("expected available flows"),
+        };
+        assert_eq!(split_adjusted_flows[0].amount_base, dec!(20000));
     }
 
     #[test]
