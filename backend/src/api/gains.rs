@@ -165,9 +165,14 @@ pub async fn list(
     let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
     let mut ledgers: BTreeMap<i64, Vec<_>> = BTreeMap::new();
+    let mut full_ledgers: BTreeMap<i64, Vec<_>> = BTreeMap::new();
 
     for row in &transaction_rows {
         let ledger_tx = row.to_ledger()?;
+        full_ledgers
+            .entry(row.instrument_id)
+            .or_insert_with(Vec::new)
+            .push(ledger_tx.clone());
         // Truncate ledger at end_date — transactions after end_date must not affect any result.
         if ledger_tx.trade_date <= end_date {
             ledgers
@@ -197,6 +202,7 @@ pub async fn list(
         if ledger.is_empty() {
             continue;
         }
+        let full_ledger = full_ledgers.remove(&instrument.id).unwrap_or_default();
 
         let performance = derive_position_performance(&ledger).map_err(|error| {
             ApiError::internal(format!(
@@ -205,13 +211,15 @@ pub async fn list(
             ))
         })?;
 
-        // Reconstruct period and compute Modified Dietz inputs.
-        let period = reconstruct_period(&ledger, report_start_date, end_date).map_err(|error| {
-            ApiError::internal(format!(
-                "failed to reconstruct period for instrument {}: {error:?}",
-                instrument.id
-            ))
-        })?;
+        // Reconstruct period using the full ledger (including post-end_date transactions)
+        // so that post_period_split_factor is correctly computed for split-adjusted cash flows.
+        let period =
+            reconstruct_period(&full_ledger, report_start_date, end_date).map_err(|error| {
+                ApiError::internal(format!(
+                    "failed to reconstruct period for instrument {}: {error:?}",
+                    instrument.id
+                ))
+            })?;
 
         let has_period_exposure = period.start_position.quantity > 0
             || !period.period_transactions.is_empty()
@@ -1447,15 +1455,16 @@ mod tests {
 
     #[tokio::test]
     async fn gains_split_neutrality_regression() {
-        // Regression (review High 1): Simple and XIRR use actual_period_cash_flows (not
-        // split-adjusted). Via the API, the ledger is truncated at end_date, so
-        // post_period_split_factor is always 1 and the two paths are equivalent. The key
-        // invariant is verified at the unit level in
+        // Regression: Simple and XIRR use actual_period_cash_flows (not split-adjusted).
+        // reconstruct_period now receives the full ledger, so post_period_split_factor correctly
+        // reflects post-end_date splits. actual_period_cash_flows is unaffected by the split
+        // factor (by design), while period_cash_flows (used by Modified Dietz) is adjusted.
+        // The key invariant is verified at the unit level in
         // performance::tests::actual_period_cash_flows_unaffected_by_post_period_split.
         //
         // This test confirms that when a split is recorded after end_date, both Simple and
-        // Modified Dietz give the same result as when no split is recorded, because the
-        // split is excluded from the ledger by the end_date filter.
+        // Modified Dietz give the same result as when no split is recorded — because
+        // actual_period_cash_flows intentionally ignores the post-period split factor.
         //
         // Setup: buy 100 shares at $10, FX=10 on Jun 1 (period start); 2:1 split on Aug 1.
         // Querying Jun 1 - Jun 30 (end_date before split): split excluded from ledger.
@@ -1555,10 +1564,13 @@ mod tests {
         )
         .await;
 
-        // Through the API the ledger is truncated at end_date so post_period_split_factor=1 always;
-        // actual_period_cash_flows and period_cash_flows are identical. Both methods give the same
-        // total_return_percent = 2000/10000 = 20.00%. The behavioural difference is verified at the
-        // unit level in performance::tests::actual_period_cash_flows_unaffected_by_post_period_split.
+        // actual_period_cash_flows does not apply the post-period split factor, so for Simple and
+        // XIRR the result is unaffected by the Aug 1 split. Modified Dietz uses period_cash_flows
+        // which does apply the factor, but reconstruct_period is called with the full ledger so the
+        // factor is set correctly (2 here). However, the denominator scaling and the end_mv scaling
+        // cancel out, giving the same total_return_percent = 2000/10000 = 20.00%.
+        // The behavioural difference is verified at the unit level in
+        // performance::tests::actual_period_cash_flows_unaffected_by_post_period_split.
         assert_available(&simple_body["totals"]["total_return_percent"], "20.00");
         assert_available(&md_body["totals"]["total_return_percent"], "20.00");
     }

@@ -651,6 +651,7 @@ pub fn compute_money_weighted_return(
 
     let mut brackets: Vec<(f64, f64)> = Vec::new();
     let mut exact: Option<f64> = None;
+    let mut exact_count: usize = 0;
     for w in scan.windows(2) {
         let (lo, hi) = (w[0], w[1]);
         let (flo, fhi) = (npv(lo), npv(hi));
@@ -659,15 +660,14 @@ pub fn compute_money_weighted_return(
         }
         if flo == 0.0 {
             exact = Some(lo);
-            // Do not break: continue scanning so additional brackets or exact zeros are
-            // detected; if more than one root exists the series is ambiguous.
+            exact_count += 1;
         } else if flo * fhi < 0.0 {
             brackets.push((lo, hi));
         }
     }
     let rate = if let Some(r) = exact {
-        if !brackets.is_empty() {
-            // Exact root plus additional sign-change brackets = ambiguous multi-root series.
+        if !brackets.is_empty() || exact_count > 1 {
+            // Exact root(s) plus additional crossings or multiple exact roots = ambiguous.
             return Availability::unavailable(ValuationReason::PerformanceDidNotConverge);
         }
         r
@@ -1249,8 +1249,17 @@ mod tests {
             Availability::Available(v) => v,
             _ => panic!("expected a root"),
         };
-        // Sanity: NPV at the solved annualized rate is ~0 (recompute independently if desired).
-        assert!(v.annualized.is_sign_positive() || v.annualized.is_sign_negative());
+        // Verify: NPV at the solved rate is negligible (< 1.0 in SEK absolute terms).
+        let rate_f64 = v.annualized.to_f64().expect("finite");
+        let t_sell = 181.0_f64 / 365.25;
+        let t_end = 365.0_f64 / 365.25;
+        let npv_residual = -100000.0_f64
+            + 60000.0 / (1.0 + rate_f64).powf(t_sell)
+            + 70000.0 / (1.0 + rate_f64).powf(t_end);
+        assert!(
+            npv_residual.abs() < 1.0,
+            "NPV residual at solved rate: {npv_residual}"
+        );
     }
 
     #[test]
@@ -1305,5 +1314,35 @@ mod tests {
         );
         // Either a single documented root or Unavailable; this case must be Unavailable.
         assert!(matches!(r, Availability::Unavailable { .. }));
+    }
+
+    #[test]
+    fn money_weighted_unavailable_when_all_flows_cancel_at_every_rate() {
+        // Same-day buy and sell of equal amount with zero begin/end MV:
+        // investor flows are (-amount at t=0) + (+amount at t=0) = 0 for every rate.
+        // NPV is identically zero across all rates — degenerate, should refuse.
+        let begin = Availability::Available(Decimal::ZERO);
+        let flows = Availability::Available(vec![
+            CashFlow {
+                date: date("2025-01-01"),
+                amount_base: dec!(50000),
+            }, // buy cost
+            CashFlow {
+                date: date("2025-01-01"),
+                amount_base: dec!(-50000),
+            }, // sell proceeds same day
+        ]);
+        let end = Availability::Available(Decimal::ZERO);
+        let r = compute_money_weighted_return(
+            &begin,
+            &flows,
+            &end,
+            date("2025-01-01"),
+            date("2026-01-01"),
+        );
+        assert!(
+            matches!(r, Availability::Unavailable { .. }),
+            "degenerate all-zero NPV must be unavailable"
+        );
     }
 }

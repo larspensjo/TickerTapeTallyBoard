@@ -808,7 +808,8 @@ tbody tr:last-child td {
 
 .preset-btn:focus-visible,
 .date-range-input:focus-visible,
-.filter-input:focus-visible {
+.filter-input:focus-visible,
+.method-select:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: var(--focus-ring);
@@ -830,6 +831,19 @@ tbody tr:last-child td {
 .date-range-input::-webkit-calendar-picker-indicator {
   opacity: 0.72;
   filter: invert(1);
+}
+
+.method-select {
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color-scheme: dark;
+  cursor: pointer;
 }
 
 .filter-input {
