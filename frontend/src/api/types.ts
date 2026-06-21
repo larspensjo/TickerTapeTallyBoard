@@ -151,7 +151,6 @@ export interface GainsResponse {
   report_period: ReportPeriod;
   percentage_method: "money_weighted" | "simple" | "modified_dietz";
   display_percent_kind: string;
-  method: ReturnMethod;
 }
 
 export interface RefreshRunSummary {

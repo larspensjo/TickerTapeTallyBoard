@@ -498,7 +498,7 @@ impl PerformanceAccumulator {
             };
             return (u.clone(), u.clone(), u, "absolute".to_string());
         }
-        let pct100 = |x: Decimal| format!("{:.2}", (x * Decimal::from(100)).round_dp(2));
+        let pct100 = |x: Decimal| format!("{:.2}", x * Decimal::from(100));
         match method {
             ReturnMethod::Xirr => {
                 let mw = compute_money_weighted_return(
