@@ -4,6 +4,7 @@ mod gains;
 mod health;
 mod holdings;
 mod import;
+mod instrument_prices;
 mod instruments;
 mod prices;
 mod provider_symbols;
@@ -71,6 +72,7 @@ fn api_router() -> Router<AppState> {
             "/instruments",
             get(instruments::list).post(instruments::create),
         )
+        .route("/instruments/{id}/prices", get(instrument_prices::list))
         .route(
             "/instruments/{id}/provider-symbols/{provider}",
             put(provider_symbols::update),
