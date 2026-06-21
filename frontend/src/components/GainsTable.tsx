@@ -14,6 +14,7 @@ import type {
   DateRange,
   GainsRow,
   GainsTotals,
+  ReturnMethod,
 } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import {
@@ -25,6 +26,17 @@ import {
   reasonSummary,
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
+
+const RETURN_METHOD_KEY = "gains.returnMethod";
+
+export function loadReturnMethod(): ReturnMethod {
+  const v = localStorage.getItem(RETURN_METHOD_KEY);
+  return v === "simple" || v === "modified_dietz" ? v : "xirr";
+}
+
+function saveReturnMethod(m: ReturnMethod) {
+  localStorage.setItem(RETURN_METHOD_KEY, m);
+}
 
 export type DatePreset = "today" | "7d" | "12m" | "ytd" | "all" | "custom";
 
@@ -448,6 +460,7 @@ const columns = [
 export function GainsTable({
   rows,
   totals,
+  percentageMethod,
   filter,
   onFilterChange,
   includeClosedPositions,
@@ -457,9 +470,12 @@ export function GainsTable({
   onDatePresetChange,
   onDateRangeChange,
   displayPercentKind = "absolute",
+  returnMethod,
+  onReturnMethodChange,
 }: {
   rows: GainsRow[];
   totals?: GainsTotals;
+  percentageMethod?: "money_weighted" | "simple" | "modified_dietz";
   filter: string;
   onFilterChange: (filter: string) => void;
   includeClosedPositions: boolean;
@@ -469,6 +485,8 @@ export function GainsTable({
   onDatePresetChange: (preset: DatePreset) => void;
   onDateRangeChange: (range: DateRange) => void;
   displayPercentKind?: string;
+  returnMethod: ReturnMethod;
+  onReturnMethodChange: (method: ReturnMethod) => void;
 }) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "total_return_base", desc: true },
@@ -548,7 +566,13 @@ export function GainsTable({
       {totals ? (
         <GainsTotalsBand
           totals={totals}
+          percentageMethod={percentageMethod}
           displayPercentKind={displayPercentKind}
+          returnMethod={returnMethod}
+          onReturnMethodChange={(m) => {
+            saveReturnMethod(m);
+            onReturnMethodChange(m);
+          }}
         />
       ) : null}
       <div className="table-toolbar">
@@ -727,25 +751,70 @@ export function GainsTable({
   );
 }
 
+function totalReturnLabel(
+  percentageMethod: "money_weighted" | "simple" | "modified_dietz" | undefined,
+  displayPercentKind: string,
+): { label: string; title?: string; note?: string } {
+  if (percentageMethod === "money_weighted") {
+    return {
+      label: "Total return (money-weighted)",
+      title: "Cumulative period return, ex-dividends",
+    };
+  }
+  if (percentageMethod === "simple") {
+    return {
+      label: "Total return (simple)",
+      title: "Gain ÷ capital deployed",
+    };
+  }
+  if (percentageMethod === "modified_dietz") {
+    const label =
+      displayPercentKind === "annualised"
+        ? "Annualised return"
+        : "Performance return";
+    return { label, note: "legacy / comparison only" };
+  }
+  return { label: "Performance return" };
+}
+
 function GainsTotalsBand({
   totals,
+  percentageMethod,
   displayPercentKind,
+  returnMethod,
+  onReturnMethodChange,
 }: {
   totals: GainsTotals;
+  percentageMethod?: "money_weighted" | "simple" | "modified_dietz";
   displayPercentKind: string;
+  returnMethod: ReturnMethod;
+  onReturnMethodChange: (method: ReturnMethod) => void;
 }) {
-  const label =
-    displayPercentKind === "annualised"
-      ? "Annualised return"
-      : "Performance return";
   const componentTitle =
-    displayPercentKind === "annualised"
+    percentageMethod === "modified_dietz" && displayPercentKind === "annualised"
       ? "Holding-period percentage; total return is annualised."
       : undefined;
+  const { label, title, note } = totalReturnLabel(
+    percentageMethod,
+    displayPercentKind,
+  );
   return (
     <section className="gains-totals" aria-label="Gains totals">
       <div className="gains-totals-header">
-        <span className="gains-totals-method">{label}</span>
+        <span className="gains-totals-method" title={title}>
+          {label}
+          {note ? <span className="gains-totals-note"> — {note}</span> : null}
+        </span>
+        <select
+          className="method-select"
+          value={returnMethod}
+          onChange={(e) => onReturnMethodChange(e.target.value as ReturnMethod)}
+          aria-label="Return method"
+        >
+          <option value="xirr">Money-weighted (XIRR)</option>
+          <option value="simple">Simple</option>
+          <option value="modified_dietz">Modified Dietz (legacy)</option>
+        </select>
         {totals.excluded_rows > 0 ? (
           <span className="status-chip warning gains-totals-warning">
             {formatGroupedNumber(totals.excluded_rows)} incomplete

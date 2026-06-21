@@ -35,6 +35,9 @@ export function AssetView() {
   const id = parseInstrumentId(idParam);
 
   const instrumentsQuery = useInstruments();
+  // method is intentionally unset: the asset page shows method-independent current-position
+  // row data (unrealized gain ÷ cost basis). If it later needs a method-dependent portfolio
+  // total, share the persisted loadReturnMethod() helper from GainsTable.
   const gainsQuery = useGains({ includeClosedPositions: true });
   const holdingsQuery = useHoldings();
   const transactionsQuery = useTransactions();

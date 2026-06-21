@@ -17,6 +17,7 @@ import type {
   PriceStatusResponse,
   RefreshPricesInput,
   RefreshPricesResult,
+  ReturnMethod,
   RollbackResult,
   Transaction,
   TransactionType,
@@ -47,22 +48,25 @@ export interface GainsParams {
   includeClosedPositions?: boolean;
   startDate?: string | null;
   endDate?: string | null;
+  method?: ReturnMethod;
 }
 
 export function useGains(params: GainsParams = {}) {
-  const { includeClosedPositions = false, startDate, endDate } = params;
+  const { includeClosedPositions = false, startDate, endDate, method } = params;
   return useQuery({
     queryKey: [
       "gains",
       includeClosedPositions,
       startDate ?? null,
       endDate ?? null,
+      method ?? null,
     ],
     queryFn: () => {
       const search = new URLSearchParams();
       if (includeClosedPositions) search.set("include_closed", "true");
       if (startDate) search.set("start_date", startDate);
       if (endDate) search.set("end_date", endDate);
+      if (method) search.set("method", method);
       const qs = search.toString();
       return apiGet<GainsResponse>(`/api/gains${qs ? `?${qs}` : ""}`);
     },
@@ -70,7 +74,7 @@ export function useGains(params: GainsParams = {}) {
   });
 }
 
-export type { DateRange };
+export type { DateRange, ReturnMethod };
 
 export function usePriceStatus() {
   return useQuery({

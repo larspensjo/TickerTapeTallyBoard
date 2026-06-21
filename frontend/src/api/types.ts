@@ -1,5 +1,6 @@
 export type TransactionType = "Buy" | "Sell" | "Split" | "Dividend";
 export type InstrumentType = "Stock" | "Etf" | "Fund";
+export type ReturnMethod = "xirr" | "simple" | "modified_dietz";
 
 export type AvailabilityValue<T> =
   | { status: "available"; value: T }
@@ -148,8 +149,9 @@ export interface GainsResponse {
   totals: GainsTotals;
   rows: GainsRow[];
   report_period: ReportPeriod;
-  percentage_method: string;
+  percentage_method: "money_weighted" | "simple" | "modified_dietz";
   display_percent_kind: string;
+  method: ReturnMethod;
 }
 
 export interface RefreshRunSummary {

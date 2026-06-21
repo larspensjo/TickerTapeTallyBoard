@@ -5,6 +5,7 @@ import { type ReactNode, useReducer, useState } from "react";
 import { useLocation } from "react-router-dom";
 import packageJson from "../../package.json";
 import {
+  type ReturnMethod,
   useDeleteTransaction,
   useGains,
   useHoldings,
@@ -20,7 +21,7 @@ import type {
   RefreshRunSummary,
 } from "../api/types";
 import { AddTransactionForm } from "./AddTransactionForm";
-import { type DatePreset, GainsTable } from "./GainsTable";
+import { type DatePreset, GainsTable, loadReturnMethod } from "./GainsTable";
 import { HoldingsTable } from "./HoldingsTable";
 import { TransactionsTable } from "./TransactionsTable";
 import {
@@ -40,6 +41,7 @@ interface UiState {
   formOpen: boolean;
   datePreset: DatePreset;
   dateRange: DateRange;
+  returnMethod: ReturnMethod;
 }
 
 type UiAction =
@@ -48,7 +50,8 @@ type UiAction =
   | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
   | { type: "formToggled"; open: boolean }
   | { type: "datePresetChanged"; datePreset: DatePreset }
-  | { type: "dateRangeChanged"; dateRange: DateRange };
+  | { type: "dateRangeChanged"; dateRange: DateRange }
+  | { type: "returnMethodChanged"; returnMethod: ReturnMethod };
 
 interface HealthResponse {
   status: string;
@@ -73,6 +76,8 @@ function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, datePreset: action.datePreset };
     case "dateRangeChanged":
       return { ...state, dateRange: action.dateRange };
+    case "returnMethodChanged":
+      return { ...state, returnMethod: action.returnMethod };
   }
 
   return state;
@@ -172,6 +177,7 @@ export function BoardView() {
     formOpen: false,
     datePreset: "all",
     dateRange: { startDate: null, endDate: null },
+    returnMethod: loadReturnMethod(),
   });
 
   const healthQuery = useQuery({
@@ -185,6 +191,7 @@ export function BoardView() {
     includeClosedPositions: uiState.includeClosedPositions,
     startDate: uiState.dateRange.startDate,
     endDate: uiState.dateRange.endDate ?? undefined,
+    method: uiState.returnMethod,
   });
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
@@ -449,6 +456,7 @@ export function BoardView() {
               <GainsTable
                 rows={gainsQuery.data?.rows ?? []}
                 totals={gainsQuery.data?.totals}
+                percentageMethod={gainsQuery.data?.percentage_method}
                 filter={uiState.boardFilter}
                 onFilterChange={(filter) =>
                   dispatch({ type: "boardFilterChanged", filter })
@@ -469,6 +477,10 @@ export function BoardView() {
                   dispatch({ type: "dateRangeChanged", dateRange })
                 }
                 displayPercentKind={gainsQuery.data?.display_percent_kind}
+                returnMethod={uiState.returnMethod}
+                onReturnMethodChange={(returnMethod) =>
+                  dispatch({ type: "returnMethodChanged", returnMethod })
+                }
               />
             </BoardSection>
           ) : (
