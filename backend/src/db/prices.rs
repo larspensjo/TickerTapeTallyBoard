@@ -19,6 +19,13 @@ const FIND_LATEST_ON_OR_BEFORE_SQL: &str = "SELECT id, instrument_id, provider, 
     FROM prices WHERE instrument_id = ? AND provider = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT 1";
 const FIND_PREVIOUS_BEFORE_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, date, close, currency, fetched_at \
     FROM prices WHERE instrument_id = ? AND provider = ? AND date < ? ORDER BY date DESC, id DESC LIMIT 1";
+const LIST_IN_RANGE_SQL: &str =
+    "SELECT id, instrument_id, provider, provider_symbol, date, close, currency, fetched_at \
+    FROM prices \
+    WHERE instrument_id = ? AND provider = ? \
+      AND (? IS NULL OR date >= ?) \
+      AND (? IS NULL OR date <= ?) \
+    ORDER BY date ASC, id ASC";
 const UPSERT_SQL: &str = "INSERT INTO prices \
        (instrument_id, provider, provider_symbol, date, close, currency, fetched_at) \
      VALUES (?, ?, ?, ?, ?, ?, ?) \
@@ -123,6 +130,27 @@ pub async fn find_previous_before(
         .fetch_optional(pool)
         .await?;
     Ok(row)
+}
+
+pub async fn list_for_instrument_in_range(
+    pool: &SqlitePool,
+    instrument_id: i64,
+    provider: &str,
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+) -> Result<Vec<PriceRow>, RepoError> {
+    let from = from.map(|d| d.format("%Y-%m-%d").to_string());
+    let to = to.map(|d| d.format("%Y-%m-%d").to_string());
+    let rows = sqlx::query_as::<_, PriceRow>(LIST_IN_RANGE_SQL)
+        .bind(instrument_id)
+        .bind(provider)
+        .bind(&from)
+        .bind(&from)
+        .bind(&to)
+        .bind(&to)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
 }
 
 pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoError> {
@@ -276,6 +304,68 @@ mod tests {
         .await
         .expect("empty previous lookup should succeed");
         assert!(no_previous.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_for_instrument_in_range_orders_and_bounds_inclusively() {
+        let pool = testing::memory_pool().await;
+        let instrument_id = seed_instrument(&pool).await;
+
+        for (day, close) in [(10, "10.00"), (11, "11.00"), (12, "12.00")] {
+            upsert(
+                &pool,
+                &NewPrice {
+                    instrument_id,
+                    provider: "YAHOO".to_owned(),
+                    provider_symbol: "MSFT".to_owned(),
+                    date: NaiveDate::from_ymd_opt(2026, 6, day).expect("valid date"),
+                    close: Decimal::from_str(close).expect("close"),
+                    currency: "USD".to_owned(),
+                    fetched_at: "2026-06-16T08:00:00Z".to_owned(),
+                },
+            )
+            .await
+            .expect("price upsert should succeed");
+        }
+
+        // Inclusive window 11..=12.
+        let windowed = list_for_instrument_in_range(
+            &pool,
+            instrument_id,
+            "YAHOO",
+            Some(NaiveDate::from_ymd_opt(2026, 6, 11).unwrap()),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 12).unwrap()),
+        )
+        .await
+        .expect("range query should succeed");
+        let dates: Vec<&str> = windowed.iter().map(|r| r.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-06-11", "2026-06-12"]);
+
+        // No bounds returns full history ascending.
+        let all = list_for_instrument_in_range(&pool, instrument_id, "YAHOO", None, None)
+            .await
+            .expect("range query should succeed");
+        let all_dates: Vec<&str> = all.iter().map(|r| r.date.as_str()).collect();
+        assert_eq!(all_dates, vec!["2026-06-10", "2026-06-11", "2026-06-12"]);
+
+        // Provider filtering: wrong provider yields nothing.
+        let other = list_for_instrument_in_range(&pool, instrument_id, "OTHER", None, None)
+            .await
+            .expect("range query should succeed");
+        assert!(other.is_empty());
+
+        // Open-ended `from` only.
+        let from_only = list_for_instrument_in_range(
+            &pool,
+            instrument_id,
+            "YAHOO",
+            Some(NaiveDate::from_ymd_opt(2026, 6, 12).unwrap()),
+            None,
+        )
+        .await
+        .expect("range query should succeed");
+        assert_eq!(from_only.len(), 1);
+        assert_eq!(from_only[0].date, "2026-06-12");
     }
 
     #[tokio::test]

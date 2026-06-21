@@ -16,6 +16,8 @@ const FIND_LATEST_ON_OR_BEFORE_SQL: &str = "SELECT id, base, quote, date, rate, 
     FROM fx_rates WHERE base = ? AND quote = ? AND provider = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT 1";
 const FIND_PREVIOUS_BEFORE_SQL: &str = "SELECT id, base, quote, date, rate, provider, fetched_at \
     FROM fx_rates WHERE base = ? AND quote = ? AND provider = ? AND date < ? ORDER BY date DESC, id DESC LIMIT 1";
+const LIST_FOR_PAIR_SQL: &str = "SELECT id, base, quote, date, rate, provider, fetched_at \
+    FROM fx_rates WHERE base = ? AND quote = ? AND provider = ? ORDER BY date ASC, id ASC";
 const UPSERT_SQL: &str = "INSERT INTO fx_rates \
        (base, quote, date, rate, provider, fetched_at) \
      VALUES (?, ?, ?, ?, ?, ?) \
@@ -121,6 +123,21 @@ pub async fn find_previous_before(
         .fetch_optional(pool)
         .await?;
     Ok(row)
+}
+
+pub async fn list_for_pair(
+    pool: &SqlitePool,
+    base: &str,
+    quote: &str,
+    provider: &str,
+) -> Result<Vec<FxRateRow>, RepoError> {
+    let rows = sqlx::query_as::<_, FxRateRow>(LIST_FOR_PAIR_SQL)
+        .bind(base)
+        .bind(quote)
+        .bind(provider)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
 }
 
 pub async fn upsert(pool: &SqlitePool, new: &NewFxRate) -> Result<FxRateRow, RepoError> {
@@ -279,6 +296,39 @@ mod tests {
         .await
         .expect("empty previous lookup should succeed");
         assert!(no_previous.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_for_pair_returns_full_history_ascending() {
+        let pool = testing::memory_pool().await;
+
+        for (day, rate) in [(8, "9.00"), (10, "10.00"), (12, "11.00")] {
+            upsert(
+                &pool,
+                &NewFxRate {
+                    base: "USD".to_owned(),
+                    quote: "SEK".to_owned(),
+                    date: NaiveDate::from_ymd_opt(2026, 6, day).expect("valid date"),
+                    rate: Decimal::from_str(rate).expect("rate"),
+                    provider: "FRANKFURTER".to_owned(),
+                    fetched_at: "2026-06-16T08:00:00Z".to_owned(),
+                },
+            )
+            .await
+            .expect("fx upsert should succeed");
+        }
+
+        let rows = list_for_pair(&pool, "USD", "SEK", "FRANKFURTER")
+            .await
+            .expect("pair query should succeed");
+        let dates: Vec<&str> = rows.iter().map(|r| r.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-06-08", "2026-06-10", "2026-06-12"]);
+
+        // Wrong pair direction yields nothing.
+        let reversed = list_for_pair(&pool, "SEK", "USD", "FRANKFURTER")
+            .await
+            .expect("pair query should succeed");
+        assert!(reversed.is_empty());
     }
 
     #[tokio::test]
