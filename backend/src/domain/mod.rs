@@ -26,6 +26,7 @@ pub use transaction::{
 };
 #[allow(unused_imports)]
 pub use valuation::{
-    summarize_holdings, value_position, Availability, DataFreshness, FxCandidate, FxSnapshot,
-    PriceCandidate, PriceSnapshot, ValuationReason, ValuationSummary, ValuedHolding,
+    build_price_history, summarize_holdings, value_position, Availability, DataFreshness,
+    FxApplied, FxCandidate, FxSnapshot, PriceCandidate, PricePoint, PriceSnapshot, ValuationReason,
+    ValuationSummary, ValuedHolding,
 };
