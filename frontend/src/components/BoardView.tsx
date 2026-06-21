@@ -469,7 +469,6 @@ export function BoardView() {
                   dispatch({ type: "dateRangeChanged", dateRange })
                 }
                 displayPercentKind={gainsQuery.data?.display_percent_kind}
-                reportPeriod={gainsQuery.data?.report_period}
               />
             </BoardSection>
           ) : (

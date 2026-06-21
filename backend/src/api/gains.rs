@@ -216,7 +216,7 @@ pub async fn list(
         let has_period_exposure = period.start_position.quantity > 0
             || !period.period_transactions.is_empty()
             || period.end_position.quantity > 0;
-        let mut row_performance = RowPerformanceResponse::unavailable_empty();
+        let performance_start_date = has_period_exposure.then_some(report_start_date);
         if has_period_exposure {
             let period_inputs =
                 load_period_inputs(&state.pool, instrument, Some(report_start_date), end_date)
@@ -233,8 +233,6 @@ pub async fn list(
             let cash_flows = period_cash_flows(&period, is_sek);
             let actual_cash_flows = actual_period_cash_flows(&period, is_sek);
 
-            row_performance =
-                row_performance_response(&period_amounts, &cash_flows, report_start_date, end_date);
             perf_accum.add(&period_amounts, &cash_flows, &actual_cash_flows);
         }
 
@@ -243,7 +241,7 @@ pub async fn list(
                 gain_rows.push(closed_gain_row(
                     instrument,
                     &performance.realized,
-                    row_performance,
+                    performance_start_date,
                 )?);
             }
             continue;
@@ -263,7 +261,11 @@ pub async fn list(
 
         valued_holdings.push(valued_holding.clone());
 
-        gain_rows.push(open_gain_row(instrument, &valued_holding, row_performance)?);
+        gain_rows.push(open_gain_row(
+            instrument,
+            &valued_holding,
+            performance_start_date,
+        )?);
     }
 
     let summary = summarize_holdings(&valued_holdings);
@@ -384,105 +386,21 @@ fn component_percent(gain: Decimal, denominator: &Availability<Decimal>) -> Avai
     }
 }
 
-#[derive(Clone)]
-struct RowPerformanceResponse {
-    start_date: Option<NaiveDate>,
-    denominator_base: AvailabilityResponse,
-    capital_gain_base: AvailabilityResponse,
-    capital_gain_percent: AvailabilityResponse,
-    currency_gain_base: AvailabilityResponse,
-    currency_gain_percent: AvailabilityResponse,
-    total_return_base: AvailabilityResponse,
-    total_return_percent: AvailabilityResponse,
-}
-
-impl RowPerformanceResponse {
-    fn unavailable_empty() -> Self {
-        let unavailable = AvailabilityResponse::Unavailable {
-            reasons: Vec::new(),
-        };
-        Self {
-            start_date: None,
-            denominator_base: unavailable.clone(),
-            capital_gain_base: unavailable.clone(),
-            capital_gain_percent: unavailable.clone(),
-            currency_gain_base: unavailable.clone(),
-            currency_gain_percent: unavailable.clone(),
-            total_return_base: unavailable.clone(),
-            total_return_percent: unavailable,
-        }
-    }
-}
-
-fn row_performance_response(
-    amounts: &PeriodAmounts,
-    flows: &Availability<Vec<CashFlow>>,
-    effective_start_date: NaiveDate,
-    end_date: NaiveDate,
-) -> RowPerformanceResponse {
-    let denominator = match (amounts.begin_market_value_base.as_ref(), flows.as_ref()) {
-        (Some(begin), Some(cash_flows)) => {
-            compute_modified_dietz_denominator(*begin, cash_flows, effective_start_date, end_date)
-        }
-        _ => Availability::Unavailable {
-            reasons: merge_response_reasons(&[
-                amounts.begin_market_value_base.reasons(),
-                flows.reasons(),
-            ]),
-        },
-    };
-
-    RowPerformanceResponse {
-        start_date: Some(effective_start_date),
-        denominator_base: serialize_availability(&denominator, |v| money_string(*v)),
-        capital_gain_base: serialize_availability(&amounts.capital_gain_base, |v| money_string(*v)),
-        capital_gain_percent: row_component_percent(&amounts.capital_gain_base, &denominator),
-        currency_gain_base: serialize_availability(&amounts.currency_gain_base, |v| {
-            money_string(*v)
-        }),
-        currency_gain_percent: row_component_percent(&amounts.currency_gain_base, &denominator),
-        total_return_base: serialize_availability(&amounts.total_return_base, |v| money_string(*v)),
-        total_return_percent: row_total_return_percent(
-            &amounts.total_return_base,
-            &denominator,
-            (end_date - effective_start_date).num_days(),
-        ),
-    }
-}
-
-fn row_component_percent(
+fn current_position_percent(
     amount: &Availability<Decimal>,
-    denominator: &Availability<Decimal>,
+    cost_basis: &Availability<Decimal>,
 ) -> AvailabilityResponse {
-    match (amount.as_ref(), denominator.as_ref()) {
-        (Some(gain), Some(d)) => AvailabilityResponse::Available {
-            value: format!("{:.2}", (*gain / *d) * Decimal::from(100)),
+    match (amount.as_ref(), cost_basis.as_ref()) {
+        (Some(gain), Some(cb)) if !cb.is_zero() => AvailabilityResponse::Available {
+            value: format!("{:.2}", (*gain / *cb) * Decimal::from(100)),
+        },
+        (Some(_), Some(_)) => AvailabilityResponse::Unavailable {
+            reasons: serialize_reasons(&[ValuationReason::ZeroCostBasis]),
         },
         _ => AvailabilityResponse::Unavailable {
             reasons: serialize_reasons(&merge_response_reasons(&[
                 amount.reasons(),
-                denominator.reasons(),
-            ])),
-        },
-    }
-}
-
-fn row_total_return_percent(
-    amount: &Availability<Decimal>,
-    denominator: &Availability<Decimal>,
-    period_days: i64,
-) -> AvailabilityResponse {
-    match (amount.as_ref(), denominator.as_ref()) {
-        (Some(total), Some(d)) => {
-            let (value, _) = apply_annualisation(*total / *d, period_days);
-            AvailabilityResponse::Available {
-                value: format!("{:.2}", value * Decimal::from(100)),
-            }
-        }
-        _ => AvailabilityResponse::Unavailable {
-            reasons: serialize_reasons(&merge_response_reasons(&[
-                amount.reasons(),
-                denominator.reasons(),
+                cost_basis.reasons(),
             ])),
         },
     }
@@ -687,7 +605,7 @@ impl PerformanceAccumulator {
 fn open_gain_row(
     instrument: &instruments::InstrumentRow,
     valued_holding: &ValuedHolding,
-    row_performance: RowPerformanceResponse,
+    performance_start_date: Option<NaiveDate>,
 ) -> Result<GainRow, ApiError> {
     Ok(GainRow {
         instrument: InstrumentResponse::from_row(instrument)?,
@@ -696,16 +614,32 @@ fn open_gain_row(
         cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
             money_string(*v)
         }),
-        performance_start_date: row_performance
-            .start_date
-            .map(|d| d.format("%Y-%m-%d").to_string()),
-        performance_denominator_base: row_performance.denominator_base,
-        capital_gain_base: row_performance.capital_gain_base,
-        capital_gain_percent: row_performance.capital_gain_percent,
-        currency_gain_base: row_performance.currency_gain_base,
-        currency_gain_percent: row_performance.currency_gain_percent,
-        total_return_base: row_performance.total_return_base,
-        total_return_percent: row_performance.total_return_percent,
+        performance_start_date: performance_start_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        performance_denominator_base: serialize_availability(
+            &valued_holding.cost_basis_base,
+            |v| money_string(*v),
+        ),
+        total_return_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
+            money_string(*v)
+        }),
+        total_return_percent: current_position_percent(
+            &valued_holding.unrealized_gain_base,
+            &valued_holding.cost_basis_base,
+        ),
+        capital_gain_base: serialize_availability(&valued_holding.price_effect_base, |v| {
+            money_string(*v)
+        }),
+        capital_gain_percent: current_position_percent(
+            &valued_holding.price_effect_base,
+            &valued_holding.cost_basis_base,
+        ),
+        currency_gain_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
+            money_string(*v)
+        }),
+        currency_gain_percent: current_position_percent(
+            &valued_holding.fx_effect_base,
+            &valued_holding.cost_basis_base,
+        ),
         price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
             money_string(*v)
         }),
@@ -762,7 +696,7 @@ fn open_gain_row(
 fn closed_gain_row(
     instrument: &instruments::InstrumentRow,
     realized: &RealizedGain,
-    row_performance: RowPerformanceResponse,
+    performance_start_date: Option<NaiveDate>,
 ) -> Result<GainRow, ApiError> {
     let cost_basis_base = base_amount_availability(&realized.cost_basis_base);
     let gain_base = base_amount_availability(&realized.gain_base);
@@ -791,16 +725,22 @@ fn closed_gain_row(
         quantity: 0,
         cost_basis_native: money_string(realized.cost_basis_native),
         cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),
-        performance_start_date: row_performance
-            .start_date
-            .map(|d| d.format("%Y-%m-%d").to_string()),
-        performance_denominator_base: row_performance.denominator_base,
-        capital_gain_base: row_performance.capital_gain_base,
-        capital_gain_percent: row_performance.capital_gain_percent,
-        currency_gain_base: row_performance.currency_gain_base,
-        currency_gain_percent: row_performance.currency_gain_percent,
-        total_return_base: row_performance.total_return_base,
-        total_return_percent: row_performance.total_return_percent,
+        performance_start_date: performance_start_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        performance_denominator_base: serialize_availability(&cost_basis_base, |v| {
+            money_string(*v)
+        }),
+        capital_gain_base: serialize_base_amount(&realized.price_effect_base),
+        capital_gain_percent: current_position_percent(
+            &base_amount_availability(&realized.price_effect_base),
+            &cost_basis_base,
+        ),
+        currency_gain_base: serialize_base_amount(&realized.fx_effect_base),
+        currency_gain_percent: current_position_percent(
+            &base_amount_availability(&realized.fx_effect_base),
+            &cost_basis_base,
+        ),
+        total_return_base: serialize_availability(&gain_base, |v| money_string(*v)),
+        total_return_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
         price_effect_base: serialize_base_amount(&realized.price_effect_base),
         fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
         latest_price: None,
@@ -919,6 +859,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gains_open_row_percent_is_current_position_not_period_hybrid() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+        let latest = Local::now().naive_local().date();
+        let previous = latest - Duration::days(1);
+
+        // Opening buy well before the period, then an in-period partial sell, open remainder.
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-01",
+                   "quantity":10,"price":"100","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Sell","trade_date":"2026-03-01",
+                   "quantity":4,"price":"150","currency":"USD","fx_rate_to_base":"10"}),
+        )
+        .await;
+        seed_market_data(&state, instrument_id, latest, previous).await;
+
+        let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let row = &body["rows"][0];
+        assert_eq!(row["quantity"], 6);
+        // Current-position contract: row total-return percent == unrealized percent.
+        assert_eq!(row["total_return_percent"], row["unrealized_gain_percent"]);
+        assert_eq!(row["total_return_base"], row["unrealized_gain_base"]);
+    }
+
+    #[tokio::test]
     async fn gains_can_include_closed_positions_with_realized_gain() {
         let state = AppState::for_tests().await;
         let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
@@ -973,9 +948,12 @@ mod tests {
         assert_available(&row["unrealized_gain_percent"], "31.68");
         assert_available(&row["price_effect_base"], "2175.00");
         assert_available(&row["fx_effect_base"], "1000.00");
-        assert_unavailable(&row["capital_gain_base"], &["missing_end_fx"]);
-        assert_unavailable(&row["currency_gain_base"], &["missing_end_fx"]);
-        assert_unavailable(&row["total_return_base"], &["missing_end_fx"]);
+        assert_available(&row["capital_gain_base"], "2175.00");
+        assert_available_status(&row["capital_gain_percent"]);
+        assert_available(&row["currency_gain_base"], "1000.00");
+        assert_available_status(&row["currency_gain_percent"]);
+        assert_available(&row["total_return_base"], "3175.00");
+        assert_available(&row["total_return_percent"], "31.68");
     }
 
     #[tokio::test]
@@ -1061,9 +1039,9 @@ mod tests {
         assert_eq!(open_row["quantity"], 6);
         assert_available_status(&open_row["performance_denominator_base"]);
         assert_available(&open_row["unrealized_gain_base"], "1908.00");
-        assert_available(&open_row["capital_gain_base"], "2175.00");
-        assert_available(&open_row["currency_gain_base"], "1000.00");
-        assert_available(&open_row["total_return_base"], "3175.00");
+        assert_available(&open_row["capital_gain_base"], "1308.00");
+        assert_available(&open_row["currency_gain_base"], "600.00");
+        assert_available(&open_row["total_return_base"], "1908.00");
     }
 
     #[tokio::test]
@@ -1237,10 +1215,12 @@ mod tests {
             .find(|row| row["instrument"]["symbol"] == "LATER")
             .expect("later row");
 
+        // Both rows share the same report_start_date regardless of when each was first bought.
         assert_eq!(early_row["performance_start_date"], "2026-01-01");
-        assert_available(&early_row["performance_denominator_base"], "1000.00");
         assert_eq!(later_row["performance_start_date"], "2026-01-01");
-        assert_available(&later_row["performance_denominator_base"], "161.11");
+        // performance_denominator_base = cost_basis_base; SEK buys with no fx_rate_to_base are unavailable.
+        assert_unavailable_status(&early_row["performance_denominator_base"]);
+        assert_unavailable_status(&later_row["performance_denominator_base"]);
     }
 
     async fn seed_june_fixture(state: &AppState) -> i64 {
