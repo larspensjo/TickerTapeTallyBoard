@@ -482,19 +482,8 @@ pub struct MoneyWeightedReturn {
     pub period_days: i64,
 }
 
-/// Money-weighted (XIRR) return over [start_date, end_date].
-///
 /// `cash_flows` MUST be the actual investor cash-flow series (real cash at trade date, with
-/// no post-period split multiplication — see Task 2's `actual_period_cash_flows`).
-///
-/// Builds the dated investor cash-flow series:
-///   -begin_mv at start_date, -cf.amount_base at each flow date, +end_mv at end_date,
-/// then scans [-0.9999, 1_000_000] for sign-change sub-brackets (the NPV curve is not
-/// assumed monotonic, because interleaved buys and sells can make it non-monotonic). It
-/// solves the unique bracket by sign-tracked bisection and reports both the annualized rate
-/// and the cumulative period return (1+rate)^years - 1. Returns Unavailable when any input
-/// is unavailable, the period is non-positive, or the scan finds zero or more than one root
-/// (an ambiguous multi-IRR series is refused, not silently resolved).
+/// no post-period split multiplication).
 pub fn compute_money_weighted_return(
     begin_market_value: &Availability<Decimal>,
     cash_flows: &Availability<Vec<CashFlow>>,
@@ -570,12 +559,12 @@ pub fn compute_money_weighted_return(
     let mut r = -0.99_f64;
     while r < 1.0 {
         scan.push(r);
-        r += 0.01; // 1% steps across the realistic -99%..100% band
+        r += 0.01;
     }
     let mut r = 1.0_f64;
     while r < 1_000_000.0 {
         scan.push(r);
-        r *= 2.0; // geometric out to the cap
+        r *= 2.0;
     }
     scan.push(1_000_000.0);
 
@@ -589,13 +578,17 @@ pub fn compute_money_weighted_return(
         }
         if flo == 0.0 {
             exact = Some(lo);
-            break;
-        }
-        if flo * fhi < 0.0 {
+            // Do not break: continue scanning so additional brackets or exact zeros are
+            // detected; if more than one root exists the series is ambiguous.
+        } else if flo * fhi < 0.0 {
             brackets.push((lo, hi));
         }
     }
     let rate = if let Some(r) = exact {
+        if !brackets.is_empty() {
+            // Exact root plus additional sign-change brackets = ambiguous multi-root series.
+            return Availability::unavailable(ValuationReason::PerformanceDidNotConverge);
+        }
         r
     } else {
         if brackets.len() != 1 {
