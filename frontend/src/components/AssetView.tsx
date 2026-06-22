@@ -128,7 +128,10 @@ export function AssetView() {
           <AssetMetricTiles
             tiles={tilesView(data.gain, data.holding, data.transactions)}
           />
-          <AssetPriceChart query={pricesQuery} />
+          <AssetPriceChart
+            query={pricesQuery}
+            transactions={data.transactions}
+          />
           <div className="asset-two-col">
             <AssetGainsBreakdown breakdown={breakdownView(data.gain)} />
             <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
@@ -136,7 +139,10 @@ export function AssetView() {
         </>
       ) : (
         <>
-          <AssetPriceChart query={pricesQuery} />
+          <AssetPriceChart
+            query={pricesQuery}
+            transactions={data.transactions}
+          />
           <AssetDataMapping gain={null} priceStatus={data.priceStatus} />
         </>
       )}
@@ -296,10 +302,19 @@ function MetricTile({
 
 function AssetPriceChart({
   query,
+  transactions,
 }: {
   query: ReturnType<typeof useInstrumentPrices>;
+  transactions: Transaction[];
 }) {
-  const series = useMemo(() => instrumentPriceSeries(query.data), [query.data]);
+  const series = useMemo(
+    () => instrumentPriceSeries(query.data, transactions),
+    [query.data, transactions],
+  );
+  const visibleStart = useMemo(
+    () => firstTransactionDate(transactions),
+    [transactions],
+  );
 
   if (query.isPending) {
     return (
@@ -337,19 +352,25 @@ function AssetPriceChart({
   return (
     <section className="panel chart-panel" aria-label="Price chart">
       <div className="chart-meta">
-        <h2>Price history (SEK)</h2>
-        {series.droppedForMissingFx > 0 ? (
-          <span className="status-chip warning compact">
-            {series.droppedForMissingFx} days missing FX
-          </span>
-        ) : null}
+        <h2>Price history ({query.data?.currency ?? "native"})</h2>
       </div>
       <TimeSeriesChart
         data={series.points}
-        ariaLabel="Instrument price history in SEK"
+        ariaLabel={`Instrument price history in ${query.data?.currency ?? "native currency"}`}
+        visibleStart={visibleStart}
       />
     </section>
   );
+}
+
+function firstTransactionDate(transactions: Transaction[]): string | undefined {
+  return transactions.reduce<string | undefined>((firstDate, transaction) => {
+    if (firstDate === undefined || transaction.trade_date < firstDate) {
+      return transaction.trade_date;
+    }
+
+    return firstDate;
+  }, undefined);
 }
 
 function AssetGainsBreakdown({ breakdown }: { breakdown: BreakdownView }) {

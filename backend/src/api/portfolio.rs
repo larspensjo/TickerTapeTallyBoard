@@ -22,6 +22,7 @@ pub struct ValueHistoryQuery {
 #[derive(Debug, Serialize)]
 pub struct ValueHistoryResponse {
     base_currency: String,
+    start_date: Option<String>,
     points: Vec<ValueHistoryPointResponse>,
 }
 
@@ -76,11 +77,17 @@ pub async fn value_history(
 
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
     let mut ledgers: BTreeMap<i64, Vec<_>> = BTreeMap::new();
+    let mut start_date: Option<NaiveDate> = None;
     for row in &transaction_rows {
+        let transaction = row.to_ledger()?;
+        start_date = Some(match start_date {
+            Some(current) => current.min(transaction.trade_date),
+            None => transaction.trade_date,
+        });
         ledgers
             .entry(row.instrument_id)
             .or_default()
-            .push(row.to_ledger()?);
+            .push(transaction);
     }
 
     let mut inputs = Vec::new();
@@ -143,6 +150,7 @@ pub async fn value_history(
 
     Ok(Json(ValueHistoryResponse {
         base_currency: BASE_CURRENCY.to_string(),
+        start_date: start_date.map(|date| date.format("%Y-%m-%d").to_string()),
         points: points.iter().map(point_response).collect(),
     }))
 }
@@ -317,6 +325,7 @@ mod tests {
         let (status, body) = send(&state, "GET", "/api/portfolio/value-history", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["base_currency"], "SEK");
+        assert!(body["start_date"].is_null());
         assert_eq!(body["points"].as_array().expect("points").len(), 0);
     }
 
@@ -353,6 +362,7 @@ mod tests {
         let (status, body) = send(&state, "GET", "/api/portfolio/value-history", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         let points = body["points"].as_array().expect("points");
+        assert_eq!(body["start_date"], "2026-01-02");
         assert_eq!(points.len(), 2);
         assert_eq!(points[0]["date"], "2026-01-02");
         assert_eq!(points[0]["value_base"], "1000.00");

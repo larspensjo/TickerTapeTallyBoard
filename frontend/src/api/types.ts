@@ -100,6 +100,7 @@ export interface ValueHistoryPoint {
 
 export interface ValueHistoryResponse {
   base_currency: string;
+  start_date: string | null;
   points: ValueHistoryPoint[];
 }
 

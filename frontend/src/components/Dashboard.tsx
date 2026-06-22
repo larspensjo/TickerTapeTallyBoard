@@ -140,6 +140,7 @@ function DashboardValueChart({
       <TimeSeriesChart
         data={points}
         ariaLabel="Portfolio value over time in SEK"
+        visibleStart={query.data?.start_date ?? undefined}
         height={280}
       />
     </section>
