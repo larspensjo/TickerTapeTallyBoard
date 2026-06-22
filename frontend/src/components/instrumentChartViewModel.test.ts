@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PriceHistoryResponse, Transaction } from "../api/types";
-import { instrumentPriceSeries } from "./instrumentChartViewModel";
+import {
+  instrumentPriceSeries,
+  tradeMarkers,
+} from "./instrumentChartViewModel";
 
 function resp(points: PriceHistoryResponse["points"]): PriceHistoryResponse {
   return {
@@ -134,5 +137,152 @@ describe("instrumentPriceSeries", () => {
     );
 
     expect(result.points).toEqual([{ time: "2025-06-04", value: 157.11 }]);
+  });
+});
+
+describe("tradeMarkers", () => {
+  it("maps Buy and Sell into sided markers, ignoring other types", () => {
+    const markers = tradeMarkers(
+      [
+        tx({ id: 1, type: "Buy", trade_date: "2025-05-11", quantity: 2 }),
+        tx({ id: 2, type: "Sell", trade_date: "2025-06-20", quantity: -1 }),
+        tx({ id: 3, type: "Dividend", trade_date: "2025-07-01" }),
+        tx({ id: 4, type: "Split", trade_date: "2025-08-01" }),
+      ],
+      "USD",
+    );
+
+    expect(markers.map((m) => [m.time, m.side])).toEqual([
+      ["2025-05-11", "buy"],
+      ["2025-06-20", "sell"],
+    ]);
+  });
+
+  it("emits sell markers from negative quantities with a positive magnitude", () => {
+    const markers = tradeMarkers(
+      [tx({ id: 1, type: "Sell", trade_date: "2025-10-31", quantity: -11 })],
+      "USD",
+    );
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0].side).toBe("sell");
+    expect(markers[0].quantity).toBe(11);
+  });
+
+  it("merges same-day, same-side trades with a quantity-weighted price and summed fee", () => {
+    const markers = tradeMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          quantity: 1,
+          price: "100",
+          brokerage: "5",
+        }),
+        tx({
+          id: 2,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          quantity: 3,
+          price: "200",
+          brokerage: "7",
+        }),
+      ],
+      "USD",
+    );
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0].quantity).toBe(4);
+    expect(markers[0].avgPrice).toBeCloseTo(175); // (100*1 + 200*3) / 4
+    expect(markers[0].fee).toBeCloseTo(12);
+  });
+
+  it("keeps same-day opposite sides as separate markers", () => {
+    const markers = tradeMarkers(
+      [
+        tx({ id: 1, type: "Buy", trade_date: "2025-05-11", quantity: 2 }),
+        tx({ id: 2, type: "Sell", trade_date: "2025-05-11", quantity: 1 }),
+      ],
+      "USD",
+    );
+
+    expect(markers).toHaveLength(2);
+    expect(markers.map((m) => m.side).sort()).toEqual(["buy", "sell"]);
+  });
+
+  it("reports a null fee when no brokerage was recorded", () => {
+    const markers = tradeMarkers(
+      [tx({ id: 1, type: "Buy", brokerage: null })],
+      "USD",
+    );
+
+    expect(markers[0].fee).toBeNull();
+    expect(markers[0].feeCurrency).toBeNull();
+  });
+
+  it("carries the brokerage currency, not the instrument currency, on the fee", () => {
+    const markers = tradeMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          currency: "USD",
+          brokerage: "9.60",
+          brokerage_currency: "SEK",
+        }),
+      ],
+      "USD",
+    );
+
+    expect(markers[0].fee).toBeCloseTo(9.6);
+    expect(markers[0].feeCurrency).toBe("SEK");
+  });
+
+  it("drops the merged fee when same-day trades report differing fee currencies", () => {
+    const markers = tradeMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          brokerage: "9.60",
+          brokerage_currency: "SEK",
+        }),
+        tx({
+          id: 2,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          brokerage: "1.00",
+          brokerage_currency: "USD",
+        }),
+      ],
+      "USD",
+    );
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0].fee).toBeNull();
+    expect(markers[0].feeCurrency).toBeNull();
+  });
+
+  it("skips trades whose currency is not the native currency", () => {
+    const markers = tradeMarkers(
+      [tx({ id: 1, type: "Buy", currency: "SEK" })],
+      "USD",
+    );
+
+    expect(markers).toEqual([]);
+  });
+
+  it("sorts markers by date", () => {
+    const markers = tradeMarkers(
+      [
+        tx({ id: 1, type: "Buy", trade_date: "2025-06-20" }),
+        tx({ id: 2, type: "Sell", trade_date: "2025-05-11" }),
+      ],
+      "USD",
+    );
+
+    expect(markers.map((m) => m.time)).toEqual(["2025-05-11", "2025-06-20"]);
   });
 });

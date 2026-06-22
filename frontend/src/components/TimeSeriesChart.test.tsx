@@ -6,16 +6,19 @@ import { TimeSeriesChart } from "./TimeSeriesChart";
 
 const chartMocks = vi.hoisted(() => {
   const setData = vi.fn();
+  const setMarkers = vi.fn();
   const setVisibleRange = vi.fn();
   const fitContent = vi.fn();
   const applyOptions = vi.fn();
   const remove = vi.fn();
+  const subscribeCrosshairMove = vi.fn();
   const timeScale = vi.fn(() => ({ setVisibleRange, fitContent }));
-  const addAreaSeries = vi.fn(() => ({ setData }));
+  const addAreaSeries = vi.fn(() => ({ setData, setMarkers }));
   const createChart = vi.fn(() => ({
     addAreaSeries,
     applyOptions,
     remove,
+    subscribeCrosshairMove,
     timeScale,
   }));
 
@@ -26,6 +29,8 @@ const chartMocks = vi.hoisted(() => {
     fitContent,
     remove,
     setData,
+    setMarkers,
+    subscribeCrosshairMove,
     setVisibleRange,
     timeScale,
   };

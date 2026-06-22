@@ -4,15 +4,39 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  type SeriesMarker,
   TickMarkType,
   type Time,
   type WhitespaceData,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface TimeSeriesPoint {
   time: string;
   value: number;
+}
+
+export interface ChartTradeMarker {
+  time: string;
+  side: "buy" | "sell";
+  title: string;
+  rows: { label: string; value: string }[];
+}
+
+interface TradeTooltipState {
+  x: number;
+  y: number;
+  marker: ChartTradeMarker;
+}
+
+const markerColors = {
+  buy: "#16c784",
+  sell: "#ff4d4f",
+} as const;
+
+function isoFromTime(time: Time): string | null {
+  const date = chartDate(time);
+  return date ? date.toISOString().slice(0, 10) : null;
 }
 
 type AreaSeriesPoint = AreaData<Time> | WhitespaceData<Time>;
@@ -111,16 +135,22 @@ export function TimeSeriesChart({
   data,
   ariaLabel,
   visibleStart,
+  markers = [],
   height = 240,
 }: {
   data: TimeSeriesPoint[];
   ariaLabel: string;
   visibleStart?: string;
+  markers?: ChartTradeMarker[];
   height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const markersRef = useRef<Map<string, ChartTradeMarker>>(new Map());
+  const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
+
+  markersRef.current = new Map(markers.map((marker) => [marker.time, marker]));
 
   useEffect(() => {
     const container = containerRef.current;
@@ -162,11 +192,23 @@ export function TimeSeriesChart({
     const observer = new ResizeObserver(resize);
     observer.observe(container);
 
+    chart.subscribeCrosshairMove((param) => {
+      const iso = param.time ? isoFromTime(param.time) : null;
+      const marker = iso ? markersRef.current.get(iso) : undefined;
+      if (!marker || !param.point) {
+        setTooltip(null);
+        return;
+      }
+
+      setTooltip({ x: param.point.x, y: param.point.y, marker });
+    });
+
     return () => {
       observer.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      setTooltip(null);
     };
   }, [height]);
 
@@ -188,12 +230,51 @@ export function TimeSeriesChart({
     }
   }, [data, visibleStart]);
 
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    const seriesMarkers: SeriesMarker<Time>[] = markers
+      .slice()
+      .sort((a, b) => a.time.localeCompare(b.time))
+      .map((marker) => ({
+        time: marker.time,
+        position: marker.side === "buy" ? "belowBar" : "aboveBar",
+        shape: marker.side === "buy" ? "arrowUp" : "arrowDown",
+        color: markerColors[marker.side],
+      }));
+
+    series.setMarkers(seriesMarkers);
+    setTooltip(null);
+  }, [markers]);
+
   return (
-    <div
-      ref={containerRef}
-      className="time-series-chart"
-      role="img"
-      aria-label={ariaLabel}
-    />
+    <div className="time-series-chart-wrap">
+      <div
+        ref={containerRef}
+        className="time-series-chart"
+        role="img"
+        aria-label={ariaLabel}
+      />
+      {tooltip ? (
+        <div
+          className={`chart-trade-tooltip ${tooltip.marker.side}`}
+          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
+          role="tooltip"
+        >
+          <span className="chart-trade-tooltip-title">
+            {tooltip.marker.title}
+          </span>
+          <dl>
+            {tooltip.marker.rows.map((entry) => (
+              <div key={entry.label}>
+                <dt>{entry.label}</dt>
+                <dd>{entry.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+    </div>
   );
 }

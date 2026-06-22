@@ -23,8 +23,11 @@ import {
   type Tiles,
   tilesView,
 } from "./assetViewModel";
-import { instrumentPriceSeries } from "./instrumentChartViewModel";
-import { TimeSeriesChart } from "./TimeSeriesChart";
+import {
+  instrumentPriceSeries,
+  tradeMarkers,
+} from "./instrumentChartViewModel";
+import { type ChartTradeMarker, TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
 import {
   formatGroupedNumber,
@@ -315,6 +318,11 @@ function AssetPriceChart({
     () => firstTransactionDate(transactions),
     [transactions],
   );
+  const currency = query.data?.currency;
+  const markers = useMemo(
+    () => (currency ? tradeChartMarkers(transactions, currency) : []),
+    [transactions, currency],
+  );
 
   if (query.isPending) {
     return (
@@ -358,9 +366,42 @@ function AssetPriceChart({
         data={series.points}
         ariaLabel={`Instrument price history in ${query.data?.currency ?? "native currency"}`}
         visibleStart={visibleStart}
+        markers={markers}
       />
     </section>
   );
+}
+
+function tradeChartMarkers(
+  transactions: Transaction[],
+  currency: string,
+): ChartTradeMarker[] {
+  return tradeMarkers(transactions, currency).map((marker) => {
+    const rows = [
+      { label: "Date", value: marker.time },
+      {
+        label: "Quantity",
+        value: formatGroupedNumber(String(marker.quantity)),
+      },
+      {
+        label: "Avg price",
+        value: `${formatGroupedNumber(marker.avgPrice.toFixed(2))} ${marker.currency}`,
+      },
+    ];
+    if (marker.fee !== null && marker.feeCurrency !== null) {
+      rows.push({
+        label: "Fee",
+        value: `${formatGroupedNumber(marker.fee.toFixed(2))} ${marker.feeCurrency}`,
+      });
+    }
+
+    return {
+      time: marker.time,
+      side: marker.side,
+      title: marker.side === "buy" ? "Buy" : "Sell",
+      rows,
+    };
+  });
 }
 
 function firstTransactionDate(transactions: Transaction[]): string | undefined {

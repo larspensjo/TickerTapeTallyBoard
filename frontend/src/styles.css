@@ -1295,6 +1295,71 @@ th.number-head .sort-button {
   min-height: 240px;
 }
 
+.time-series-chart-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.chart-trade-tooltip {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, calc(-100% - 12px));
+  min-width: 160px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-top: 2px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.chart-trade-tooltip.buy {
+  border-top-color: var(--up);
+}
+
+.chart-trade-tooltip.sell {
+  border-top-color: var(--down);
+}
+
+.chart-trade-tooltip-title {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.chart-trade-tooltip.buy .chart-trade-tooltip-title {
+  color: var(--up);
+}
+
+.chart-trade-tooltip.sell .chart-trade-tooltip-title {
+  color: var(--down);
+}
+
+.chart-trade-tooltip dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px var(--space-3);
+  margin: 0;
+}
+
+.chart-trade-tooltip dl div {
+  display: contents;
+}
+
+.chart-trade-tooltip dt {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.chart-trade-tooltip dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+}
+
 .chart-panel {
   display: flex;
   flex-direction: column;
