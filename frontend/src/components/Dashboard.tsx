@@ -201,12 +201,12 @@ function AllocationPanel({ rows }: { rows: GainsRow[] }) {
     [rows, dimension],
   );
   const palette = [
-    "#4f9cff",
-    "#46c39a",
-    "#e6a93b",
-    "#d96c6c",
-    "#9b8cff",
-    "#5fb0c9",
+    "var(--chart-1)",
+    "var(--chart-2)",
+    "var(--chart-3)",
+    "var(--chart-4)",
+    "var(--chart-5)",
+    "var(--chart-6)",
   ];
 
   return (

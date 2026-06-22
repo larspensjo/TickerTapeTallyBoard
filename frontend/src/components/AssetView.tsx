@@ -14,6 +14,7 @@ import type {
   PriceStatusInstrument,
   Transaction,
 } from "../api/types";
+import { AsyncBoundary } from "./AsyncBoundary";
 import {
   type BreakdownView,
   breakdownView,
@@ -65,33 +66,22 @@ export function AssetView() {
     priceStatusQuery.isError;
 
   if (isPending) {
-    return (
-      <div className="board-state">
-        <div className="skeleton-bar" />
-        <div className="skeleton-bar" />
-        <div className="skeleton-bar" />
-      </div>
-    );
+    return <AsyncBoundary isPending />;
   }
 
   if (isError) {
     return (
-      <div className="board-state error">
-        <p className="down">Could not load asset data.</p>
-        <button
-          type="button"
-          className="button outline"
-          onClick={() => {
-            void instrumentsQuery.refetch();
-            void gainsQuery.refetch();
-            void holdingsQuery.refetch();
-            void transactionsQuery.refetch();
-            void priceStatusQuery.refetch();
-          }}
-        >
-          Retry
-        </button>
-      </div>
+      <AsyncBoundary
+        isError
+        errorMessage="Could not load asset data."
+        onRetry={() => {
+          void instrumentsQuery.refetch();
+          void gainsQuery.refetch();
+          void holdingsQuery.refetch();
+          void transactionsQuery.refetch();
+          void priceStatusQuery.refetch();
+        }}
+      />
     );
   }
 

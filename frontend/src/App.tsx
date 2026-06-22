@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { AsyncBoundary } from "./components/AsyncBoundary";
 
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((module) => ({
@@ -63,11 +64,5 @@ export function App() {
 }
 
 function RouteFallback() {
-  return (
-    <div className="board-state">
-      <div className="skeleton-bar" />
-      <div className="skeleton-bar" />
-      <div className="skeleton-bar" />
-    </div>
-  );
+  return <AsyncBoundary isPending />;
 }

@@ -19,6 +19,13 @@
   --down-soft: rgba(255, 77, 79, 0.13);
   --warning: #f4b000;
   --warning-soft: rgba(244, 176, 0, 0.14);
+  /* chart palette (allocation bar, series) — accent/up/down/warning family, de-saturated for multi-series use */
+  --chart-1: #4d8bff;
+  --chart-2: #46c39a;
+  --chart-3: #e6a93b;
+  --chart-4: #d96c6c;
+  --chart-5: #9b8cff;
+  --chart-6: #5fb0c9;
   --font-ui:
     "Inter", -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial,
     sans-serif;

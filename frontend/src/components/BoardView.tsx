@@ -1,7 +1,7 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
-import { type ReactNode, useReducer, useState } from "react";
+import { useReducer, useState } from "react";
 import { useLocation } from "react-router-dom";
 import packageJson from "../../package.json";
 import {
@@ -21,6 +21,7 @@ import type {
   RefreshRunSummary,
 } from "../api/types";
 import { AddTransactionForm } from "./AddTransactionForm";
+import { AsyncBoundary } from "./AsyncBoundary";
 import { type DatePreset, GainsTable, loadReturnMethod } from "./GainsTable";
 import { HoldingsTable } from "./HoldingsTable";
 import { TransactionsTable } from "./TransactionsTable";
@@ -430,7 +431,7 @@ export function BoardView() {
           </div>
 
           {uiState.boardView === "holdings" ? (
-            <BoardSection
+            <AsyncBoundary
               isPending={holdingsQuery.isPending}
               isError={holdingsQuery.isError}
               isEmpty={(holdingsQuery.data?.length ?? 0) === 0}
@@ -444,9 +445,9 @@ export function BoardView() {
                   dispatch({ type: "boardFilterChanged", filter })
                 }
               />
-            </BoardSection>
+            </AsyncBoundary>
           ) : uiState.boardView === "gains" ? (
-            <BoardSection
+            <AsyncBoundary
               isPending={gainsQuery.isPending}
               isError={gainsQuery.isError}
               isEmpty={(gainsQuery.data?.rows.length ?? 0) === 0}
@@ -482,9 +483,9 @@ export function BoardView() {
                   dispatch({ type: "returnMethodChanged", returnMethod })
                 }
               />
-            </BoardSection>
+            </AsyncBoundary>
           ) : (
-            <BoardSection
+            <AsyncBoundary
               isPending={transactionsQuery.isPending}
               isError={transactionsQuery.isError}
               isEmpty={(transactionsQuery.data?.length ?? 0) === 0}
@@ -506,53 +507,10 @@ export function BoardView() {
                 }
                 errorMessage={deleteError}
               />
-            </BoardSection>
+            </AsyncBoundary>
           )}
         </article>
       </section>
     </>
   );
-}
-
-function BoardSection({
-  isPending,
-  isError,
-  isEmpty,
-  onRetry,
-  emptyMessage,
-  children,
-}: {
-  isPending: boolean;
-  isError: boolean;
-  isEmpty: boolean;
-  onRetry: () => void;
-  emptyMessage: string;
-  children: ReactNode;
-}) {
-  if (isPending) {
-    return (
-      <div className="board-state">
-        <div className="skeleton-bar" />
-        <div className="skeleton-bar" />
-        <div className="skeleton-bar" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="board-state error">
-        <p className="down">Could not load data.</p>
-        <button type="button" className="button outline" onClick={onRetry}>
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  if (isEmpty) {
-    return <div className="board-state muted">{emptyMessage}</div>;
-  }
-
-  return <>{children}</>;
 }

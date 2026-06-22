@@ -66,16 +66,16 @@ Low-risk groundwork that immediately reduces duplication and tokenizes color. No
 
 ### Task 1.1: Tokenize the allocation palette
 **Files:** Modify `frontend/src/styles.css`, `frontend/src/components/Dashboard.tsx`.
-- [ ] Add `--chart-1 … --chart-6` to `:root` in `styles.css`, derived from the theme (accent/up/down/warning family) per `VisualDesign.DarkTheme.md` — no raw hex left in the component.
-- [ ] Replace the hardcoded `palette = ["#4f9cff", …]` array in `Dashboard.tsx` with the tokens (read via CSS vars or a token map).
-- [ ] **Verify:** `npm run check` passes; allocation bar renders with theme-consistent colors (manual glance). Stage both files.
+- [x] Add `--chart-1 … --chart-6` to `:root` in `styles.css`, derived from the theme (accent/up/down/warning family) per `VisualDesign.DarkTheme.md` — no raw hex left in the component.
+- [x] Replace the hardcoded `palette = ["#4f9cff", …]` array in `Dashboard.tsx` with the tokens (read via CSS vars or a token map).
+- [x] **Verify:** `npm run check` passes; allocation bar renders with theme-consistent colors (manual glance). Stage both files.
 
 ### Task 1.2: Extract `AsyncBoundary`
 **Files:** Create `frontend/src/components/AsyncBoundary.tsx` + `AsyncBoundary.test.tsx`; modify `Dashboard.tsx`, `BoardView.tsx`, `AssetView.tsx`.
-- [ ] Create `AsyncBoundary` taking `isPending` / `isError` / `isEmpty` / `onRetry` / `emptyMessage` / `children`, rendering the existing skeleton, error (`down` + outline Retry), and muted-empty markup verbatim.
-- [ ] Replace the duplicated `board-state` blocks in `BoardView` (`BoardSection`), `AssetView`, and `Dashboard` with `AsyncBoundary`.
-- [ ] Add a jsdom test covering pending → error (retry fires) → empty → children.
-- [ ] **Verify:** `npm run check` passes; all three screens still show identical loading/error/empty states. Stage the files.
+- [x] Create `AsyncBoundary` taking `isPending` / `isError` / `isEmpty` / `onRetry` / `emptyMessage` / `children`, rendering the existing skeleton, error (`down` + outline Retry), and muted-empty markup verbatim.
+- [x] Replace the duplicated `board-state` blocks in `BoardView` (`BoardSection`), `AssetView`, and `Dashboard` with `AsyncBoundary`.
+- [x] Add a jsdom test covering pending → error (retry fires) → empty → children.
+- [x] **Verify:** `npm run check` passes; all three screens still show identical loading/error/empty states. Stage the files.
 
 **Human test recommended:** click through Dashboard/Board/Asset with the backend stopped to confirm error + Retry still work.
 
