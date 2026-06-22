@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   useGains,
@@ -299,6 +299,8 @@ function AssetPriceChart({
 }: {
   query: ReturnType<typeof useInstrumentPrices>;
 }) {
+  const series = useMemo(() => instrumentPriceSeries(query.data), [query.data]);
+
   if (query.isPending) {
     return (
       <section className="chart-band" aria-label="Price chart">
@@ -321,8 +323,6 @@ function AssetPriceChart({
       </section>
     );
   }
-
-  const series = instrumentPriceSeries(query.data);
 
   if (series.points.length === 0) {
     return (

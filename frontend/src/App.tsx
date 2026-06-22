@@ -1,8 +1,26 @@
+import { lazy, Suspense } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
-import { AssetView } from "./components/AssetView";
-import { BoardView } from "./components/BoardView";
-import { Dashboard } from "./components/Dashboard";
-import { ImportView } from "./components/ImportView";
+
+const Dashboard = lazy(() =>
+  import("./components/Dashboard").then((module) => ({
+    default: module.Dashboard,
+  })),
+);
+const BoardView = lazy(() =>
+  import("./components/BoardView").then((module) => ({
+    default: module.BoardView,
+  })),
+);
+const ImportView = lazy(() =>
+  import("./components/ImportView").then((module) => ({
+    default: module.ImportView,
+  })),
+);
+const AssetView = lazy(() =>
+  import("./components/AssetView").then((module) => ({
+    default: module.AssetView,
+  })),
+);
 
 function navClass({ isActive }: { isActive: boolean }) {
   return isActive ? "active" : undefined;
@@ -31,13 +49,25 @@ export function App() {
       </header>
 
       <main className="workspace">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/board" element={<BoardView />} />
-          <Route path="/import" element={<ImportView />} />
-          <Route path="/asset/:id" element={<AssetView />} />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/board" element={<BoardView />} />
+            <Route path="/import" element={<ImportView />} />
+            <Route path="/asset/:id" element={<AssetView />} />
+          </Routes>
+        </Suspense>
       </main>
+    </div>
+  );
+}
+
+function RouteFallback() {
+  return (
+    <div className="board-state">
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
     </div>
   );
 }

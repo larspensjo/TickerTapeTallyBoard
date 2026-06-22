@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
 import type { GainsRow, GainsSummary } from "../api/types";
@@ -80,6 +80,20 @@ function DashboardValueChart({
 }: {
   query: ReturnType<typeof usePortfolioValueHistory>;
 }) {
+  const history = query.data?.points;
+  const points = useMemo(
+    () =>
+      (history ?? []).map((point) => ({
+        time: point.date,
+        value: Number(point.value_base),
+      })),
+    [history],
+  );
+  const incompleteDays = useMemo(
+    () => (history ?? []).filter((point) => point.incomplete).length,
+    [history],
+  );
+
   if (query.isPending) {
     return (
       <section className="chart-band" aria-label="Portfolio value">
@@ -102,13 +116,6 @@ function DashboardValueChart({
       </section>
     );
   }
-
-  const history = query.data?.points ?? [];
-  const points = history.map((point) => ({
-    time: point.date,
-    value: Number(point.value_base),
-  }));
-  const incompleteDays = history.filter((point) => point.incomplete).length;
 
   if (points.length === 0) {
     return (
@@ -188,7 +195,10 @@ function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
 
 function AllocationPanel({ rows }: { rows: GainsRow[] }) {
   const [dimension, setDimension] = useState<AllocationDimension>("instrument");
-  const { slices, excludedCount } = allocationBreakdown(rows, dimension);
+  const { slices, excludedCount } = useMemo(
+    () => allocationBreakdown(rows, dimension),
+    [rows, dimension],
+  );
   const palette = [
     "#4f9cff",
     "#46c39a",

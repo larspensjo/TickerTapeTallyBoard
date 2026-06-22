@@ -7,6 +7,11 @@ export interface InstrumentPriceSeries {
   allUnavailable: boolean;
 }
 
+/**
+ * Convert only available SEK-denominated price points to chart data.
+ * Unavailable `close_base` values are counted, not coerced to zero, so missing
+ * FX cannot draw misleading drops in the price chart.
+ */
 export function instrumentPriceSeries(
   response: PriceHistoryResponse | undefined,
 ): InstrumentPriceSeries {

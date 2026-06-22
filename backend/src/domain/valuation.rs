@@ -175,6 +175,17 @@ pub struct ValueHistoryPoint {
     pub excluded_count: usize,
 }
 
+/// Build the portfolio value series in SEK from a union of price and FX dates.
+///
+/// The date spine starts at the first Buy and includes every supplied price or
+/// FX date in the optional window. For each date, open positions are derived
+/// from ledger rows up to that date, future splits are applied so historic
+/// quantities line up with split-adjusted price history, and the latest price
+/// and FX rows on or before the date are carried forward. Instruments missing
+/// either input are counted as excluded; dates where every open position is
+/// excluded are omitted so the chart never shows a spurious zero portfolio
+/// value. Non-SEK FX rows must be for `native_currency -> SEK`; mismatched rows
+/// are ignored to keep this pure helper safe even if callers forget to prefilter.
 pub fn build_value_history(
     instruments: &[ValueHistoryInstrument],
     from: Option<NaiveDate>,
@@ -247,7 +258,11 @@ pub fn build_value_history(
             } else {
                 inst.fx_rates
                     .iter()
-                    .rfind(|fx| fx.date <= date)
+                    .rfind(|fx| {
+                        fx.date <= date
+                            && fx.base.eq_ignore_ascii_case(&inst.native_currency)
+                            && fx.quote.eq_ignore_ascii_case("SEK")
+                    })
                     .map(|fx| fx.rate)
             };
 
@@ -970,6 +985,21 @@ mod tests {
         assert_eq!(points[0].value_base, dec!(10000));
         assert_eq!(points[1].date, d(2026, 1, 6));
         assert_eq!(points[1].value_base, dec!(11000));
+    }
+
+    #[test]
+    fn value_history_ignores_fx_for_other_pairs() {
+        let inst = vh_instrument(
+            "USD",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(10)), "USD")],
+            vec![price(d(2026, 1, 2), dec!(100), "USD")],
+            vec![
+                fx(d(2026, 1, 2), dec!(10), "EUR", "SEK"),
+                fx(d(2026, 1, 3), dec!(11), "USD", "NOK"),
+            ],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert!(points.is_empty());
     }
 
     #[test]

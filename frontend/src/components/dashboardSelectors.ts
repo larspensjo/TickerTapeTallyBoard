@@ -64,6 +64,11 @@ function bucketKey(row: GainsRow, dimension: AllocationDimension): string {
   }
 }
 
+/**
+ * Build display-only allocation weights from currently open positions.
+ * Unavailable market values are counted as exclusions instead of being treated
+ * as zero, while percentage weights intentionally use floats for chart display.
+ */
 export function allocationBreakdown(
   rows: GainsRow[],
   dimension: AllocationDimension,
@@ -73,6 +78,8 @@ export function allocationBreakdown(
   let excludedCount = 0;
 
   for (const row of rows) {
+    if (row.position_status !== "open") continue;
+
     if (row.market_value_base.status !== "available") {
       excludedCount += 1;
       continue;

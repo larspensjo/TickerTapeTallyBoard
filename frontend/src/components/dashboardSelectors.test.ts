@@ -100,8 +100,9 @@ describe("allocationBreakdown", () => {
   function mvRow(
     instrument: Instrument,
     marketValue: GainsRow["market_value_base"],
+    status: "open" | "closed" = "open",
   ): GainsRow {
-    const gainsRow = row(instrument, "open", {
+    const gainsRow = row(instrument, status, {
       status: "available",
       value: "0.00",
     });
@@ -155,6 +156,21 @@ describe("allocationBreakdown", () => {
     expect(excludedCount).toBe(1);
     expect(slices).toHaveLength(1);
     expect(slices[0].weightPercent).toBe(100);
+  });
+
+  it("ignores closed positions before counting unavailable market values", () => {
+    const rows = [
+      mvRow(inst(1, "AAA"), { status: "available", value: "100.00" }),
+      mvRow(
+        inst(2, "BBB"),
+        { status: "unavailable", reasons: ["missing_price"] },
+        "closed",
+      ),
+    ];
+    const { slices, excludedCount } = allocationBreakdown(rows, "instrument");
+    expect(excludedCount).toBe(0);
+    expect(slices).toHaveLength(1);
+    expect(slices[0].label).toBe("AAA");
   });
 
   it("returns empty allocation for no available rows", () => {
