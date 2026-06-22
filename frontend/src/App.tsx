@@ -1,6 +1,7 @@
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { AssetView } from "./components/AssetView";
 import { BoardView } from "./components/BoardView";
+import { Dashboard } from "./components/Dashboard";
 import { ImportView } from "./components/ImportView";
 
 function navClass({ isActive }: { isActive: boolean }) {
@@ -18,6 +19,9 @@ export function App() {
 
         <nav className="app-nav" aria-label="Primary">
           <NavLink to="/" end className={navClass}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/board" className={navClass}>
             Board
           </NavLink>
           <NavLink to="/import" className={navClass}>
@@ -28,7 +32,8 @@ export function App() {
 
       <main className="workspace">
         <Routes>
-          <Route path="/" element={<BoardView />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/board" element={<BoardView />} />
           <Route path="/import" element={<ImportView />} />
           <Route path="/asset/:id" element={<AssetView />} />
         </Routes>

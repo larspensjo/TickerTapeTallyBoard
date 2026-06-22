@@ -105,7 +105,7 @@ export function AssetView() {
     return (
       <div className="board-state muted asset-not-found">
         <p>Asset not found.</p>
-        <Link className="button outline" to="/">
+        <Link className="button outline" to="/board">
           ← Back to board
         </Link>
       </div>
@@ -170,7 +170,7 @@ function AssetHeader({
 
   return (
     <header className="asset-header">
-      <Link className="asset-back" to="/">
+      <Link className="asset-back" to="/board">
         ← Back to board
       </Link>
       <div className="asset-title-row">

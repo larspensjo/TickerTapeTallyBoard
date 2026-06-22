@@ -599,7 +599,7 @@ export function ImportView() {
                   type="button"
                   className="button primary"
                   onClick={() =>
-                    navigate("/", { state: { boardView: "transactions" } })
+                    navigate("/board", { state: { boardView: "transactions" } })
                   }
                   disabled={rollbackImport.isPending}
                 >
