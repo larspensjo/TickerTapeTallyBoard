@@ -1284,6 +1284,25 @@ th.number-head .sort-button {
   font-weight: 600;
 }
 
+.time-series-chart {
+  width: 100%;
+  min-height: 240px;
+}
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: var(--space-4);
+}
+
+.chart-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .asset-two-col {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
