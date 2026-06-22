@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit && biome check src index.html vite.config.ts biome.json package.json tsconfig.json",
-    "fmt": "biome format --write src index.html vite.config.ts biome.json package.json tsconfig.json"
+    "check": "tsc --noEmit && biome check src index.html vite.config.ts vitest.config.ts biome.json package.json tsconfig.json && vitest run --passWithNoTests",
+    "fmt": "biome format --write src index.html vite.config.ts vitest.config.ts biome.json package.json tsconfig.json",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -22,11 +23,15 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^25.9.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
   }
 }

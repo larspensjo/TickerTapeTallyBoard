@@ -76,6 +76,20 @@ export interface FxSnapshot {
   freshness: string;
 }
 
+export interface PriceHistoryPoint {
+  date: string;
+  close: string;
+  close_base: MoneyValue;
+  fx?: { rate: string; date: string };
+}
+
+export interface PriceHistoryResponse {
+  instrument_id: number;
+  currency: string;
+  base_currency: string;
+  points: PriceHistoryPoint[];
+}
+
 export interface GainsSummary {
   market_value_base: MoneyValue;
   cost_basis_base: MoneyValue;

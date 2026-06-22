@@ -14,6 +14,7 @@ import type {
   ImportSource,
   Instrument,
   InstrumentType,
+  PriceHistoryResponse,
   PriceStatusResponse,
   RefreshPricesInput,
   RefreshPricesResult,
@@ -82,6 +83,15 @@ export function usePriceStatus() {
     queryFn: () => apiGet<PriceStatusResponse>("/api/prices/status"),
     refetchInterval: (query) => (query.state.data?.refreshing ? 2000 : false),
     refetchIntervalInBackground: true,
+  });
+}
+
+export function useInstrumentPrices(id: number | null) {
+  return useQuery({
+    queryKey: ["instrument-prices", id],
+    queryFn: () =>
+      apiGet<PriceHistoryResponse>(`/api/instruments/${id}/prices`),
+    enabled: id !== null,
   });
 }
 
