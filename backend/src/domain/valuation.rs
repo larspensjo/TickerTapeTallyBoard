@@ -1,6 +1,11 @@
-use super::{BaseCostBasis, Position, UnavailableReason};
+use super::performance::split_factor;
+use super::{
+    derive_position, BaseCostBasis, LedgerError, LedgerTransaction, Position, TransactionKind,
+    UnavailableReason,
+};
 use chrono::{Datelike, NaiveDate, Weekday};
 use rust_decimal::Decimal;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataFreshness {
@@ -151,6 +156,124 @@ pub fn build_price_history(
     }
 
     points
+}
+
+#[derive(Clone, Debug)]
+pub struct ValueHistoryInstrument {
+    pub native_currency: String,
+    pub ledger: Vec<LedgerTransaction>,
+    pub prices: Vec<PriceCandidate>,
+    pub fx_rates: Vec<FxCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValueHistoryPoint {
+    pub date: NaiveDate,
+    pub value_base: Decimal,
+    pub incomplete: bool,
+    pub included_count: usize,
+    pub excluded_count: usize,
+}
+
+pub fn build_value_history(
+    instruments: &[ValueHistoryInstrument],
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+) -> Result<Vec<ValueHistoryPoint>, LedgerError> {
+    let first_buy = instruments
+        .iter()
+        .flat_map(|inst| inst.ledger.iter())
+        .filter(|tx| tx.kind == TransactionKind::Buy)
+        .map(|tx| tx.trade_date)
+        .min();
+    let Some(first_buy) = first_buy else {
+        return Ok(Vec::new());
+    };
+
+    let mut spine: BTreeSet<NaiveDate> = BTreeSet::new();
+    for inst in instruments {
+        for price in &inst.prices {
+            spine.insert(price.date);
+        }
+        for fx in &inst.fx_rates {
+            spine.insert(fx.date);
+        }
+    }
+
+    let mut points = Vec::new();
+    for date in spine {
+        if date < first_buy {
+            continue;
+        }
+        if from.is_some_and(|from| date < from) || to.is_some_and(|to| date > to) {
+            continue;
+        }
+
+        let mut value_base = Decimal::ZERO;
+        let mut included_count = 0usize;
+        let mut excluded_count = 0usize;
+
+        for inst in instruments {
+            let active: Vec<LedgerTransaction> = inst
+                .ledger
+                .iter()
+                .filter(|tx| tx.trade_date <= date)
+                .cloned()
+                .collect();
+            let position = derive_position(&active)?;
+            if position.quantity == 0 {
+                continue;
+            }
+
+            let future: Vec<LedgerTransaction> = inst
+                .ledger
+                .iter()
+                .filter(|tx| tx.trade_date > date)
+                .cloned()
+                .collect();
+            let factor = split_factor(&future, position.quantity)?;
+            let adjusted_qty = Decimal::from(position.quantity) * factor;
+
+            let close = inst
+                .prices
+                .iter()
+                .rfind(|price| {
+                    price.date <= date && price.currency.eq_ignore_ascii_case(&inst.native_currency)
+                })
+                .map(|price| price.close);
+
+            let rate = if inst.native_currency.eq_ignore_ascii_case("SEK") {
+                Some(Decimal::ONE)
+            } else {
+                inst.fx_rates
+                    .iter()
+                    .rfind(|fx| fx.date <= date)
+                    .map(|fx| fx.rate)
+            };
+
+            match (close, rate) {
+                (Some(close), Some(rate)) => {
+                    value_base += adjusted_qty * close * rate;
+                    included_count += 1;
+                }
+                _ => excluded_count += 1,
+            }
+        }
+
+        if included_count == 0 {
+            continue;
+        }
+
+        points.push(ValueHistoryPoint {
+            date,
+            value_base,
+            incomplete: excluded_count > 0,
+            included_count,
+            excluded_count,
+        });
+    }
+
+    Ok(points)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -728,8 +851,9 @@ fn dedup_reasons(reasons: &mut Vec<ValuationReason>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_price_history, summarize_holdings, value_position, Availability, DataFreshness,
-        FxApplied, FxCandidate, PriceCandidate, ValuationReason,
+        build_price_history, build_value_history, summarize_holdings, value_position, Availability,
+        DataFreshness, FxApplied, FxCandidate, PriceCandidate, ValuationReason,
+        ValueHistoryInstrument,
     };
     use crate::domain::{
         derive_position, BaseCostBasis, LedgerTransaction, Position, TransactionKind,
@@ -793,6 +917,167 @@ mod tests {
             base: base.to_owned(),
             quote: quote.to_owned(),
         }
+    }
+
+    fn vh_instrument(
+        currency: &str,
+        ledger: Vec<LedgerTransaction>,
+        prices: Vec<PriceCandidate>,
+        fx_rates: Vec<FxCandidate>,
+    ) -> ValueHistoryInstrument {
+        ValueHistoryInstrument {
+            native_currency: currency.to_owned(),
+            ledger,
+            prices,
+            fx_rates,
+        }
+    }
+
+    #[test]
+    fn value_history_sek_single_holding_uses_price_dates() {
+        let inst = vh_instrument(
+            "SEK",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(1)), "SEK")],
+            vec![
+                price(d(2026, 1, 2), dec!(100), "SEK"),
+                price(d(2026, 1, 5), dec!(110), "SEK"),
+            ],
+            vec![],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].date, d(2026, 1, 2));
+        assert_eq!(points[0].value_base, dec!(1000));
+        assert_eq!(points[0].included_count, 1);
+        assert!(!points[0].incomplete);
+        assert_eq!(points[1].value_base, dec!(1100));
+    }
+
+    #[test]
+    fn value_history_carries_price_and_fx_forward() {
+        let inst = vh_instrument(
+            "USD",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(10)), "USD")],
+            vec![price(d(2026, 1, 2), dec!(100), "USD")],
+            vec![
+                fx(d(2026, 1, 2), dec!(10), "USD", "SEK"),
+                fx(d(2026, 1, 6), dec!(11), "USD", "SEK"),
+            ],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].date, d(2026, 1, 2));
+        assert_eq!(points[0].value_base, dec!(10000));
+        assert_eq!(points[1].date, d(2026, 1, 6));
+        assert_eq!(points[1].value_base, dec!(11000));
+    }
+
+    #[test]
+    fn value_history_split_adjusts_pre_split_points() {
+        let inst = vh_instrument(
+            "SEK",
+            vec![
+                buy(1, d(2026, 1, 2), 10, dec!(120), Some(dec!(1)), "SEK"),
+                split(2, d(2026, 1, 10), 10),
+            ],
+            vec![
+                price(d(2026, 1, 5), dec!(60), "SEK"),
+                price(d(2026, 1, 12), dec!(60), "SEK"),
+            ],
+            vec![],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        let p5 = points
+            .iter()
+            .find(|p| p.date == d(2026, 1, 5))
+            .expect("1/5");
+        assert_eq!(p5.value_base, dec!(1200));
+        let p12 = points
+            .iter()
+            .find(|p| p.date == d(2026, 1, 12))
+            .expect("1/12");
+        assert_eq!(p12.value_base, dec!(1200));
+    }
+
+    #[test]
+    fn value_history_excludes_instrument_with_disabled_mapping() {
+        let inst = vh_instrument(
+            "SEK",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(1)), "SEK")],
+            vec![],
+            vec![],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn value_history_marks_incomplete_and_omits_all_excluded_dates() {
+        let present = vh_instrument(
+            "SEK",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(1)), "SEK")],
+            vec![price(d(2026, 1, 2), dec!(100), "SEK")],
+            vec![],
+        );
+        let absent = vh_instrument(
+            "SEK",
+            vec![buy(2, d(2026, 1, 2), 5, dec!(50), Some(dec!(1)), "SEK")],
+            vec![price(d(2026, 1, 9), dec!(50), "SEK")],
+            vec![],
+        );
+        let points =
+            build_value_history(&[present, absent], None, None).expect("derivable ledgers");
+        let p2 = points
+            .iter()
+            .find(|p| p.date == d(2026, 1, 2))
+            .expect("1/2");
+        assert_eq!(p2.value_base, dec!(1000));
+        assert_eq!(p2.included_count, 1);
+        assert_eq!(p2.excluded_count, 1);
+        assert!(p2.incomplete);
+        let p9 = points
+            .iter()
+            .find(|p| p.date == d(2026, 1, 9))
+            .expect("1/9");
+        assert_eq!(p9.included_count, 2);
+        assert!(!p9.incomplete);
+    }
+
+    #[test]
+    fn value_history_omits_points_where_every_position_is_excluded() {
+        let inst = vh_instrument(
+            "USD",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(10)), "USD")],
+            vec![price(d(2026, 1, 2), dec!(100), "USD")],
+            vec![],
+        );
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn value_history_empty_when_no_buy_yet() {
+        let points = build_value_history(&[], None, None).expect("no ledger is Ok(empty)");
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn value_history_windows_with_from_and_to() {
+        let inst = vh_instrument(
+            "SEK",
+            vec![buy(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(1)), "SEK")],
+            vec![
+                price(d(2026, 1, 2), dec!(100), "SEK"),
+                price(d(2026, 1, 5), dec!(110), "SEK"),
+                price(d(2026, 1, 9), dec!(120), "SEK"),
+            ],
+            vec![],
+        );
+        let points = build_value_history(&[inst], Some(d(2026, 1, 5)), Some(d(2026, 1, 5)))
+            .expect("derivable ledger");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].date, d(2026, 1, 5));
+        assert_eq!(points[0].value_base, dec!(1100));
     }
 
     #[test]

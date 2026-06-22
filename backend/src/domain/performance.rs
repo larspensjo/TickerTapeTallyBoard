@@ -62,7 +62,7 @@ pub fn reconstruct_period(
 /// Computes the cumulative split factor for a slice of transactions,
 /// given the quantity already held before the first transaction in the slice.
 /// For each Split with delta d when running quantity is q: factor *= (q + d) / q.
-fn split_factor(
+pub(crate) fn split_factor(
     transactions: &[LedgerTransaction],
     opening_qty: i64,
 ) -> Result<Decimal, LedgerError> {
