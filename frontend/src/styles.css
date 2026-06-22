@@ -140,6 +140,7 @@ button {
 
 .app-nav {
   align-self: stretch;
+  flex-wrap: wrap;
   gap: var(--space-5);
 }
 
@@ -237,20 +238,18 @@ button {
   font-weight: 600;
 }
 
-.board-toolbar {
+.portfolio-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.portfolio-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
   padding: var(--space-4) 0 0;
-}
-
-.totals-band {
-  display: flex;
-  gap: var(--space-6);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4) 0 var(--space-5);
 }
 
 .eyebrow {
@@ -1144,6 +1143,7 @@ th.number-head .sort-button {
   }
 
   .app-nav {
+    gap: var(--space-4);
     min-height: 40px;
   }
 
@@ -1158,7 +1158,6 @@ th.number-head .sort-button {
     padding-top: var(--space-3);
   }
 
-  .totals-band,
   .panel-header {
     flex-direction: column;
     align-items: stretch;

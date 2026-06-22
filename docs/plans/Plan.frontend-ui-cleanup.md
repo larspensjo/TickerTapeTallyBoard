@@ -110,26 +110,26 @@ Target nav (flat): **Dashboard · Holdings · Gains · Transactions · Import** 
 
 ### Task 3.1: Persistent portfolio shell (the Board ↔ Dashboard merge)
 **Files:** Create `frontend/src/components/PortfolioLayout.tsx`, `frontend/src/components/PortfolioSummary.tsx`; modify `App.tsx`, `Dashboard.tsx`.
-- [ ] Create `PortfolioSummary` rendering the totals **one** way (Total value, Day change, Unrealized) in the metric-tile styling.
-- [ ] Create `PortfolioLayout`: the persistent shell hosting `PortfolioSummary` + the toolbar (Refresh prices, Add transaction) + the single freshness chip, with a React Router `<Outlet/>` for the page body.
-- [ ] Wire a layout route in `App.tsx` so Dashboard + the (coming) table pages render inside `PortfolioLayout`. Remove the Dashboard's own `metric-tiles` block (now supplied by the shell).
-- [ ] **Verify:** `npm run check` passes; the totals + actions appear once, persistently, above the page body. Stage the files.
+- [x] Create `PortfolioSummary` rendering the totals **one** way (Total value, Day change, Unrealized) in the metric-tile styling.
+- [x] Create `PortfolioLayout`: the persistent shell hosting `PortfolioSummary` + the toolbar (Refresh prices, Add transaction) + the single freshness chip, with a React Router `<Outlet/>` for the page body.
+- [x] Wire a layout route in `App.tsx` so Dashboard + the (coming) table pages render inside `PortfolioLayout`. Remove the Dashboard's own `metric-tiles` block (now supplied by the shell).
+- [x] **Verify:** `npm run check` passes; the totals + actions appear once, persistently, above the page body. Stage the files.
 
 **Human test recommended:** confirm the totals/actions stay put when switching pages and don’t flash/reflow.
 
 ### Task 3.2: Split the Board into route pages
 **Files:** Create `HoldingsPage.tsx`, `GainsPage.tsx`, `TransactionsPage.tsx`, `GainsPage.reducer.test.ts`; remove `BoardView.tsx`.
-- [ ] Extract each former Board sub-view into its own route component that renders the existing `HoldingsTable` / `GainsTable` / `TransactionsTable`.
-- [ ] Redistribute `BoardView`'s `uiReducer` state: per-table filter → page-local state; Gains date/method/closed controls → a dedicated **pure** `GainsPage` reducer (with a contract test); Add-transaction `formOpen` → `PortfolioLayout` shell state so the form is reachable from any portfolio page.
-- [ ] Delete `BoardView.tsx`.
-- [ ] **Verify:** `npm run check` passes (new/updated reducer test green); each page renders its table with filtering/sorting intact. Stage the files.
+- [x] Extract each former Board sub-view into its own route component that renders the existing `HoldingsTable` / `GainsTable` / `TransactionsTable`.
+- [x] Redistribute `BoardView`'s `uiReducer` state: per-table filter → page-local state; Gains date/method/closed controls → a dedicated **pure** `GainsPage` reducer (with a contract test); Add-transaction `formOpen` → `PortfolioLayout` shell state so the form is reachable from any portfolio page.
+- [x] Delete `BoardView.tsx`.
+- [x] **Verify:** `npm run check` passes (new/updated reducer test green); each page renders its table with filtering/sorting intact. Stage the files.
 
 ### Task 3.3: Flatten the nav
 **Files:** Modify `App.tsx`, `styles.css`.
-- [ ] Nav becomes a single level: Dashboard · Holdings · Gains · Transactions · Import. Routes: `/`, `/holdings`, `/gains`, `/transactions`, `/import`, `/asset/:id`.
-- [ ] Remove the in-page board-view segmented control (its job is now the top-level nav) and drop its dead CSS; keep the allocation segmented-control.
-- [ ] Redirect `/board` → `/holdings` so old bookmarks/links still resolve.
-- [ ] **Verify:** `npm run check` passes; nav is one level deep with five clear destinations and nothing hidden. Stage the files.
+- [x] Nav becomes a single level: Dashboard · Holdings · Gains · Transactions · Import. Routes: `/`, `/holdings`, `/gains`, `/transactions`, `/import`, `/asset/:id`.
+- [x] Remove the in-page board-view segmented control (its job is now the top-level nav) and drop its dead CSS; keep the allocation segmented-control.
+- [x] Redirect `/board` → `/holdings` so old bookmarks/links still resolve.
+- [x] **Verify:** `npm run check` passes; nav is one level deep with five clear destinations and nothing hidden. Stage the files.
 
 **Human test recommended:** full click-through — every former Board page reachable from the top nav; `/board` redirects; Asset detail + Import unaffected.
 

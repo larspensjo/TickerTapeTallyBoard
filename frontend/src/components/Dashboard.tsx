@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
-import type { GainsRow, GainsSummary } from "../api/types";
+import type { GainsRow } from "../api/types";
 import {
   type AllocationDimension,
   allocationBreakdown,
@@ -9,10 +9,7 @@ import {
   topMovers,
 } from "./dashboardSelectors";
 import { TimeSeriesChart } from "./TimeSeriesChart";
-import {
-  formatGroupedNumber,
-  SummaryAvailabilityValue,
-} from "./valuationDisplay";
+import { formatGroupedNumber } from "./valuationDisplay";
 
 export function Dashboard() {
   const gainsQuery = useGains();
@@ -20,57 +17,9 @@ export function Dashboard() {
 
   return (
     <section className="dashboard" aria-label="Portfolio dashboard">
-      <DashboardSummary summary={gainsQuery.data?.summary} />
       <DashboardValueChart query={valueHistory} />
       <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
       <AllocationPanel rows={gainsQuery.data?.rows ?? []} />
-    </section>
-  );
-}
-
-function DashboardSummary({ summary }: { summary: GainsSummary | undefined }) {
-  return (
-    <section className="metric-tiles" aria-label="Portfolio summary">
-      <div className="metric-tile">
-        <span className="metric-tile-label">Total value</span>
-        <span className="metric-tile-value">
-          <SummaryAvailabilityValue
-            value={summary?.market_value_base}
-            prefix="SEK "
-            tone="plain"
-          />
-        </span>
-      </div>
-      <div className="metric-tile">
-        <span className="metric-tile-label">Day change</span>
-        <span className="metric-tile-value">
-          <SummaryAvailabilityValue
-            value={summary?.day_change_base}
-            prefix="SEK "
-            tone="signed"
-          />{" "}
-          <SummaryAvailabilityValue
-            value={summary?.day_change_percent}
-            suffix="%"
-            tone="signed"
-          />
-        </span>
-      </div>
-      <div className="metric-tile">
-        <span className="metric-tile-label">Unrealized change</span>
-        <span className="metric-tile-value">
-          <SummaryAvailabilityValue
-            value={summary?.unrealized_gain_base}
-            prefix="SEK "
-            tone="signed"
-          />{" "}
-          <SummaryAvailabilityValue
-            value={summary?.unrealized_gain_percent}
-            suffix="%"
-            tone="signed"
-          />
-        </span>
-      </div>
     </section>
   );
 }

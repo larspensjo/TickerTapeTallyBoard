@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
 
@@ -8,9 +8,24 @@ const Dashboard = lazy(() =>
     default: module.Dashboard,
   })),
 );
-const BoardView = lazy(() =>
-  import("./components/BoardView").then((module) => ({
-    default: module.BoardView,
+const PortfolioLayout = lazy(() =>
+  import("./components/PortfolioLayout").then((module) => ({
+    default: module.PortfolioLayout,
+  })),
+);
+const HoldingsPage = lazy(() =>
+  import("./components/HoldingsPage").then((module) => ({
+    default: module.HoldingsPage,
+  })),
+);
+const GainsPage = lazy(() =>
+  import("./components/GainsPage").then((module) => ({
+    default: module.GainsPage,
+  })),
+);
+const TransactionsPage = lazy(() =>
+  import("./components/TransactionsPage").then((module) => ({
+    default: module.TransactionsPage,
   })),
 );
 const ImportView = lazy(() =>
@@ -41,8 +56,14 @@ export function App() {
           <NavLink to="/" end className={navClass}>
             Dashboard
           </NavLink>
-          <NavLink to="/board" className={navClass}>
-            Board
+          <NavLink to="/holdings" className={navClass}>
+            Holdings
+          </NavLink>
+          <NavLink to="/gains" className={navClass}>
+            Gains
+          </NavLink>
+          <NavLink to="/transactions" className={navClass}>
+            Transactions
           </NavLink>
           <NavLink to="/import" className={navClass}>
             Import
@@ -53,8 +74,16 @@ export function App() {
       <main className="workspace">
         <Suspense fallback={<RouteFallback />}>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/board" element={<BoardView />} />
+            <Route element={<PortfolioLayout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/holdings" element={<HoldingsPage />} />
+              <Route path="/gains" element={<GainsPage />} />
+              <Route path="/transactions" element={<TransactionsPage />} />
+            </Route>
+            <Route
+              path="/board"
+              element={<Navigate to="/holdings" replace />}
+            />
             <Route path="/import" element={<ImportView />} />
             <Route path="/asset/:id" element={<AssetView />} />
           </Routes>
