@@ -1362,6 +1362,55 @@ th.number-head .sort-button {
   text-decoration: underline;
 }
 
+.allocation-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.allocation-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.allocation-bar {
+  display: flex;
+  width: 100%;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.allocation-segment {
+  height: 100%;
+}
+
+.allocation-table {
+  width: 100%;
+  min-width: 0;
+  margin-top: var(--space-1);
+  border-collapse: collapse;
+}
+
+.allocation-table td {
+  height: 32px;
+  padding: var(--space-1) 0;
+}
+
+.allocation-table td:not(:first-child) {
+  text-align: right;
+}
+
+.allocation-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: var(--space-2);
+  border-radius: 2px;
+}
+
 .asset-panel {
   display: flex;
   flex-direction: column;

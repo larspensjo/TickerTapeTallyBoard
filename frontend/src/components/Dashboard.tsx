@@ -1,7 +1,13 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
 import type { GainsRow, GainsSummary } from "../api/types";
-import { type MoverRow, topMovers } from "./dashboardSelectors";
+import {
+  type AllocationDimension,
+  allocationBreakdown,
+  type MoverRow,
+  topMovers,
+} from "./dashboardSelectors";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import {
   formatGroupedNumber,
@@ -17,6 +23,7 @@ export function Dashboard() {
       <DashboardSummary summary={gainsQuery.data?.summary} />
       <DashboardValueChart query={valueHistory} />
       <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
+      <AllocationPanel rows={gainsQuery.data?.rows ?? []} />
     </section>
   );
 }
@@ -176,5 +183,90 @@ function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
         </ul>
       )}
     </div>
+  );
+}
+
+function AllocationPanel({ rows }: { rows: GainsRow[] }) {
+  const [dimension, setDimension] = useState<AllocationDimension>("instrument");
+  const { slices, excludedCount } = allocationBreakdown(rows, dimension);
+  const palette = [
+    "#4f9cff",
+    "#46c39a",
+    "#e6a93b",
+    "#d96c6c",
+    "#9b8cff",
+    "#5fb0c9",
+  ];
+
+  return (
+    <section className="panel allocation-panel" aria-label="Allocation">
+      <div className="panel-header">
+        <h2>Allocation</h2>
+        <fieldset className="segmented-control">
+          <legend className="sr-only">Allocation dimension</legend>
+          {(["instrument", "currency", "type"] as AllocationDimension[]).map(
+            (dim) => (
+              <button
+                key={dim}
+                type="button"
+                className={dimension === dim ? "active" : undefined}
+                aria-pressed={dimension === dim}
+                onClick={() => setDimension(dim)}
+              >
+                {dim[0].toUpperCase() + dim.slice(1)}
+              </button>
+            ),
+          )}
+        </fieldset>
+      </div>
+
+      {slices.length === 0 ? (
+        <p className="board-state muted">No valued holdings to allocate.</p>
+      ) : (
+        <div className="allocation-body">
+          <div
+            className="allocation-bar"
+            role="img"
+            aria-label="Allocation segments"
+          >
+            {slices.map((slice, index) => (
+              <span
+                key={slice.key}
+                className="allocation-segment"
+                style={{
+                  width: `${slice.weightPercent}%`,
+                  background: palette[index % palette.length],
+                }}
+                title={`${slice.label} ${slice.weightPercent.toFixed(1)}%`}
+              />
+            ))}
+          </div>
+          <table className="allocation-table">
+            <tbody>
+              {slices.map((slice, index) => (
+                <tr key={slice.key}>
+                  <td>
+                    <span
+                      className="allocation-swatch"
+                      style={{ background: palette[index % palette.length] }}
+                    />
+                    {slice.label}
+                  </td>
+                  <td className="number">
+                    SEK {formatGroupedNumber(slice.valueBase.toFixed(2))}
+                  </td>
+                  <td className="number">{slice.weightPercent.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {excludedCount > 0 ? (
+            <span className="status-chip warning compact">
+              {excludedCount} excluded (no market value)
+            </span>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
 }
