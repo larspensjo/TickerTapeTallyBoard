@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GainsRow, Instrument } from "../api/types";
-import { topMovers } from "./dashboardSelectors";
+import { allocationBreakdown, topMovers } from "./dashboardSelectors";
 
 function inst(id: number, symbol: string, name = symbol): Instrument {
   return { id, symbol, exchange: "STO", name, type: "Stock", currency: "SEK" };
@@ -93,5 +93,74 @@ describe("topMovers", () => {
     ]);
     expect(gainers).toEqual([]);
     expect(losers).toEqual([]);
+  });
+});
+
+describe("allocationBreakdown", () => {
+  function mvRow(
+    instrument: Instrument,
+    marketValue: GainsRow["market_value_base"],
+  ): GainsRow {
+    const gainsRow = row(instrument, "open", {
+      status: "available",
+      value: "0.00",
+    });
+    return { ...gainsRow, market_value_base: marketValue };
+  }
+
+  it("aggregates by instrument and computes weights summing to 100", () => {
+    const rows = [
+      mvRow(inst(1, "AAA"), { status: "available", value: "750.00" }),
+      mvRow(inst(2, "BBB"), { status: "available", value: "250.00" }),
+    ];
+    const { slices, excludedCount } = allocationBreakdown(rows, "instrument");
+    expect(excludedCount).toBe(0);
+    expect(slices.map((slice) => slice.label)).toEqual(["AAA", "BBB"]);
+    expect(slices.map((slice) => slice.weightPercent)).toEqual([75, 25]);
+    expect(slices.reduce((sum, slice) => sum + slice.weightPercent, 0)).toBe(
+      100,
+    );
+  });
+
+  it("groups by currency and type", () => {
+    const usd: Instrument = { ...inst(1, "AAA"), currency: "USD" };
+    const sek: Instrument = { ...inst(2, "BBB"), currency: "SEK" };
+    const etf: Instrument = { ...inst(3, "CCC"), type: "Etf" };
+    const rows = [
+      mvRow(usd, { status: "available", value: "100.00" }),
+      mvRow(sek, { status: "available", value: "100.00" }),
+      mvRow(etf, { status: "available", value: "200.00" }),
+    ];
+    expect(
+      allocationBreakdown(rows, "currency")
+        .slices.map((slice) => slice.label)
+        .sort(),
+    ).toEqual(["SEK", "USD"]);
+    expect(
+      allocationBreakdown(rows, "type").slices.some(
+        (slice) => slice.label === "Etf",
+      ),
+    ).toBe(true);
+  });
+
+  it("excludes unavailable market values, never counting them as zero", () => {
+    const rows = [
+      mvRow(inst(1, "AAA"), { status: "available", value: "100.00" }),
+      mvRow(inst(2, "BBB"), {
+        status: "unavailable",
+        reasons: ["missing_fx"],
+      }),
+    ];
+    const { slices, excludedCount } = allocationBreakdown(rows, "instrument");
+    expect(excludedCount).toBe(1);
+    expect(slices).toHaveLength(1);
+    expect(slices[0].weightPercent).toBe(100);
+  });
+
+  it("returns empty allocation for no available rows", () => {
+    expect(allocationBreakdown([], "instrument")).toEqual({
+      slices: [],
+      excludedCount: 0,
+    });
   });
 });
