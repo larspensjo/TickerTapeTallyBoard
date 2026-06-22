@@ -34,10 +34,20 @@ A self-hosted portfolio tracking application for stocks, ETFs, and funds, runnin
 | Charts | **Lightweight Charts** (TradingView OSS) | Purpose-built financial time series, ~45 KB |
 | Static serving | tower-http `ServeDir` | Backend binary serves the built frontend |
 | Scheduling | tokio task (cron-like) | Daily EOD price + FX fetch |
+| Testing | **`cargo test`** + **Vitest** (+ React Testing Library / jsdom) | Pure logic on both sides unit-tested; one runner per stack |
 
 ### Deployment model
 - **Dev:** `cargo run` (API on :8080) + `npm run dev` (Vite on :5173, proxying `/api`).
 - **Prod (home PC):** `npm run build` → static files embedded or served from disk by the Rust binary. One executable + one `.db` file. Backup = copy the file. Runs as a Windows scheduled task or service; reachable at `http://<host>:8080` on the LAN.
+
+### Testing strategy
+
+The architecture is deliberately shaped so the parts that are easy to get wrong are pure and unit-testable on both sides of the stack. Tests target behavior and public contracts — reducer transitions, emitted effects, derived view-models — not internal wiring.
+
+- **Backend (`cargo test`):** the valuation/ledger domain (`backend/src/domain/`) is pure (no axum/sqlx/IO) and carries the bulk of the tests — position derivation, split adjustment, FX carry-forward, value/price-history builders. HTTP handlers get focused integration tests via the in-process router against an in-memory SQLite pool.
+- **Frontend (Vitest):** the unidirectional `input → action → reducer → state → render` flow keeps logic out of components. Reducers (e.g. board UI state), view-models (`assetViewModel`), and selectors (dashboard top-movers, allocation, chart series) are pure functions over typed API shapes and are unit-tested with Vitest in a fast node environment. React Testing Library + jsdom are available (opt-in per file) for component and interaction tests where rendering or events are the behavior under test.
+- **One gate per stack.** Backend completion runs `cargo clippy --all-targets -- -D warnings` then `cargo fmt`; frontend `npm run check` runs `tsc --noEmit`, Biome lint, **and** `vitest run` together, so types, lint, and tests pass or fail as a unit.
+- **Convention going forward:** new pure logic ships with a test in the same change; existing untested pure units (`assetViewModel`, the board reducer, formatting helpers) are backfilled opportunistically when next touched, rather than as a separate retrofit pass. Bug fixes add a regression test when practical.
 
 ### Core design principle: transaction ledger as source of truth
 Positions, cost basis, realized/unrealized P&L, and historical performance are all **derived** from an append-only transaction ledger (BUY, SELL, DIVIDEND, FEE, SPLIT, DEPOSIT, WITHDRAWAL). No stored "holdings" table as primary data. This enables point-in-time portfolio reconstruction, performance charts, and future tax-lot accounting without schema rewrites.
@@ -100,7 +110,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Deliverable:** live (EOD) portfolio valuation in SEK.
 
 ### Phase 4 — Charts & dashboard (~1 week)
-- We will need a value-history or per-instrument price-history API.
+- We will need a value-history or per-instrument price-history API ✅ Done (2026-06-22).
 - Portfolio value-over-time chart (Lightweight Charts), per-instrument price chart, allocation breakdown (by instrument, currency, type).
 - Dashboard landing page: total value, day/total change, top movers.
 - **Deliverable:** v1 feature-complete.
