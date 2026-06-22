@@ -6,6 +6,7 @@ mod holdings;
 mod import;
 mod instrument_prices;
 mod instruments;
+mod portfolio;
 mod prices;
 mod provider_symbols;
 mod root;
@@ -66,6 +67,7 @@ fn api_router() -> Router<AppState> {
         )
         .route("/prices/refresh", post(prices::refresh))
         .route("/prices/status", get(prices::status))
+        .route("/portfolio/value-history", get(portfolio::value_history))
         .route("/holdings", get(holdings::list))
         .route("/gains", get(gains::list))
         .route(
