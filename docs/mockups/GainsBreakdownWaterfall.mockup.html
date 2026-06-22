@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gains Breakdown — Layout Mockups</title>
+<style>
+  :root {
+    /* surfaces */
+    --canvas: #0a0b0d;
+    --surface-1: #0e1114;
+    --surface-2: #14181d;
+    --hairline: #20242b;
+    --hairline-soft: #181c22;
+    /* text */
+    --text-primary: #f5f6f7;
+    --text-secondary: #a8acb3;
+    --text-muted: #6b7280;
+    --text-on-accent: #ffffff;
+    /* accent */
+    --accent: #0052ff;
+    --accent-link: #4d8bff;
+    /* semantics */
+    --up: #16c784;
+    --down: #ff4d4f;
+    --up-soft: rgba(22, 199, 132, 0.13);
+    --down-soft: rgba(255, 77, 79, 0.13);
+    --warning: #f4b000;
+    /* type */
+    --font-ui: 'Inter', -apple-system, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    /* spacing */
+    --space-1: 4px;  --space-2: 8px;   --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px;  --space-8: 32px;
+    /* radius */
+    --radius-xs: 4px; --radius-sm: 8px; --radius-md: 12px;
+    --radius-lg: 16px; --radius-pill: 100px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: var(--space-8);
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.4px;
+    margin: 0 0 var(--space-2);
+  }
+
+  .subtitle {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-6);
+    max-width: 70ch;
+  }
+
+  .controls {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: var(--space-8);
+  }
+
+  .controls .label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-right: var(--space-2);
+  }
+
+  button.toggle {
+    height: 34px;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.toggle[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: var(--space-6);
+    align-items: start;
+  }
+
+  .panel {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+  }
+  .panel-head h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .panel-head .tag {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .panel-note {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: var(--space-4) 0 0;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--hairline-soft);
+  }
+
+  .num { font-family: var(--font-mono); font-weight: 500; }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+  .muted { color: var(--text-muted); }
+
+  .mode-banner {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: var(--space-4);
+  }
+
+  /* ============ Concept A — Waterfall ============ */
+  .wf { display: flex; flex-direction: column; gap: var(--space-2); }
+  .wf-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 88px 66px;
+    align-items: center;
+    column-gap: var(--space-3);
+    min-height: 30px;
+  }
+  .wf-row .rlabel {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .wf-head { min-height: 0; margin-bottom: var(--space-1); }
+  .wf-head .ehead {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    text-align: right;
+  }
+  .wf-row .rpct {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .wf-track {
+    position: relative;
+    height: 22px;
+  }
+  .wf-bar {
+    position: absolute;
+    top: 3px;
+    height: 16px;
+    border-radius: 3px;
+  }
+  .wf-bar.base    { background: #2b3138; }
+  .wf-bar.subtotal{ background: #39414b; }
+  .wf-bar.total   { background: #4a525d; }
+  .wf-bar.up      { background: var(--up); }
+  .wf-bar.down    { background: var(--down); }
+  .wf-bar.zero    { background: #2b3138; opacity: 0.5; }
+  .wf-bar.unavail {
+    background: repeating-linear-gradient(45deg, #353b44, #353b44 4px, #1a1e23 4px, #1a1e23 8px);
+    border: 1px dashed var(--text-muted);
+    top: 2px; height: 16px;
+  }
+  .wf-row .rval {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 13px;
+  }
+  .wf-row.is-subtotal .rlabel,
+  .wf-row.is-total .rlabel { color: var(--text-primary); font-weight: 600; }
+  .wf-row.is-total { margin-top: var(--space-1); }
+  .wf-divider { height: 1px; background: var(--hairline); margin: var(--space-1) 0; }
+
+  /* ============ Concept B — Stacked rows + running subtotal ============ */
+  table.stk { width: 100%; border-collapse: collapse; }
+  table.stk th {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    text-align: right;
+    padding: 0 0 var(--space-2);
+  }
+  table.stk th.l { text-align: left; }
+  table.stk td {
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--hairline-soft);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 13px;
+    text-align: right;
+  }
+  table.stk td.l {
+    text-align: left;
+    font-family: var(--font-ui);
+    color: var(--text-secondary);
+  }
+  table.stk td.run { color: var(--text-secondary); }
+  table.stk tr.subtotal td { border-top: 1px solid var(--hairline); }
+  table.stk tr.subtotal td.l,
+  table.stk tr.total td.l { color: var(--text-primary); font-weight: 600; }
+  table.stk tr.total td { border-top: 1px solid var(--hairline); padding-top: var(--space-3); }
+  table.stk tr.total td.run { color: var(--text-primary); font-weight: 600; }
+  table.stk td.unavail { color: var(--text-muted); font-style: italic; }
+
+  /* ============ Concept C — Single segmented bar ============ */
+  .seg-wrap { padding: var(--space-2) 0; }
+  .seg-total {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+  }
+  .seg-caption {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: var(--space-4);
+  }
+  .seg-bar {
+    display: flex;
+    width: 100%;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+  .seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-on-accent);
+    min-width: 2px;
+    border-right: 1px solid var(--canvas);
+  }
+  .seg:last-child { border-right: 0; }
+  .seg.base { background: #39414b; }
+  .seg.up   { background: var(--up); }
+  .seg.down { background: var(--down); }
+  .seg.label-hide { color: transparent; }
+  .seg-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-4);
+  }
+  .seg-legend .item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 13px;
+    color: var(--text-secondary);
+    width: 100%;
+  }
+  .seg-legend .swatch {
+    width: 12px; height: 12px; border-radius: 3px; flex: none;
+  }
+  .seg-legend .swatch.base { background: #39414b; }
+  .seg-legend .swatch.up   { background: var(--up); }
+  .seg-legend .swatch.down { background: var(--down); }
+  .seg-legend .swatch.ghost { background: transparent; border: 1px solid var(--hairline); }
+  .seg-legend .v { font-family: var(--font-mono); font-weight: 500; color: var(--text-primary); margin-left: auto; }
+
+  footer {
+    margin-top: var(--space-8);
+    color: var(--text-muted);
+    font-size: 13px;
+    max-width: 84ch;
+  }
+  code { font-family: var(--font-mono); color: var(--text-secondary); }
+</style>
+</head>
+<body>
+  <h1>Gains Breakdown — Layout Mockups</h1>
+  <p class="subtitle">
+    Three layout concepts for replacing the two-line gains panel on the asset view.
+    Same dark-theme tokens across all three. Toggle the scenario to see open vs.
+    closed positions, gains vs. losses, populated dividends, and an
+    <code>Unavailable</code> step.
+  </p>
+
+  <div class="controls">
+    <span class="label">Scenario</span>
+    <button class="toggle" data-scenario="openGain" aria-pressed="true">Open · gain (Arista)</button>
+    <button class="toggle" data-scenario="openLoss" aria-pressed="false">Open · loss</button>
+    <button class="toggle" data-scenario="closed" aria-pressed="false">Closed · realized</button>
+    <button class="toggle" data-scenario="unavail" aria-pressed="false">Open · missing FX</button>
+  </div>
+
+  <div class="grid">
+    <!-- Concept A -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>A — Waterfall</h2>
+        <span class="tag">recommended</span>
+      </div>
+      <div class="mode-banner" id="modeA"></div>
+      <div class="wf" id="wfA"></div>
+      <p class="panel-note">
+        Running total from the base up. Each step floats from where the last ended;
+        negative steps float down and render red. Most literal "how it builds up".
+      </p>
+    </section>
+
+    <!-- Concept B -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>B — Rows + running subtotal</h2>
+        <span class="tag">cheapest</span>
+      </div>
+      <div class="mode-banner" id="modeB"></div>
+      <table class="stk" id="stkB">
+        <thead>
+          <tr><th class="l">Step</th><th>Amount</th><th>Running</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="panel-note">
+        Reuses the existing list, adds a cumulative column. Precise and scannable;
+        least visual but lowest effort — a good first increment.
+      </p>
+    </section>
+
+    <!-- Concept C -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>C — Segmented bar</h2>
+        <span class="tag">compact</span>
+      </div>
+      <div class="mode-banner" id="modeC"></div>
+      <div class="seg-wrap" id="segC"></div>
+      <p class="panel-note">
+        One horizontal bar split into proportional segments. Compact and mobile-friendly,
+        but labels are cramped — values move to a legend below.
+      </p>
+    </section>
+  </div>
+
+  <footer>
+    Open identity: <code>market value = cost basis + price + FX</code>,
+    <code>total return = unrealized + realized + income</code>.
+    Closed identity: <code>proceeds = cost basis(sold) + price + FX</code>,
+    <code>total return = realized + income</code> (no market value — shares no longer held).
+    Dividends are mocked here as a future per-instrument field. An
+    <code>Unavailable</code> step (e.g. missing FX) is hatched and excluded from the running total,
+    distinct from a genuine 0.
+  </footer>
+
+<script>
+  // Each scenario is a generic descriptor so both modes flow through one renderer:
+  //   base  -> steps[] -> subtotal -> tail[] -> total
+  // value: number  |  null === Unavailable (distinct from 0)
+  const UNAVAIL = null;
+
+  const scenarios = {
+    // Verified Arista figures from the design doc; dividends mocked as a future field.
+    openGain: {
+      mode: 'open', currency: 'SEK',
+      base:     { label: 'Cost basis (held)', value: 265582.94 },
+      steps:    [
+        { label: 'Price effect', value: 53546.54 },
+        { label: 'FX effect',    value: 9418.19 },
+      ],
+      subtotal: { label: 'Market value' },               // = base + steps
+      tail:     [
+        { label: 'Realized gain', value: 0 },
+        { label: 'Dividends',     value: 3210.00 },       // mocked future field
+      ],
+      total:    { label: 'Total return' },               // = unrealized + realized + income
+    },
+
+    openLoss: {
+      mode: 'open', currency: 'SEK',
+      base:     { label: 'Cost basis (held)', value: 265582.94 },
+      steps:    [
+        { label: 'Price effect', value: -41200.00 },
+        { label: 'FX effect',    value: 6850.00 },
+      ],
+      subtotal: { label: 'Market value' },
+      tail:     [
+        { label: 'Realized gain', value: 4120.00 },
+        { label: 'Dividends',     value: 1450.00 },
+      ],
+      total:    { label: 'Total return' },
+    },
+
+    // Closed position: no market value; pivot to proceeds − cost = realized.
+    closed: {
+      mode: 'closed', currency: 'SEK',
+      base:     { label: 'Cost basis (sold)', value: 120000.00 },
+      steps:    [
+        { label: 'Price effect', value: 18000.00 },
+        { label: 'FX effect',    value: -2500.00 },
+      ],
+      subtotal: { label: 'Proceeds' },                    // = base + steps
+      tail:     [
+        { label: 'Dividends', value: 1800.00 },           // collected while held
+      ],
+      total:    { label: 'Total return' },                // = realized + income
+    },
+
+    // Same as openGain but FX is Unavailable (e.g. missing rate) — must not collapse to 0.
+    unavail: {
+      mode: 'open', currency: 'SEK',
+      base:     { label: 'Cost basis (held)', value: 265582.94 },
+      steps:    [
+        { label: 'Price effect', value: 53546.54 },
+        { label: 'FX effect',    value: UNAVAIL },
+      ],
+      subtotal: { label: 'Market value' },
+      tail:     [
+        { label: 'Realized gain', value: 0 },
+        { label: 'Dividends',     value: 3210.00 },
+      ],
+      total:    { label: 'Total return' },
+    },
+  };
+
+  const fmt = (n) => Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const signed = (n) => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(n);
+
+  // Resolve a descriptor into a flat sequence with running totals and classes.
+  // For 'open': subtotal = base + steps (market value); total = subtotal-base + tail
+  //             i.e. total return = unrealized + realized + income.
+  // For 'closed': subtotal = base + steps (proceeds); total = (subtotal-base) + tail
+  //             i.e. total return = realized + income (base cancels — sold shares).
+  function resolve(s) {
+    let running = s.base.value;
+    let anyUnavail = false;
+    const seq = [];
+
+    seq.push({ kind: 'base', label: s.base.label, from: 0, to: running, value: s.base.value });
+
+    for (const st of s.steps) {
+      if (st.value === UNAVAIL) {
+        anyUnavail = true;
+        seq.push({ kind: 'unavail', label: st.label, from: running, to: running, value: UNAVAIL, step: true });
+      } else {
+        const from = running; running += st.value;
+        seq.push({ kind: st.value >= 0 ? 'up' : 'down', label: st.label, from, to: running, value: st.value, step: true });
+      }
+    }
+
+    const subtotalVal = running;
+    seq.push({ kind: 'subtotal', label: s.subtotal.label, from: 0, to: subtotalVal, value: subtotalVal, divider: true, unavail: anyUnavail });
+
+    for (const t of s.tail) {
+      if (t.value === UNAVAIL) {
+        anyUnavail = true;
+        seq.push({ kind: 'unavail', label: t.label, from: running, to: running, value: UNAVAIL, step: true });
+      } else {
+        const from = running; running += t.value;
+        seq.push({ kind: t.value > 0 ? 'up' : (t.value < 0 ? 'down' : 'zero'), label: t.label, from, to: running, value: t.value, step: true });
+      }
+    }
+
+    // Total return = everything except the original cost basis.
+    // Render it as a DELTA bar floating from the cost-basis baseline up to the
+    // final cumulative, so the bar's height equals the return (open & closed alike).
+    const totalVal = running - s.base.value;
+    seq.push({ kind: 'total', label: s.total.label, from: s.base.value, to: running, value: totalVal, divider: true, total: true, unavail: anyUnavail });
+
+    return { seq, subtotalVal, totalVal, anyUnavail };
+  }
+
+  function modeText(s) {
+    if (s.mode === 'closed') return 'Closed position · proceeds − cost = realized';
+    return 'Open position · terminates at total return';
+  }
+
+  // ---------- Concept A: waterfall ----------
+  function renderA(s) {
+    const el = document.getElementById('wfA');
+    document.getElementById('modeA').textContent = modeText(s);
+    el.innerHTML = '';
+    const { seq } = resolve(s);
+    const denom = s.base.value; // percentages are contribution-to-return vs cost basis
+
+    const maxVal = Math.max(...seq.map(r => Math.max(r.from, r.to))) * 1.02;
+
+    // Column header (also clarifies the value column is in base currency).
+    const head = document.createElement('div');
+    head.className = 'wf-row wf-head';
+    head.innerHTML =
+      `<div></div><div></div>` +
+      `<div class="ehead">${s.currency}</div>` +
+      `<div class="ehead">% of cost</div>`;
+    el.appendChild(head);
+
+    const pctText = (v) => {
+      const p = (v / denom) * 100;
+      return (p > 0 ? '+' : p < 0 ? '−' : '') + Math.abs(p).toFixed(1) + '%';
+    };
+
+    for (const r of seq) {
+      if (r.divider) {
+        const d = document.createElement('div');
+        d.className = 'wf-divider';
+        el.appendChild(d);
+      }
+      const row = document.createElement('div');
+      row.className = 'wf-row' + (r.kind === 'subtotal' ? ' is-subtotal' : '') + (r.total ? ' is-total' : '');
+
+      const lab = document.createElement('div');
+      lab.className = 'rlabel';
+      lab.textContent = r.label;
+
+      const track = document.createElement('div');
+      track.className = 'wf-track';
+
+      const bar = document.createElement('div');
+      if (r.kind === 'unavail') {
+        // Render a faint hatched marker at the current running position.
+        bar.className = 'wf-bar unavail';
+        bar.style.left = (Math.max(r.from / maxVal, 0) * 100) + '%';
+        bar.style.width = '6%';
+      } else {
+        const lo = Math.min(r.from, r.to);
+        const hi = Math.max(r.from, r.to);
+        let cls = 'wf-bar ';
+        if (r.kind === 'base') cls += 'base';
+        else if (r.kind === 'subtotal') cls += 'subtotal';
+        else if (r.kind === 'total') cls += 'total';        // neutral, per spec
+        else if (r.kind === 'up') cls += 'up';
+        else if (r.kind === 'down') cls += 'down';
+        else cls += 'zero';
+        bar.className = cls;
+        bar.style.left = (lo / maxVal) * 100 + '%';
+        bar.style.width = Math.max(((hi - lo) / maxVal) * 100, 0.6) + '%';
+      }
+      track.appendChild(bar);
+
+      const val = document.createElement('div');
+      val.className = 'rval';
+      if (r.kind === 'unavail') {
+        val.classList.add('muted');
+        val.textContent = 'n/a';
+      } else if (r.step || r.kind === 'total') {
+        val.classList.add(r.value > 0 ? 'pos' : (r.value < 0 ? 'neg' : 'muted'));
+        val.textContent = signed(r.value);
+      } else {
+        val.textContent = fmt(r.value);
+        if (r.unavail) { val.classList.add('muted'); val.textContent = '≈ ' + fmt(r.value); }
+      }
+
+      // Percentage column — only for contribution rows (steps + total), not levels.
+      const pct = document.createElement('div');
+      pct.className = 'rpct';
+      if (r.kind === 'base' || r.kind === 'subtotal') {
+        pct.textContent = '';                               // level, not a contribution
+      } else if (r.kind === 'unavail') {
+        pct.classList.add('muted');
+        pct.textContent = 'n/a';
+      } else if (r.value === 0) {
+        pct.classList.add('muted');
+        pct.textContent = '0.0%';
+      } else {
+        pct.classList.add(r.value > 0 ? 'pos' : 'neg');
+        pct.textContent = pctText(r.value);
+      }
+
+      row.appendChild(lab);
+      row.appendChild(track);
+      row.appendChild(val);
+      row.appendChild(pct);
+      el.appendChild(row);
+    }
+  }
+
+  // ---------- Concept B: rows + running subtotal ----------
+  function renderB(s) {
+    document.getElementById('modeB').textContent = modeText(s);
+    const tbody = document.querySelector('#stkB tbody');
+    tbody.innerHTML = '';
+    const { seq } = resolve(s);
+
+    for (const r of seq) {
+      const tr = document.createElement('tr');
+      if (r.kind === 'subtotal') tr.className = 'subtotal';
+      if (r.kind === 'total') tr.className = 'total';
+
+      const tdLabel = `<td class="l">${r.label}</td>`;
+
+      let tdAmount, tdRun;
+      if (r.kind === 'unavail') {
+        tdAmount = `<td class="unavail">Unavailable</td>`;
+        tdRun = `<td class="run muted">—</td>`;
+      } else if (r.kind === 'base') {
+        tdAmount = `<td>${fmt(r.value)}</td>`;
+        tdRun = `<td class="run">${fmt(r.to)}</td>`;
+      } else if (r.kind === 'subtotal') {
+        tdAmount = `<td></td>`;
+        tdRun = `<td class="run">${r.unavail ? '≈ ' : ''}${fmt(r.value)}</td>`;
+      } else if (r.kind === 'total') {
+        const cls = r.value > 0 ? 'pos' : (r.value < 0 ? 'neg' : 'muted');
+        tdAmount = `<td class="${cls}">${signed(r.value)}</td>`;
+        tdRun = `<td class="run">${r.unavail ? '≈ ' : ''}${fmt(r.to)}</td>`;
+      } else {
+        const cls = r.value > 0 ? 'pos' : (r.value < 0 ? 'neg' : 'muted');
+        tdAmount = `<td class="${cls}">${signed(r.value)}</td>`;
+        tdRun = `<td class="run">${fmt(r.to)}</td>`;
+      }
+
+      tr.innerHTML = tdLabel + tdAmount + tdRun;
+      tbody.appendChild(tr);
+    }
+  }
+
+  // ---------- Concept C: segmented bar ----------
+  function renderC(s) {
+    document.getElementById('modeC').textContent = modeText(s);
+    const wrap = document.getElementById('segC');
+    const { subtotalVal, totalVal, anyUnavail } = resolve(s);
+
+    // Segments express the subtotal composition: base + each effect step.
+    const segs = [{ cls: 'base', label: s.base.label, value: s.base.value }];
+    for (const st of s.steps) {
+      if (st.value === UNAVAIL) { segs.push({ cls: 'unavail', label: st.label, value: UNAVAIL }); continue; }
+      segs.push({ cls: st.value >= 0 ? 'up' : 'down', label: st.label, value: st.value });
+    }
+
+    const total = segs.reduce((a, b) => a + (b.value === UNAVAIL ? 0 : Math.abs(b.value)), 0);
+    const trPos = totalVal >= 0;
+
+    wrap.innerHTML =
+      `<div class="seg-total ${trPos ? 'pos' : 'neg'}">${signed(totalVal)} <span class="muted" style="font-size:13px;">${s.currency}</span></div>` +
+      `<div class="seg-caption">${s.total.label}${anyUnavail ? ' · approx (missing data)' : ''}</div>`;
+
+    const bar = document.createElement('div');
+    bar.className = 'seg-bar';
+    for (const sg of segs) {
+      if (sg.value === UNAVAIL) continue; // can't size an unavailable segment
+      const pct = (Math.abs(sg.value) / total) * 100;
+      const d = document.createElement('div');
+      d.className = 'seg ' + sg.cls + (pct < 8 ? ' label-hide' : '');
+      d.style.flexBasis = pct + '%';
+      d.textContent = fmt(sg.value);
+      d.title = sg.label + ' ' + signed(sg.value);
+      bar.appendChild(d);
+    }
+    wrap.appendChild(bar);
+
+    const legend = document.createElement('div');
+    legend.className = 'seg-legend';
+    legend.innerHTML = segs.map(sg => {
+      if (sg.value === UNAVAIL)
+        return `<span class="item"><span class="swatch ghost"></span>${sg.label}<span class="v muted">Unavailable</span></span>`;
+      return `<span class="item"><span class="swatch ${sg.cls}"></span>${sg.label}<span class="v">${sg.cls === 'base' ? fmt(sg.value) : signed(sg.value)}</span></span>`;
+    }).join('');
+
+    // Context line: market value (open) or proceeds (closed) + tail items.
+    legend.innerHTML +=
+      `<span class="item"><span class="swatch ghost"></span>${s.subtotal.label}<span class="v">${anyUnavail ? '≈ ' : ''}${fmt(subtotalVal)}</span></span>`;
+    for (const t of s.tail) {
+      const txt = t.value === UNAVAIL ? 'Unavailable' : signed(t.value);
+      legend.innerHTML +=
+        `<span class="item"><span class="swatch ghost"></span>${t.label}<span class="v">${txt}</span></span>`;
+    }
+    wrap.appendChild(legend);
+  }
+
+  function render(name) {
+    const s = scenarios[name];
+    renderA(s); renderB(s); renderC(s);
+  }
+
+  const buttons = [...document.querySelectorAll('button.toggle')];
+  buttons.forEach(btn => btn.addEventListener('click', () => {
+    buttons.forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+    render(btn.dataset.scenario);
+  }));
+
+  render('openGain');
+</script>
+</body>
+</html>
