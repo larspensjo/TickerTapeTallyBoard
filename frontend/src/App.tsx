@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
 
 const Dashboard = lazy(() =>
@@ -59,6 +60,7 @@ export function App() {
           </Routes>
         </Suspense>
       </main>
+      <AppFooter />
     </div>
   );
 }

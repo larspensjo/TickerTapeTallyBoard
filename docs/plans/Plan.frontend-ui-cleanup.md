@@ -87,16 +87,16 @@ Remove developer-facing noise from the daily path and fix the duplicate Refresh 
 
 ### Task 2.1: Relocate versions + health to a footer
 **Files:** Create `frontend/src/components/AppFooter.tsx`; modify `BoardView.tsx`, `App.tsx`, `styles.css`.
-- [ ] Build `AppFooter` showing UI version (`package.json`), API version + status (`/api/health`), and the static facts ("Manual entry", "SEK base") in quiet `--text-muted` type.
-- [ ] Remove the `status-strip` chips from `BoardView`; delete now-dead `status-strip` CSS.
-- [ ] Keep **one** user-facing price-freshness chip near the totals (reuse `freshnessLabel`/`freshnessTone` from `valuationDisplay`).
-- [ ] **Verify:** `npm run check` passes; top of the page is visibly calmer; version/health still discoverable in the footer. Stage the files.
+- [x] Build `AppFooter` showing UI version (`package.json`), API version + status (`/api/health`), and the static facts ("Manual entry", "SEK base") in quiet `--text-muted` type.
+- [x] Remove the `status-strip` chips from `BoardView`; delete now-dead `status-strip` CSS.
+- [x] Keep **one** user-facing price-freshness chip near the totals (reuse `freshnessLabel`/`freshnessTone` from `valuationDisplay`).
+- [x] **Verify:** `npm run check` passes; top of the page is visibly calmer; version/health still discoverable in the footer. Stage the files.
 
 ### Task 2.2: Resolve the two "Refresh" buttons
 **Files:** Modify `BoardView.tsx` (+ tests if the reducer/action set changes).
-- [ ] Keep one primary **Refresh prices** action. Trigger the data refetch automatically on its success (or demote manual refetch to an icon-only control on error states only).
-- [ ] Ensure the spinner/disabled states still reflect in-flight refresh.
-- [ ] **Verify:** `npm run check` passes; only one "Refresh" affordance is visible; prices + tables update after it. Stage the file.
+- [x] Keep one primary **Refresh prices** action. Trigger the data refetch automatically on its success (or demote manual refetch to an icon-only control on error states only).
+- [x] Ensure the spinner/disabled states still reflect in-flight refresh.
+- [x] **Verify:** `npm run check` passes; only one "Refresh" affordance is visible; prices + tables update after it. Stage the file.
 
 **Human test recommended:** trigger a price refresh and confirm the tables reflect new values without a second click.
 

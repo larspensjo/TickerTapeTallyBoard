@@ -1,9 +1,6 @@
-import type { UseQueryResult } from "@tanstack/react-query";
-import { useQuery } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
 import { useReducer, useState } from "react";
 import { useLocation } from "react-router-dom";
-import packageJson from "../../package.json";
 import {
   type ReturnMethod,
   useDeleteTransaction,
@@ -16,9 +13,9 @@ import {
 } from "../api/queries";
 import type {
   DateRange,
+  GainsRow,
   MoneyValue,
   PercentValue,
-  RefreshRunSummary,
 } from "../api/types";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { AsyncBoundary } from "./AsyncBoundary";
@@ -27,11 +24,11 @@ import { HoldingsTable } from "./HoldingsTable";
 import { TransactionsTable } from "./TransactionsTable";
 import {
   formatGroupedNumber,
+  freshnessLabel,
+  freshnessTone,
   isAvailable,
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
-
-const frontendVersion = packageJson.version;
 
 type BoardView = "holdings" | "gains" | "transactions";
 
@@ -53,12 +50,6 @@ type UiAction =
   | { type: "datePresetChanged"; datePreset: DatePreset }
   | { type: "dateRangeChanged"; dateRange: DateRange }
   | { type: "returnMethodChanged"; returnMethod: ReturnMethod };
-
-interface HealthResponse {
-  status: string;
-  version: string;
-  build: { package: string; profile: string };
-}
 
 function uiReducer(state: UiState, action: UiAction): UiState {
   switch (action.type) {
@@ -84,28 +75,6 @@ function uiReducer(state: UiState, action: UiAction): UiState {
   return state;
 }
 
-async function fetchHealth(): Promise<HealthResponse> {
-  const response = await fetch("/api/health");
-
-  if (!response.ok) {
-    throw new Error(`Health request failed: ${response.status}`);
-  }
-
-  return (await response.json()) as HealthResponse;
-}
-
-function healthLabel(healthQuery: UseQueryResult<HealthResponse, Error>) {
-  if (healthQuery.isPending) {
-    return "Checking API";
-  }
-
-  if (healthQuery.isError) {
-    return "API offline";
-  }
-
-  return `API ${healthQuery.data.status}`;
-}
-
 function summaryMoney(value: MoneyValue | undefined) {
   return <SummaryAvailabilityValue value={value} prefix="SEK " />;
 }
@@ -114,55 +83,34 @@ function summaryPercent(value: PercentValue | undefined) {
   return <SummaryAvailabilityValue value={value} suffix="%" />;
 }
 
-function priceRefreshNeedsWarning(result: RefreshRunSummary): boolean {
-  return (
-    result.status === "partial" ||
-    result.status === "failed" ||
-    result.failed_items > 0 ||
-    result.unmapped_instruments > 0
-  );
+function freshnessRank(freshness: string): number {
+  const dayMatch = freshness.match(/_(\d+)_days$/);
+  const days = dayMatch ? Number(dayMatch[1]) : 0;
+
+  if (freshness.startsWith("warning_stale_")) {
+    return 200 + days;
+  }
+
+  if (freshness.startsWith("minor_stale_")) {
+    return 100 + days;
+  }
+
+  return freshness === "fresh" ? 0 : 50;
 }
 
-function priceRefreshLabel(result: RefreshRunSummary): string {
-  if (result.status === "running") {
-    return "Refreshing prices";
-  }
+function portfolioPriceFreshness(rows: GainsRow[] | undefined): string | null {
+  const freshnessValues =
+    rows?.flatMap((row) =>
+      row.latest_price?.freshness ? [row.latest_price.freshness] : [],
+    ) ?? [];
 
-  if (result.status === "failed") {
-    return "Price refresh failed";
-  }
+  return freshnessValues.reduce<string | null>((worst, freshness) => {
+    if (!worst || freshnessRank(freshness) > freshnessRank(worst)) {
+      return freshness;
+    }
 
-  if (result.status === "partial") {
-    return "Price refresh partial";
-  }
-
-  return result.trigger === "launch"
-    ? "Launch refresh complete"
-    : "Prices refreshed";
-}
-
-function priceRefreshTitle(result: RefreshRunSummary): string {
-  const parts = [
-    `run ${result.run_id}`,
-    `trigger ${result.trigger}`,
-    `mode ${result.mode}`,
-    `status ${result.status}`,
-    `${formatGroupedNumber(result.prices_written)} prices`,
-    `${formatGroupedNumber(result.fx_rates_written)} FX`,
-    `${formatGroupedNumber(result.unmapped_instruments)} unmapped`,
-    `${formatGroupedNumber(result.failed_items)} failed`,
-    `started ${result.started_at}`,
-  ];
-
-  if (result.finished_at) {
-    parts.push(`finished ${result.finished_at}`);
-  }
-
-  if (result.message) {
-    parts.push(result.message);
-  }
-
-  return parts.join(", ");
+    return worst;
+  }, null);
 }
 
 export function BoardView() {
@@ -181,10 +129,6 @@ export function BoardView() {
     returnMethod: loadReturnMethod(),
   });
 
-  const healthQuery = useQuery({
-    queryKey: ["health"],
-    queryFn: fetchHealth,
-  });
   const instrumentsQuery = useInstruments();
   const transactionsQuery = useTransactions();
   const holdingsQuery = useHoldings();
@@ -204,12 +148,11 @@ export function BoardView() {
   const transactionsCount = transactionsQuery.data?.length ?? 0;
   const gainsSummary = gainsQuery.data?.summary;
   const totalValue = gainsSummary?.market_value_base;
-  const refreshSummary = priceStatusQuery.data?.latest_run;
+  const priceFreshness = portfolioPriceFreshness(gainsQuery.data?.rows);
   const pricesRefreshing =
     refreshPrices.isPending || priceStatusQuery.data?.refreshing === true;
 
   const boardIsFetching =
-    healthQuery.isFetching ||
     holdingsQuery.isFetching ||
     gainsQuery.isFetching ||
     instrumentsQuery.isFetching ||
@@ -232,41 +175,20 @@ export function BoardView() {
     <>
       <div className="board-toolbar">
         <button
-          className="button secondary"
+          className="button primary"
           type="button"
-          onClick={() => {
-            void Promise.all([
-              healthQuery.refetch(),
-              holdingsQuery.refetch(),
-              gainsQuery.refetch(),
-              instrumentsQuery.refetch(),
-              transactionsQuery.refetch(),
-            ]);
-          }}
-          disabled={boardIsFetching}
+          onClick={() => void refreshPrices.mutateAsync({ mode: "latest" })}
+          disabled={pricesRefreshing}
         >
           <RefreshCw
             aria-hidden="true"
-            className={boardIsFetching ? "spin" : undefined}
-            size={16}
-          />
-          <span>Refresh</span>
-        </button>
-        <button
-          className="button secondary"
-          type="button"
-          onClick={() => refreshPrices.mutate({ mode: "latest" })}
-          disabled={refreshPrices.isPending}
-        >
-          <RefreshCw
-            aria-hidden="true"
-            className={refreshPrices.isPending ? "spin" : undefined}
+            className={pricesRefreshing ? "spin" : undefined}
             size={16}
           />
           <span>Refresh prices</span>
         </button>
         <button
-          className="button primary"
+          className="button secondary"
           type="button"
           onClick={() =>
             dispatch({ type: "formToggled", open: !uiState.formOpen })
@@ -316,54 +238,34 @@ export function BoardView() {
               {formatGroupedNumber(transactionsCount)}
             </strong>
           </span>
+          {pricesRefreshing ? (
+            <span className="status-chip warning">
+              <RefreshCw aria-hidden="true" className="spin" size={12} />
+              Prices: refreshing
+            </span>
+          ) : refreshPrices.isError ? (
+            <span
+              className="status-chip warning"
+              title={refreshPrices.error.message}
+            >
+              Prices: refresh failed
+            </span>
+          ) : priceFreshness ? (
+            <span
+              className={
+                freshnessTone(priceFreshness) === "warning"
+                  ? "status-chip warning"
+                  : "status-chip"
+              }
+            >
+              Prices: {freshnessLabel(priceFreshness)}
+            </span>
+          ) : priceStatusQuery.isPending || boardIsFetching ? (
+            <span className="status-chip">Prices: checking</span>
+          ) : (
+            <span className="status-chip">Prices: no data</span>
+          )}
         </div>
-      </section>
-
-      <section className="status-strip" aria-label="Development status">
-        <span
-          className={
-            healthQuery.isError ? "status-chip warning" : "status-chip"
-          }
-        >
-          {healthLabel(healthQuery)}
-        </span>
-        <span className="status-chip">Manual entry</span>
-        <span className="status-chip">SEK base</span>
-        <span className="status-chip">UI {frontendVersion}</span>
-        {priceStatusQuery.isPending ? (
-          <span className="status-chip">Checking prices</span>
-        ) : pricesRefreshing ? (
-          <span className="status-chip warning">
-            <RefreshCw aria-hidden="true" className="spin" size={12} />
-            Refreshing prices
-          </span>
-        ) : refreshSummary ? (
-          <span
-            className={
-              priceRefreshNeedsWarning(refreshSummary)
-                ? "status-chip warning"
-                : "status-chip"
-            }
-            title={priceRefreshTitle(refreshSummary)}
-          >
-            {priceRefreshLabel(refreshSummary)}
-          </span>
-        ) : (
-          <span className="status-chip">No price refresh yet</span>
-        )}
-        {refreshPrices.isError ? (
-          <span
-            className="status-chip warning"
-            title={refreshPrices.error.message}
-          >
-            Price refresh failed
-          </span>
-        ) : null}
-        <span className="status-chip">
-          API{" "}
-          {healthQuery.data?.version ??
-            (healthQuery.isPending ? "checking" : "unavailable")}
-        </span>
       </section>
 
       {uiState.formOpen ? (
