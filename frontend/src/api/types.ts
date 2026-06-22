@@ -90,6 +90,19 @@ export interface PriceHistoryResponse {
   points: PriceHistoryPoint[];
 }
 
+export interface ValueHistoryPoint {
+  date: string;
+  value_base: string;
+  incomplete: boolean;
+  included_count: number;
+  excluded_count: number;
+}
+
+export interface ValueHistoryResponse {
+  base_currency: string;
+  points: ValueHistoryPoint[];
+}
+
 export interface GainsSummary {
   market_value_base: MoneyValue;
   cost_basis_base: MoneyValue;

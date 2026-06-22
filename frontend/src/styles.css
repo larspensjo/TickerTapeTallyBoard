@@ -1195,6 +1195,12 @@ th.number-head .sort-button {
   padding: var(--space-5) 0 0;
 }
 
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
 .asset-header {
   display: flex;
   flex-direction: column;

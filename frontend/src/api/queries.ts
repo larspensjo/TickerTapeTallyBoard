@@ -22,6 +22,7 @@ import type {
   RollbackResult,
   Transaction,
   TransactionType,
+  ValueHistoryResponse,
 } from "./types";
 
 export function useInstruments() {
@@ -92,6 +93,13 @@ export function useInstrumentPrices(id: number | null) {
     queryFn: () =>
       apiGet<PriceHistoryResponse>(`/api/instruments/${id}/prices`),
     enabled: id !== null,
+  });
+}
+
+export function usePortfolioValueHistory() {
+  return useQuery({
+    queryKey: ["portfolio-value-history"],
+    queryFn: () => apiGet<ValueHistoryResponse>("/api/portfolio/value-history"),
   });
 }
 
