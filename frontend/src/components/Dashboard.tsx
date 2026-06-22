@@ -1,7 +1,12 @@
+import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
-import type { GainsSummary } from "../api/types";
+import type { GainsRow, GainsSummary } from "../api/types";
+import { type MoverRow, topMovers } from "./dashboardSelectors";
 import { TimeSeriesChart } from "./TimeSeriesChart";
-import { SummaryAvailabilityValue } from "./valuationDisplay";
+import {
+  formatGroupedNumber,
+  SummaryAvailabilityValue,
+} from "./valuationDisplay";
 
 export function Dashboard() {
   const gainsQuery = useGains();
@@ -11,6 +16,7 @@ export function Dashboard() {
     <section className="dashboard" aria-label="Portfolio dashboard">
       <DashboardSummary summary={gainsQuery.data?.summary} />
       <DashboardValueChart query={valueHistory} />
+      <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
     </section>
   );
 }
@@ -123,5 +129,52 @@ function DashboardValueChart({
         height={280}
       />
     </section>
+  );
+}
+
+function TopMoversPanel({ rows }: { rows: GainsRow[] }) {
+  const { gainers, losers } = topMovers(rows);
+  if (gainers.length === 0 && losers.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="panel asset-panel" aria-label="Top movers">
+      <h2>Top movers</h2>
+      <div className="movers-grid">
+        <MoverList title="Gainers" movers={gainers} />
+        <MoverList title="Losers" movers={losers} />
+      </div>
+    </section>
+  );
+}
+
+function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
+  return (
+    <div className="mover-list">
+      <h3>{title}</h3>
+      {movers.length === 0 ? (
+        <p className="asset-subtle">-</p>
+      ) : (
+        <ul>
+          {movers.map((mover) => (
+            <li key={mover.instrument.id}>
+              <Link
+                className="instrument-link"
+                to={`/asset/${mover.instrument.id}`}
+              >
+                {mover.instrument.symbol}
+              </Link>
+              <span
+                className={mover.percent >= 0 ? "up number" : "down number"}
+              >
+                {mover.percent >= 0 ? "+" : ""}
+                {formatGroupedNumber(mover.percent.toFixed(2))}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

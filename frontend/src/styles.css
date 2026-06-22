@@ -1315,6 +1315,53 @@ th.number-head .sort-button {
   gap: var(--space-4);
 }
 
+.movers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.mover-list {
+  min-width: 0;
+}
+
+.mover-list h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.mover-list ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mover-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0.25rem 0;
+}
+
+.mover-list .instrument-link {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mover-list .instrument-link:hover {
+  color: var(--accent-link);
+  text-decoration: underline;
+}
+
 .asset-panel {
   display: flex;
   flex-direction: column;
