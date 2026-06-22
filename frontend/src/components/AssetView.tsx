@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   useGains,
   useHoldings,
+  useInstrumentPrices,
   useInstruments,
   usePriceStatus,
   useTransactions,
@@ -22,6 +23,8 @@ import {
   type Tiles,
   tilesView,
 } from "./assetViewModel";
+import { instrumentPriceSeries } from "./instrumentChartViewModel";
+import { TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
 import {
   formatGroupedNumber,
@@ -42,6 +45,7 @@ export function AssetView() {
   const holdingsQuery = useHoldings();
   const transactionsQuery = useTransactions();
   const priceStatusQuery = usePriceStatus();
+  const pricesQuery = useInstrumentPrices(id);
 
   const isPending =
     instrumentsQuery.isPending ||
@@ -124,7 +128,7 @@ export function AssetView() {
           <AssetMetricTiles
             tiles={tilesView(data.gain, data.holding, data.transactions)}
           />
-          <ReservedChartBand />
+          <AssetPriceChart query={pricesQuery} />
           <div className="asset-two-col">
             <AssetGainsBreakdown breakdown={breakdownView(data.gain)} />
             <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
@@ -132,7 +136,7 @@ export function AssetView() {
         </>
       ) : (
         <>
-          <ReservedChartBand />
+          <AssetPriceChart query={pricesQuery} />
           <AssetDataMapping gain={null} priceStatus={data.priceStatus} />
         </>
       )}
@@ -290,10 +294,60 @@ function MetricTile({
   );
 }
 
-function ReservedChartBand() {
+function AssetPriceChart({
+  query,
+}: {
+  query: ReturnType<typeof useInstrumentPrices>;
+}) {
+  if (query.isPending) {
+    return (
+      <section className="chart-band" aria-label="Price chart">
+        <div className="skeleton-bar" />
+      </section>
+    );
+  }
+
+  if (query.isError) {
+    return (
+      <section className="chart-band error" aria-label="Price chart">
+        <p className="down">Could not load price history.</p>
+        <button
+          type="button"
+          className="button outline"
+          onClick={() => void query.refetch()}
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
+
+  const series = instrumentPriceSeries(query.data);
+
+  if (series.points.length === 0) {
+    return (
+      <section className="chart-band muted" aria-label="Price chart">
+        <span className="chart-band-label">
+          No price history yet — refresh prices
+        </span>
+      </section>
+    );
+  }
+
   return (
-    <section className="chart-band" aria-label="Price chart placeholder">
-      <span className="chart-band-label">Price chart — coming soon</span>
+    <section className="panel chart-panel" aria-label="Price chart">
+      <div className="chart-meta">
+        <h2>Price history (SEK)</h2>
+        {series.droppedForMissingFx > 0 ? (
+          <span className="status-chip warning compact">
+            {series.droppedForMissingFx} days missing FX
+          </span>
+        ) : null}
+      </div>
+      <TimeSeriesChart
+        data={series.points}
+        ariaLabel="Instrument price history in SEK"
+      />
     </section>
   );
 }
