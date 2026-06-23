@@ -1444,6 +1444,13 @@ th.number-head .sort-button {
   padding: 0.25rem 0;
 }
 
+.mover-identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
 .mover-list .instrument-link {
   min-width: 0;
   overflow: hidden;
@@ -1456,6 +1463,15 @@ th.number-head .sort-button {
 .mover-list .instrument-link:hover {
   color: var(--accent-link);
   text-decoration: underline;
+}
+
+.mover-isin {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .allocation-panel {
@@ -1497,6 +1513,19 @@ th.number-head .sort-button {
 
 .allocation-table td:not(:first-child) {
   text-align: right;
+}
+
+.allocation-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.allocation-isin {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
 }
 
 .allocation-swatch {

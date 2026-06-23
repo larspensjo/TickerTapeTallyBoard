@@ -44,6 +44,8 @@ export type AllocationDimension = "instrument" | "currency" | "type";
 export interface AllocationSlice {
   key: string;
   label: string;
+  /** Muted secondary identifier (the ISIN for instrument allocation). */
+  secondary?: string;
   valueBase: number;
   weightPercent: number;
 }
@@ -65,6 +67,24 @@ function bucketKey(row: GainsRow, dimension: AllocationDimension): string {
 }
 
 /**
+ * Human-facing label for a bucket. For instrument allocation we lead with the
+ * recognizable name and keep the ISIN (symbol) as muted secondary text, falling
+ * back to the symbol when no name is known.
+ */
+function bucketLabels(
+  row: GainsRow,
+  dimension: AllocationDimension,
+): { label: string; secondary?: string } {
+  if (dimension !== "instrument") {
+    return { label: bucketKey(row, dimension) };
+  }
+  const name = row.instrument.name.trim();
+  const symbol = row.instrument.symbol.trim();
+  const label = name || symbol;
+  return { label, secondary: symbol && symbol !== label ? symbol : undefined };
+}
+
+/**
  * Build display-only allocation weights from currently open positions.
  * Unavailable market values are counted as exclusions instead of being treated
  * as zero, while percentage weights intentionally use floats for chart display.
@@ -74,6 +94,7 @@ export function allocationBreakdown(
   dimension: AllocationDimension,
 ): Allocation {
   const totals = new Map<string, number>();
+  const labels = new Map<string, { label: string; secondary?: string }>();
   let total = 0;
   let excludedCount = 0;
 
@@ -92,6 +113,9 @@ export function allocationBreakdown(
 
     const key = bucketKey(row, dimension);
     totals.set(key, (totals.get(key) ?? 0) + value);
+    if (!labels.has(key)) {
+      labels.set(key, bucketLabels(row, dimension));
+    }
     total += value;
   }
 
@@ -102,7 +126,8 @@ export function allocationBreakdown(
   const slices: AllocationSlice[] = [...totals.entries()]
     .map(([key, valueBase]) => ({
       key,
-      label: key,
+      label: labels.get(key)?.label ?? key,
+      secondary: labels.get(key)?.secondary,
       valueBase,
       weightPercent: (valueBase / total) * 100,
     }))

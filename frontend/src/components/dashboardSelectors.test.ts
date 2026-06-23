@@ -126,6 +126,41 @@ describe("allocationBreakdown", () => {
     );
   });
 
+  it("labels instrument slices with the name and keeps the ISIN as secondary", () => {
+    const rows = [
+      mvRow(inst(1, "US5951121038", "Microsoft Corp"), {
+        status: "available",
+        value: "100.00",
+      }),
+    ];
+    const { slices } = allocationBreakdown(rows, "instrument");
+    expect(slices[0].label).toBe("Microsoft Corp");
+    expect(slices[0].secondary).toBe("US5951121038");
+  });
+
+  it("omits the secondary ISIN when no distinct name is known", () => {
+    const rows = [
+      mvRow(inst(1, "AAA"), { status: "available", value: "100.00" }),
+    ];
+    const [slice] = allocationBreakdown(rows, "instrument").slices;
+    expect(slice.label).toBe("AAA");
+    expect(slice.secondary).toBeUndefined();
+  });
+
+  it("never sets a secondary label for currency or type slices", () => {
+    const rows = [
+      mvRow(inst(1, "US5951121038", "Microsoft Corp"), {
+        status: "available",
+        value: "100.00",
+      }),
+    ];
+    expect(
+      allocationBreakdown(rows, "currency").slices.every(
+        (slice) => slice.secondary === undefined,
+      ),
+    ).toBe(true);
+  });
+
   it("groups by currency and type", () => {
     const usd: Instrument = { ...inst(1, "AAA"), currency: "USD" };
     const sek: Instrument = { ...inst(2, "BBB"), currency: "SEK" };

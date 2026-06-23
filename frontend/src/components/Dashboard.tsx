@@ -121,22 +121,33 @@ function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
         <p className="asset-subtle">-</p>
       ) : (
         <ul>
-          {movers.map((mover) => (
-            <li key={mover.instrument.id}>
-              <Link
-                className="instrument-link"
-                to={`/asset/${mover.instrument.id}`}
-              >
-                {mover.instrument.symbol}
-              </Link>
-              <span
-                className={mover.percent >= 0 ? "up number" : "down number"}
-              >
-                {mover.percent >= 0 ? "+" : ""}
-                {formatGroupedNumber(mover.percent.toFixed(2))}%
-              </span>
-            </li>
-          ))}
+          {movers.map((mover) => {
+            const name = mover.instrument.name.trim();
+            const symbol = mover.instrument.symbol.trim();
+            const primary = name || symbol;
+            const showSymbol = symbol.length > 0 && symbol !== primary;
+            return (
+              <li key={mover.instrument.id}>
+                <span className="mover-identity">
+                  <Link
+                    className="instrument-link"
+                    to={`/asset/${mover.instrument.id}`}
+                  >
+                    {primary}
+                  </Link>
+                  {showSymbol ? (
+                    <span className="mover-isin">{symbol}</span>
+                  ) : null}
+                </span>
+                <span
+                  className={mover.percent >= 0 ? "up number" : "down number"}
+                >
+                  {mover.percent >= 0 ? "+" : ""}
+                  {formatGroupedNumber(mover.percent.toFixed(2))}%
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -210,7 +221,14 @@ function AllocationPanel({ rows }: { rows: GainsRow[] }) {
                       className="allocation-swatch"
                       style={{ background: palette[index % palette.length] }}
                     />
-                    {slice.label}
+                    <span className="allocation-label">
+                      {slice.label}
+                      {slice.secondary ? (
+                        <span className="allocation-isin">
+                          {slice.secondary}
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
                   <td className="number">
                     SEK {formatGroupedNumber(slice.valueBase.toFixed(2))}
