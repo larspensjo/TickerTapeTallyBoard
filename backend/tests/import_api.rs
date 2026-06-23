@@ -729,9 +729,7 @@ async fn avanza_refresh_adds_new_row_without_doubling_history() {
         .expect("count before");
 
     // Refresh with V2 (same history + one new buy)
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s2, refreshed) = send_bytes(&state, &uri, AVANZA_V2).await;
     assert_eq!(s2, StatusCode::OK, "refresh should succeed: {refreshed}");
     assert_eq!(
@@ -775,9 +773,7 @@ async fn avanza_refresh_idempotent_with_same_file() {
         .expect("max id before");
 
     // Refresh with the identical file
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s2, refreshed) = send_bytes(&state, &uri, AVANZA).await;
     assert_eq!(s2, StatusCode::OK, "idempotent refresh should succeed");
 
@@ -813,9 +809,7 @@ async fn avanza_refresh_preserves_dividend_transaction_id() {
             .await
             .expect("dividend id before");
 
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s, _) = send_bytes(&state, &uri, AVANZA).await;
     assert_eq!(s, StatusCode::OK);
 
@@ -867,9 +861,7 @@ async fn avanza_refresh_preserves_instruments_and_price_history() {
     .expect("seed provider symbol");
 
     // Refresh
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s, _) = send_bytes(&state, &uri, AVANZA).await;
     assert_eq!(s, StatusCode::OK);
 
@@ -880,12 +872,13 @@ async fn avanza_refresh_preserves_instruments_and_price_history() {
         .expect("servicenow after refresh");
     assert_eq!(now_after.id, servicenow.id, "instrument id must not change");
 
-    let price_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM prices WHERE instrument_id = ? AND provider = 'YAHOO'")
-            .bind(servicenow.id)
-            .fetch_one(&state.pool)
-            .await
-            .expect("price count");
+    let price_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM prices WHERE instrument_id = ? AND provider = 'YAHOO'",
+    )
+    .bind(servicenow.id)
+    .fetch_one(&state.pool)
+    .await
+    .expect("price count");
     assert_eq!(price_count, 1, "price row must be preserved after refresh");
 
     let sym_count: i64 =
@@ -928,11 +921,13 @@ async fn avanza_refresh_preserves_manual_transaction() {
     .await;
     assert_eq!(ms, StatusCode::CREATED);
 
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s, _) = send_bytes(&state, &uri, AVANZA).await;
-    assert_eq!(s, StatusCode::OK, "refresh should succeed with valid manual buy");
+    assert_eq!(
+        s,
+        StatusCode::OK,
+        "refresh should succeed with valid manual buy"
+    );
 
     let manual_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE import_batch_id IS NULL")
@@ -994,7 +989,10 @@ async fn avanza_refresh_rejected_when_excluded_asset_invalidates_manual_sell() {
             .fetch_one(&state.pool)
             .await
             .expect("count");
-    assert!(apple_tx_count > 1, "old imported rows must be preserved on refresh failure");
+    assert!(
+        apple_tx_count > 1,
+        "old imported rows must be preserved on refresh failure"
+    );
 }
 
 #[tokio::test]
@@ -1039,9 +1037,7 @@ async fn avanza_refresh_returns_conflict_when_newer_batch_appeared() {
     assert!(second_id > first_id);
 
     // Try to refresh batch 1 — but batch 2 is newer → conflict
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={first_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={first_id}");
     let (s, body) = send_bytes(&state, &uri, AVANZA).await;
     assert_eq!(s, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "replace_candidate_changed");
@@ -1116,19 +1112,16 @@ async fn avanza_refresh_same_day_order_preserves_manual_row_id() {
     let manual_id = manual_body["id"].as_i64().expect("manual id");
 
     // Refresh with same file
-    let uri = format!(
-        "/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}"
-    );
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
     let (s, _) = send_bytes(&state, &uri, AVANZA).await;
     assert_eq!(s, StatusCode::OK);
 
     // Manual row must still exist with same id
-    let still_there: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM transactions WHERE id = ?")
-            .bind(manual_id)
-            .fetch_optional(&state.pool)
-            .await
-            .expect("lookup");
+    let still_there: Option<i64> = sqlx::query_scalar("SELECT id FROM transactions WHERE id = ?")
+        .bind(manual_id)
+        .fetch_optional(&state.pool)
+        .await
+        .expect("lookup");
     assert_eq!(
         still_there,
         Some(manual_id),

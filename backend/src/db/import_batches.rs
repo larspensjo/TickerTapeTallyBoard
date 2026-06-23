@@ -16,8 +16,7 @@ const FIND_BY_ID_SQL: &str =
     "SELECT id, source, imported_at, raw_file_hash FROM import_batches WHERE id = ?";
 const FIND_LATEST_BY_SOURCE_SQL: &str =
     "SELECT id, source, imported_at, raw_file_hash FROM import_batches WHERE source = ? ORDER BY id DESC LIMIT 1";
-const COUNT_BY_SOURCE_SQL: &str =
-    "SELECT COUNT(*) FROM import_batches WHERE source = ?";
+const COUNT_BY_SOURCE_SQL: &str = "SELECT COUNT(*) FROM import_batches WHERE source = ?";
 const DELETE_IN_TX_SQL: &str = "DELETE FROM import_batches WHERE id = ?";
 const UPDATE_METADATA_IN_TX_SQL: &str =
     "UPDATE import_batches SET imported_at = ?, raw_file_hash = ? WHERE id = ?";

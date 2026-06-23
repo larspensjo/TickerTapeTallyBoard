@@ -30,20 +30,22 @@ fn build_position_events(
             AvanzaKind::Buy => {
                 if let Some(q) = row.quantity.to_i64() {
                     if q > 0 {
-                        by_isin
-                            .entry(row.isin.clone())
-                            .or_default()
-                            .push((row.trade_date, row.source_row_number, q));
+                        by_isin.entry(row.isin.clone()).or_default().push((
+                            row.trade_date,
+                            row.source_row_number,
+                            q,
+                        ));
                     }
                 }
             }
             AvanzaKind::Sell => {
                 if let Some(q) = row.quantity.abs().to_i64() {
                     if q > 0 {
-                        by_isin
-                            .entry(row.isin.clone())
-                            .or_default()
-                            .push((row.trade_date, row.source_row_number, -q));
+                        by_isin.entry(row.isin.clone()).or_default().push((
+                            row.trade_date,
+                            row.source_row_number,
+                            -q,
+                        ));
                     }
                 }
             }
@@ -296,8 +298,7 @@ fn map_dividend(
         };
     }
 
-    let eligible_qty =
-        eligible_quantity_at(&row.isin, row.trade_date, position_events);
+    let eligible_qty = eligible_quantity_at(&row.isin, row.trade_date, position_events);
 
     if eligible_qty <= 0 {
         return RowOutcome::Skip {
@@ -671,7 +672,9 @@ mod tests {
         // buy + sell + dividend (mapped)
         assert_eq!(rows.len(), 3);
 
-        let dividend = rows.iter().find(|r| r.proposed.kind == TransactionKind::Dividend)
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
             .expect("dividend row");
         // eligible_qty = 5 - 2 = 3
         assert_eq!(dividend.proposed.quantity, 3);
@@ -719,7 +722,9 @@ mod tests {
         ]));
 
         let rows = mapped(&prepared);
-        let dividend = rows.iter().find(|r| r.proposed.kind == TransactionKind::Dividend)
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
             .expect("dividend row");
         assert_eq!(dividend.proposed.quantity, 10);
         assert_eq!(dividend.proposed.price, Some(dec!(7.5)));
@@ -761,7 +766,9 @@ mod tests {
         ]));
 
         let rows = mapped(&prepared);
-        let dividend = rows.iter().find(|r| r.proposed.kind == TransactionKind::Dividend)
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
             .expect("dividend row");
         assert_eq!(dividend.proposed.quantity, 4);
         assert_eq!(dividend.proposed.price, Some(dec!(6.40)));
@@ -829,10 +836,10 @@ mod tests {
             }),
         ]));
 
-        assert!(matches!(
-            prepared.outcomes.iter().find(|o| matches!(o, RowOutcome::Skip { note, .. } if note.code == "missing_fx_for_derivation")),
-            Some(_)
-        ));
+        assert!(prepared
+            .outcomes
+            .iter()
+            .any(|o| matches!(o, RowOutcome::Skip { note, .. } if note.code == "missing_fx_for_derivation")));
     }
 
     #[test]

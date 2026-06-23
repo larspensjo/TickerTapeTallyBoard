@@ -571,12 +571,12 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
 #[cfg(test)]
 mod tests {
     use super::{effective_counts, AssetGroup, ImportPlan};
-    use crate::import::core::plan::PlanCounts;
-    use crate::import::core::outcome::MappedRow;
     use crate::domain::{ProposedTransaction, TransactionKind};
+    use crate::import::core::outcome::InstrumentKey;
+    use crate::import::core::outcome::MappedRow;
+    use crate::import::core::plan::PlanCounts;
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
-    use crate::import::core::outcome::InstrumentKey;
 
     fn dummy_instrument() -> InstrumentKey {
         InstrumentKey {

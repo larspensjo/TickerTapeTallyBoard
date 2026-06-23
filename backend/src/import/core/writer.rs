@@ -400,7 +400,9 @@ pub async fn refresh_batch(
 
     // Record asset keys for old instrument ids that may not appear in new rows
     for &id in &old_instrument_ids {
-        key_by_instrument_id.entry(id).or_insert_with(|| id.to_string());
+        key_by_instrument_id
+            .entry(id)
+            .or_insert_with(|| id.to_string());
     }
 
     // Build canonical-key → sorted old ids (ascending) for multiset matching
@@ -431,11 +433,7 @@ pub async fn refresh_batch(
     }
 
     // Delete old rows that have no match in the new import
-    let ids_to_delete: Vec<i64> = old_by_canonical
-        .values()
-        .flatten()
-        .copied()
-        .collect();
+    let ids_to_delete: Vec<i64> = old_by_canonical.values().flatten().copied().collect();
     for id in ids_to_delete {
         transactions::delete_by_id_in_tx(&mut tx, id).await?;
     }
@@ -471,8 +469,7 @@ pub async fn refresh_batch(
     }
 
     // Update batch metadata in place (hash and timestamp)
-    import_batches::update_metadata_in_tx(&mut tx, expected_batch_id, &now_iso8601(), hash)
-        .await?;
+    import_batches::update_metadata_in_tx(&mut tx, expected_batch_id, &now_iso8601(), hash).await?;
 
     // Re-derive ledgers for all affected instruments (union of old and new)
     let new_instrument_ids: BTreeSet<i64> = id_by_asset_key.values().copied().collect();
@@ -513,4 +510,3 @@ pub async fn refresh_batch(
 
     Ok(expected_batch_id)
 }
-
