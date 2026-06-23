@@ -118,6 +118,64 @@ describe("TimeSeriesChart", () => {
     expect(options.timeScale.tickMarkFormatter("2025-05-01", 1)).toBeNull();
   });
 
+  it("pins the y-axis floor to zero even when markers request lower padding", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[
+          { time: "2026-06-01", value: 300 },
+          { time: "2026-06-02", value: 224.43 },
+        ]}
+        markers={[
+          {
+            time: "2026-06-01",
+            side: "buy",
+            title: "Buy",
+            rows: [],
+          },
+        ]}
+      />,
+    );
+
+    type ChartOptions = {
+      rightPriceScale: {
+        scaleMargins: {
+          top: number;
+          bottom: number;
+        };
+      };
+    };
+    type AreaSeriesOptions = {
+      autoscaleInfoProvider: (
+        baseImplementation: () => {
+          priceRange: { minValue: number; maxValue: number };
+          margins?: { above: number; below: number };
+        } | null,
+      ) => {
+        priceRange: { minValue: number; maxValue: number };
+        margins?: { above: number; below: number };
+      } | null;
+    };
+    const chartCalls = chartMocks.createChart.mock.calls as unknown as Array<
+      [unknown, ChartOptions]
+    >;
+    const seriesCalls = chartMocks.addAreaSeries.mock.calls as unknown as Array<
+      [AreaSeriesOptions]
+    >;
+
+    expect(chartCalls[0]?.[1].rightPriceScale.scaleMargins.bottom).toBe(0);
+
+    const autoscale = seriesCalls[0]?.[0].autoscaleInfoProvider(() => ({
+      priceRange: { minValue: 224.43, maxValue: 300 },
+      margins: { above: 12, below: 24 },
+    }));
+
+    expect(autoscale).toEqual({
+      priceRange: { minValue: 0, maxValue: 300 },
+      margins: { above: 12, below: 0 },
+    });
+  });
+
   it("falls back to fitContent when the requested visible start is after the data", () => {
     const data = [
       { time: "2026-01-02", value: 9150 },

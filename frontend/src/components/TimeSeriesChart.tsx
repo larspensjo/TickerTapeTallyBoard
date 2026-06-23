@@ -128,6 +128,10 @@ const zeroBaselineAutoscale: AutoscaleInfoProvider = (baseImplementation) => {
       maxValue:
         autoscale.priceRange.maxValue > 0 ? autoscale.priceRange.maxValue : 1,
     },
+    margins: {
+      above: autoscale.margins?.above ?? 0,
+      below: 0,
+    },
   };
 };
 
@@ -167,7 +171,10 @@ export function TimeSeriesChart({
         vertLines: { color: "rgba(148, 163, 184, 0.08)" },
         horzLines: { color: "rgba(148, 163, 184, 0.08)" },
       },
-      rightPriceScale: { borderColor: "rgba(148, 163, 184, 0.2)" },
+      rightPriceScale: {
+        borderColor: "rgba(148, 163, 184, 0.2)",
+        scaleMargins: { top: 0.16, bottom: 0 },
+      },
       timeScale: {
         borderColor: "rgba(148, 163, 184, 0.2)",
         tickMarkFormatter,
