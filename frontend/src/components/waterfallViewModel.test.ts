@@ -47,6 +47,7 @@ function openGain(overrides: Partial<GainsRow> = {}): GainsRow {
     day_change_percent: money("0"),
     reasons: [],
     position_status: "open",
+    income_base: missing("income_not_tracked"),
     ...overrides,
   };
 }
@@ -61,7 +62,7 @@ describe("waterfallView (open)", () => {
       ["fx", "effect", "FX effect"],
       ["market-value", "subtotal", "Market value"],
       ["realized", "effect", "Realized gain"],
-      ["dividends", "placeholder", "Dividends"],
+      ["income", "placeholder", "Dividend income"],
       ["total-return", "total", "Total return"],
     ]);
 
@@ -137,17 +138,40 @@ describe("waterfallView (open)", () => {
     expect(view.minValue).toBeLessThanOrEqual(-500);
   });
 
-  it("renders the dividends placeholder as inert and not contributing", () => {
-    const dividends = waterfallView(openGain()).rows.find(
-      (r) => r.key === "dividends",
+  it("renders the income placeholder as inert and not contributing", () => {
+    const incomeRow = waterfallView(openGain()).rows.find(
+      (r) => r.key === "income",
     );
-    expect(dividends?.kind).toBe("placeholder");
-    expect(dividends?.span).toBeNull();
-    expect(dividends?.percent).toBeNull();
-    expect(dividends?.value).toEqual({
+    expect(incomeRow?.kind).toBe("placeholder");
+    expect(incomeRow?.span).toBeNull();
+    expect(incomeRow?.percent).toBeNull();
+    expect(incomeRow?.value).toEqual({
       status: "unavailable",
       reasons: ["income_not_tracked"],
     });
+  });
+
+  it("renders income as an effect row when income_base is available", () => {
+    const gain = openGain({ income_base: money("250.00") });
+    const view = waterfallView(gain);
+    const incomeRow = view.rows.find((r) => r.key === "income");
+    expect(incomeRow?.kind).toBe("effect");
+    expect(incomeRow?.value).toEqual({ status: "available", value: "250.00" });
+    expect(incomeRow?.span).toEqual({ from: 328547.67, to: 328797.67 });
+    // income contributes to total return
+    const total = view.rows.find((r) => r.key === "total-return");
+    expect(total?.value).toEqual({ status: "available", value: "63214.73" });
+  });
+
+  it("income bar starts where realized bar ends (bars are sequential)", () => {
+    const gain = openGain({
+      realized_gain_base: money("50.00"),
+      income_base: money("100.00"),
+    });
+    const view = waterfallView(gain);
+    const realizedRow = view.rows.find((r) => r.key === "realized");
+    const incomeRow = view.rows.find((r) => r.key === "income");
+    expect(incomeRow?.span?.from).toBeCloseTo(realizedRow?.span?.to ?? 0, 5);
   });
 
   it("renders an unavailable effect with no bar and an unavailable percent", () => {
@@ -200,7 +224,7 @@ describe("waterfallView (closed)", () => {
       ["price", "effect", "Price effect"],
       ["fx", "effect", "FX effect"],
       ["proceeds", "subtotal", "Proceeds"],
-      ["dividends", "placeholder", "Dividends"],
+      ["income", "placeholder", "Dividend income"],
       ["total-return", "total", "Total return"],
     ]);
     const total = view.rows.find((r) => r.key === "total-return");

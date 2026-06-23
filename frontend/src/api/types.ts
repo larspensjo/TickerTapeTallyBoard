@@ -137,6 +137,7 @@ export interface GainsRow {
   performance_denominator_base: MoneyValue;
   capital_gain_base: MoneyValue;
   capital_gain_percent: PercentValue;
+  income_base: MoneyValue;
   currency_gain_base: MoneyValue;
   currency_gain_percent: PercentValue;
   total_return_base: MoneyValue;

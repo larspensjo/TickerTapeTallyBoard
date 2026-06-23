@@ -118,6 +118,32 @@ function placeholderRow(key: string, label: string): WaterfallRow {
   };
 }
 
+// Pushes an income row or a placeholder when income is not tracked.
+// When income is tracked (available or unavailable for a reason other than income_not_tracked),
+// delegates to pushEffect and returns the updated running total.
+function incomeRow(
+  gain: GainsRow,
+  costBasis: MoneyValue,
+  running: number,
+  rows: WaterfallRow[],
+): number {
+  if (
+    gain.income_base.status === "unavailable" &&
+    gain.income_base.reasons.includes("income_not_tracked")
+  ) {
+    rows.push(placeholderRow("income", "Dividend income"));
+    return running;
+  }
+  return pushEffect(
+    rows,
+    "income",
+    "Dividend income",
+    gain.income_base,
+    costBasis,
+    running,
+  );
+}
+
 // Pushes an effect row, advances the running total, and returns the new running total.
 // An unavailable effect renders without a bar and does not move the running total.
 function pushEffect(
@@ -230,7 +256,7 @@ function openWaterfall(gain: GainsRow): WaterfallView {
     ),
   );
   // Realized gain belongs to sold shares: its % is vs the sold cost basis.
-  pushEffect(
+  running = pushEffect(
     rows,
     "realized",
     "Realized gain",
@@ -238,11 +264,18 @@ function openWaterfall(gain: GainsRow): WaterfallView {
     gain.realized_cost_basis_base,
     running,
   );
-  rows.push(placeholderRow("dividends", "Dividends"));
+  running = incomeRow(gain, costBasis, running, rows);
 
+  // For total-return, income_not_tracked means no dividend history exists;
+  // treat it as zero rather than making total-return unavailable.
+  const incomeForSum: MoneyValue =
+    gain.income_base.status === "unavailable" &&
+    gain.income_base.reasons.includes("income_not_tracked")
+      ? { status: "available", value: "0.00" }
+      : gain.income_base;
   const totalReturn = displaySum(
-    gain.unrealized_gain_base,
-    gain.realized_gain_base,
+    displaySum(gain.unrealized_gain_base, gain.realized_gain_base),
+    incomeForSum,
   );
   // Total-return % is vs total capital deployed = held + sold cost basis; the delta bar
   // still floats from the held cost basis baseline.
@@ -276,7 +309,7 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
     running,
   );
   rows.push(levelRow("proceeds", "Proceeds", "subtotal", gain.proceeds_base));
-  rows.push(placeholderRow("dividends", "Dividends"));
+  incomeRow(gain, costBasis, running, rows);
   // Closed: cost_basis_base already represents the full sold cost basis, so it serves as
   // both the denominator and the baseline (do not re-add realized_cost_basis_base).
   rows.push(

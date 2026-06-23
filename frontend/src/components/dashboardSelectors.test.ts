@@ -43,6 +43,7 @@ function row(
     day_change_percent: dayChangePercent,
     reasons: [],
     position_status: status,
+    income_base: { status: "unavailable", reasons: ["income_not_tracked"] },
   };
 }
 
