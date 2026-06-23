@@ -58,6 +58,8 @@ pub struct TransactionInput {
     #[serde(default)]
     pub price: Option<String>,
     #[serde(default)]
+    pub dividend_per_share: Option<String>,
+    #[serde(default)]
     pub currency: Option<String>,
     #[serde(default)]
     pub fx_rate_to_base: Option<String>,
@@ -81,6 +83,7 @@ impl TransactionInput {
             trade_date,
             quantity: self.quantity,
             price: parse_decimal("price", &self.price)?,
+            dividend_per_share: parse_decimal("dividend_per_share", &self.dividend_per_share)?,
             currency: normalize(&self.currency),
             fx_rate_to_base: parse_decimal("fx_rate_to_base", &self.fx_rate_to_base)?,
             brokerage_base: parse_decimal("brokerage", &self.brokerage)?,
@@ -120,6 +123,7 @@ pub struct TransactionResponse {
     pub trade_date: String,
     pub quantity: i64,
     pub price: Option<String>,
+    pub dividend_per_share: Option<String>,
     pub currency: Option<String>,
     pub fx_rate_to_base: Option<String>,
     pub brokerage: Option<String>,
@@ -141,6 +145,7 @@ impl TransactionResponse {
             trade_date: row.trade_date.clone(),
             quantity: row.quantity,
             price: row.price.clone(),
+            dividend_per_share: row.dividend_per_share.clone(),
             currency: row.currency.clone(),
             fx_rate_to_base: row.fx_rate_to_base.clone(),
             brokerage: row.brokerage.clone(),
@@ -263,6 +268,7 @@ fn ledger_transaction(
         kind: proposed.kind,
         quantity: signed_quantity,
         price: proposed.price,
+        dividend_per_share: proposed.dividend_per_share,
         fx_rate_to_base: proposed.fx_rate_to_base,
         brokerage_base: proposed.brokerage_base.unwrap_or(Decimal::ZERO),
     }
@@ -288,6 +294,7 @@ fn new_transaction(
         trade_date: proposed.trade_date,
         quantity: db_quantity,
         price: proposed.price,
+        dividend_per_share: proposed.dividend_per_share,
         currency,
         fx_rate_to_base: proposed.fx_rate_to_base,
         brokerage: proposed.brokerage_base,

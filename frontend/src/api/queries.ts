@@ -117,6 +117,7 @@ export interface NewTransactionInput {
   trade_date: string;
   quantity: number;
   price?: string;
+  dividend_per_share?: string;
   currency?: string;
   fx_rate_to_base?: string;
   brokerage?: string;

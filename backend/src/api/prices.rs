@@ -141,6 +141,7 @@ mod tests {
                 trade_date: NaiveDate::from_ymd_opt(2026, 6, 10).expect("date"),
                 quantity: 10,
                 price: Some(dec!(100)),
+                dividend_per_share: None,
                 currency: Some("USD".to_owned()),
                 fx_rate_to_base: Some(dec!(10)),
                 brokerage: None,

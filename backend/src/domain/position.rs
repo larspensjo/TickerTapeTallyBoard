@@ -377,6 +377,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: qty,
             price: Some(price),
+            dividend_per_share: None,
             fx_rate_to_base: fx,
             brokerage_base: Decimal::ZERO,
         }
@@ -389,6 +390,7 @@ mod tests {
             kind: TransactionKind::Sell,
             quantity: -qty,
             price: Some(dec!(1)),
+            dividend_per_share: None,
             fx_rate_to_base: None,
             brokerage_base: Decimal::ZERO,
         }
@@ -407,6 +409,7 @@ mod tests {
             kind: TransactionKind::Sell,
             quantity: -qty,
             price: Some(price),
+            dividend_per_share: None,
             fx_rate_to_base: fx,
             brokerage_base: Decimal::ZERO,
         }
@@ -419,6 +422,7 @@ mod tests {
             kind: TransactionKind::Split,
             quantity: delta,
             price: None,
+            dividend_per_share: None,
             fx_rate_to_base: None,
             brokerage_base: Decimal::ZERO,
         }
@@ -581,6 +585,7 @@ mod tests {
             kind: TransactionKind::Dividend,
             quantity: 0,
             price: None,
+            dividend_per_share: None,
             fx_rate_to_base: None,
             brokerage_base: Decimal::ZERO,
         };

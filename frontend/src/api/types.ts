@@ -25,6 +25,7 @@ export interface Transaction {
   trade_date: string;
   quantity: number;
   price: string | null;
+  dividend_per_share: string | null;
   currency: string | null;
   fx_rate_to_base: string | null;
   brokerage: string | null;

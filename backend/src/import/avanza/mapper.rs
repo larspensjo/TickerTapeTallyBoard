@@ -255,6 +255,7 @@ fn map_buy_sell(row: &ParsedAvanzaRow, kind: TransactionKind) -> RowOutcome {
             trade_date: row.trade_date,
             quantity: magnitude,
             price: row.price,
+            dividend_per_share: None,
             currency: Some(row.instrument_currency.clone()),
             fx_rate_to_base,
             brokerage_base,
@@ -371,7 +372,8 @@ fn map_dividend(
             kind: TransactionKind::Dividend,
             trade_date: row.trade_date,
             quantity: eligible_qty,
-            price: Some(native_price_per_share),
+            price: None,
+            dividend_per_share: Some(native_price_per_share),
             currency: Some(row.instrument_currency.clone()),
             fx_rate_to_base,
             brokerage_base: None,
@@ -533,6 +535,7 @@ fn map_split(
             trade_date,
             quantity: delta,
             price: None,
+            dividend_per_share: None,
             currency: None,
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -767,7 +770,8 @@ mod tests {
         assert_eq!(dividend.proposed.fx_rate_to_base, Some(dec!(9.40)));
         // per_share = (120 / 9.40) / 3 ≈ 4.255319...
         let expected = (dec!(120) / dec!(9.40)) / dec!(3);
-        assert_eq!(dividend.proposed.price, Some(expected));
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(expected));
         assert_eq!(dividend.source_value, Some(dec!(120)));
         assert_eq!(dividend.source_currency.as_deref(), Some("SEK"));
         assert!(!dividend.fx_warning);
@@ -812,7 +816,8 @@ mod tests {
             .find(|r| r.proposed.kind == TransactionKind::Dividend)
             .expect("dividend row");
         assert_eq!(dividend.proposed.quantity, 10);
-        assert_eq!(dividend.proposed.price, Some(dec!(7.5)));
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(7.5)));
         assert_eq!(dividend.proposed.fx_rate_to_base, Some(Decimal::ONE));
         assert!(!dividend.fx_warning);
     }
@@ -856,7 +861,8 @@ mod tests {
             .find(|r| r.proposed.kind == TransactionKind::Dividend)
             .expect("dividend row");
         assert_eq!(dividend.proposed.quantity, 4);
-        assert_eq!(dividend.proposed.price, Some(dec!(6.40)));
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(6.40)));
         assert_eq!(dividend.proposed.fx_rate_to_base, None);
         assert!(dividend.fx_warning);
     }
@@ -914,7 +920,8 @@ mod tests {
             .expect("dividend row");
 
         assert_eq!(dividend.proposed.quantity, 72);
-        assert_eq!(dividend.proposed.price, Some(dec!(0.227)));
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(0.227)));
         assert_eq!(
             dividend.proposed.fx_rate_to_base,
             Some(dec!(150.02) / (dec!(72) * dec!(0.227)))

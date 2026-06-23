@@ -59,7 +59,11 @@ function transactionPricePoints(
   const transactionPoints: TimeSeriesPoint[] = [];
 
   for (const transaction of transactions) {
-    if (!transaction.price || existingDates.has(transaction.trade_date)) {
+    if (
+      !transaction.price ||
+      tradeSide(transaction.type) === null ||
+      existingDates.has(transaction.trade_date)
+    ) {
       continue;
     }
 

@@ -339,6 +339,7 @@ fn process_mapped(
                     kind: mapped.proposed.kind,
                     quantity: signed,
                     price: mapped.proposed.price,
+                    dividend_per_share: mapped.proposed.dividend_per_share,
                     fx_rate_to_base: mapped.proposed.fx_rate_to_base,
                     brokerage_base: mapped.proposed.brokerage_base.unwrap_or(Decimal::ZERO),
                 });
@@ -578,6 +579,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: 4,
             price: Some(dec!(10)),
+            dividend_per_share: None,
             fx_rate_to_base: Some(dec!(1)),
             brokerage_base: dec!(0),
         };
@@ -683,7 +685,8 @@ mod tests {
                 kind: TransactionKind::Dividend,
                 trade_date: date,
                 quantity: 4,
-                price: Some(dec!(6.40)),
+                price: None,
+                dividend_per_share: Some(dec!(6.40)),
                 currency: Some("EUR".into()),
                 fx_rate_to_base: None,
                 brokerage_base: None,

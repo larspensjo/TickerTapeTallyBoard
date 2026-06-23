@@ -896,6 +896,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: qty,
             price: Some(price),
+            dividend_per_share: None,
             fx_rate_to_base: fx,
             brokerage_base: Decimal::ZERO,
         }
@@ -908,6 +909,7 @@ mod tests {
             kind: TransactionKind::Split,
             quantity: delta,
             price: None,
+            dividend_per_share: None,
             fx_rate_to_base: None,
             brokerage_base: Decimal::ZERO,
         }

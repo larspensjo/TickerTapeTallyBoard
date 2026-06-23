@@ -178,7 +178,11 @@ export function AddTransactionForm({
         type: state.type,
         trade_date: state.tradeDate,
         quantity: toNumber(state.quantity, "Quantity"),
-        price: isSplit ? undefined : trimmedOrUndefined(state.price),
+        price:
+          isSplit || isDividend ? undefined : trimmedOrUndefined(state.price),
+        dividend_per_share: isDividend
+          ? trimmedOrUndefined(state.price)
+          : undefined,
         currency: isSplit ? undefined : trimmedOrUndefined(state.currency),
         fx_rate_to_base: isSplit ? undefined : trimmedOrUndefined(state.fxRate),
         brokerage:

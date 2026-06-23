@@ -1189,21 +1189,32 @@ async fn avanza_refresh_inserts_extra_identical_canonical_row() {
 }
 
 #[tokio::test]
-async fn avanza_dividend_persists_eligible_shares_and_native_price() {
+async fn avanza_dividend_persists_eligible_shares_and_dividend_per_share() {
     let state = test_state().await;
     let (s, _) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;
     assert_eq!(s, StatusCode::OK);
 
     // Eligible quantity = buy 5 (2026-05-10) - sell 2 (2026-05-15) = 3
-    let (qty, source_value, source_currency): (i64, Option<String>, Option<String>) =
+    let (qty, price, dividend_per_share, source_value, source_currency): (
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) =
         sqlx::query_as(
-            "SELECT quantity, source_value, source_currency FROM transactions WHERE type = 'DIVIDEND' LIMIT 1",
+            "SELECT quantity, price, dividend_per_share, source_value, source_currency FROM transactions WHERE type = 'DIVIDEND' LIMIT 1",
         )
         .fetch_one(&state.pool)
         .await
         .expect("dividend row");
 
     assert_eq!(qty, 3, "eligible share count stored as quantity");
+    assert_eq!(price, None, "dividend must not store market price");
+    assert!(
+        dividend_per_share.as_deref().is_some(),
+        "dividend_per_share should be set"
+    );
     // Cash amount = 120 SEK
     assert!(
         source_value.as_deref().is_some(),
