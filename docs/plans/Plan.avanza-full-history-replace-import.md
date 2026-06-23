@@ -4,14 +4,14 @@
 
 **Goal:** Make Avanza full-history imports safe as the default workflow. When a previous Avanza import exists, importing a newer Avanza All Trades CSV should replace that previous Avanza-imported ledger snapshot while keeping instruments, price history, FX rates, provider symbol mappings, market-data runs, and manual transactions.
 
-**Why:** Avanza exports are naturally full-history snapshots. Today, a new export with all historical rows plus latest transactions has a new raw file hash, so the importer treats it as a new batch and can append duplicate historical transactions. The preferred user workflow is to re-import the full Avanza history whenever new transactions arrive or importer support improves, such as when dividends become writable.
+**Why:** Avanza exports are naturally full-history snapshots. Today, a new export with all historical rows plus latest transactions has a new raw file hash, so the importer treats it as a new batch and can append duplicate historical transactions. The preferred user workflow is to re-import the full Avanza history whenever new transactions arrive or importer support improves, including when previously skipped dividend rows become importable.
 
 **Core behavior:** Avanza `Import` defaults to **refresh previous Avanza import** when a previous Avanza batch exists. The refresh is atomic: unchanged imported rows keep their transaction ids, removed/changed/new rows are reconciled in one database transaction, and final ledgers are re-derived before commit. Non-ledger reference data is preserved.
 
 **Out of scope:**
 - General row-level broker synchronization across arbitrary sources.
 - Deleting unused instruments or market data cleanup.
-- Dividend ledger design itself. This plan leaves space for dividend rows to be included once that feature exists, but it does not design dividend amount fields, income attribution, or dividend UI.
+- Dividend ledger design itself. The dividend transaction model, amount fields, income attribution, and manual dividend UI are already settled by the 2026-06-23 DecisionLog entry; this plan only maps Avanza dividend rows into that existing model. Sharesight dividend import remains out of scope.
 - Command-log redo integration. If command undo is implemented first, adapt the write service to use the command layer instead of adding a parallel mutation path.
 
 **Implementation constraints:**
@@ -26,6 +26,7 @@
 
 - `POST /api/import/avanza/preview` parses the file and builds a plan against the existing ledger.
 - `POST /api/import/avanza/commit` writes every mapped buy/sell/split row into a new `import_batches` row unless the **raw file hash** exactly matches an existing batch and `allow_duplicate` is false.
+- Avanza dividend rows are parsed and counted but currently skipped as `dividend_deferred`; manual `Dividend` rows are now supported by the ledger model and Gains reporting.
 - `transactions` has no unique imported-row identity. Re-exporting all history with a changed file hash can duplicate old rows.
 - `POST /api/import/rollback/{batch_id}` deletes only transactions tagged with that batch, then deletes the batch row. It intentionally leaves instruments and all market-data tables alone.
 - `write_batch` already owns one SQL transaction for batch creation, instrument resolution, transaction insertion, affected-ledger derivation, and commit; refresh should reuse this atomic shape.
@@ -68,6 +69,16 @@ If the user unchecks an asset during an Avanza refresh:
 - This means unchecked assets disappear from the Avanza-imported ledger unless manual rows still exist for them.
 - The UI must use clear wording, because this differs from an append import where exclude simply omits new rows.
 
+### Avanza Dividend Rows
+
+Now that the dividend transaction model exists, this plan should make Avanza dividends writable as part of the same full-history refresh work:
+- `Utdelning` rows are mapped to `TransactionKind::Dividend` instead of being skipped when the source file contains enough context.
+- The mapped dividend `quantity` is the eligible share count, derived from the Avanza source history for the same ISIN up to the dividend date after buy/sell and split effects. Do not synthesize this from current database holdings alone; the full-history source rows are the refresh snapshot.
+- The mapped dividend `price` is dividend per eligible share in the instrument's native currency. Prefer a positive native per-share `Kurs` if Avanza provides one; otherwise derive it from Avanza's cash `Belopp`, `Valutakurs`, and eligible quantity. SEK instruments use FX `1` when blank. Foreign dividends with missing FX are writable only when the native per-share price is present; if the native price must be derived from SEK cash and FX is missing, skip with a stable warning instead of guessing.
+- Dividend validation returns zero position effect, but the stored transaction quantity must remain the eligible share count so manual and imported dividends use the same representation.
+- Dividend rows with missing ISIN, missing cash amount, missing native currency, or no derivable positive eligible quantity should produce stable row warnings/errors and must not silently create zero-income rows.
+- Imported dividend rows participate in the same refresh matching, id preservation, asset exclusion, rollback, and final ledger validation as buy/sell/split rows.
+
 ---
 
 ## Settled Decisions
@@ -75,7 +86,7 @@ If the user unchecks an asset during an Avanza refresh:
 > Settled 2026-06-22 after review (`docs/reviews/Review.avanza-full-history-replace-import.md`). The review findings are woven into the tasks below.
 
 1. **Refresh batch identity: in-place.** Refresh the existing Avanza batch **in place** by keeping the same `import_batches.id`, updating its `raw_file_hash` and `imported_at`, and replacing its transaction set. This is the only choice consistent with preserving transaction ids (Decision 2). Loss of prior-hash audit is accepted as out of scope; a separate refresh log can be added later if ever needed.
-2. **Preserving transaction ids: multiset match.** Because `derive_position` folds in `(trade_date, id)` order, a naive delete-all/insert-all refresh reorders same-day manual rows relative to re-imported rows and can flip over-sell validation or same-day cost. Match old and new rows as a **multiset of canonical fields** (after instrument resolution): preserve ids for unchanged rows (lowest old ids first, deterministically), delete unmatched old rows, insert genuinely-new rows. Treat any field correction as delete+insert (no id-preserving in-place field updates). Identical re-import becomes a metadata-only no-op. The canonical matcher must be transaction-type aware rather than assuming only buy/sell/split, so future writable dividend rows naturally participate. Residual caveat: a *changed* historical row on the same day as a manual row can still move; promote an explicit ordering column to a fast-follow only if that edge proves real.
+2. **Preserving transaction ids: multiset match.** Because `derive_position` folds in `(trade_date, id)` order, a naive delete-all/insert-all refresh reorders same-day manual rows relative to re-imported rows and can flip over-sell validation or same-day cost. Match old and new rows as a **multiset of canonical fields** (after instrument resolution): preserve ids for unchanged rows (lowest old ids first, deterministically), delete unmatched old rows, insert genuinely-new rows. Treat any field correction as delete+insert (no id-preserving in-place field updates). Identical re-import becomes a metadata-only no-op. The canonical matcher must be transaction-type aware rather than assuming only buy/sell/split, so imported dividend rows participate naturally. Residual caveat: a *changed* historical row on the same day as a manual row can still move; promote an explicit ordering column to a fast-follow only if that edge proves real.
 3. **Previous batch selection: newest Avanza by id + warning.** Use the newest live `AVANZA` batch by `id` as the default replacement candidate (note: distinct from `find_by_hash`, which returns the *oldest* hash match). Surface the chosen id in the preview. When more than one live Avanza batch exists, add a non-blocking warning; the default path never creates a second Avanza batch -- only the confirmed append escape hatch does. Multi-batch consolidation/cleanup is deferred; do not silently delete extras.
 4. **Manual rows depending on old imports: reuse `derive_position`.** The atomic final validation is the safety net -- no new dependency-tracking machinery. The one must-fix is the affected-instrument set: re-derive `union(instruments of the old batch's rows, instruments of the new mapped rows)` so removals/exclusions are validated too (F1). On any ledger error the entire refresh is rejected, the old batch is preserved, and the API should return a clear conflict such as `refresh_would_invalidate_ledger` with instrument context when available.
 5. **DecisionLog timing.** Add the DecisionLog entry during implementation (Phase 4), not now. The entry must record Avanza full-history refresh semantics, the preserve-reference-data boundary, and the Decision 2 id-preservation choice with its residual same-day caveat.
@@ -89,6 +100,7 @@ If the user unchecks an asset during an Avanza refresh:
 - `backend/src/api/mod.rs` -- only if route names change; prefer keeping existing routes.
 - `backend/src/db/import_batches.rs` -- find latest batch by source, count batches by source for preview warnings, validate/update batch metadata in transaction.
 - `backend/src/db/transactions.rs` -- list imported rows for a batch, delete unmatched rows with static SQL, insert preserved rows with explicit ids if using delete-all/reinsert, and insert replacement rows with an existing batch id.
+- `backend/src/import/avanza/mapper.rs` -- map parsed `Utdelning` rows into the existing dividend transaction model.
 - `backend/src/import/core/writer.rs` -- extract reusable write/resolve logic so append and refresh share validation and instrument resolution.
 - `backend/tests/import_api.rs` -- integration coverage for no-duplicate refresh and preserved reference data.
 - `backend/Cargo.toml` -- patch version bump if behavior ships.
@@ -108,6 +120,27 @@ If the user unchecks an asset during an Avanza refresh:
 ## Phase 1 -- Backend Refresh Primitive
 
 Build the backend capability first, behind existing API behavior where possible. The goal is an atomic function that can replace one Avanza import batch's transaction set without touching reference data.
+
+### Task 1.0: Map Avanza dividends to the existing dividend model
+
+**Files:**
+- Modify: `backend/src/import/avanza/mapper.rs`
+- Possibly modify: `backend/src/import/core/plan.rs`
+- Modify tests under: `backend/src/import/avanza/mapper.rs`, `backend/tests/import_api.rs`
+
+- [ ] Replace the `dividend_deferred` skip for Avanza `Utdelning` rows with mapping to `TransactionKind::Dividend` when the row has enough context.
+- [ ] Derive eligible share count per ISIN from the Avanza source history up to each dividend date, applying writable buy/sell rows and netted split rows in deterministic `(trade_date, source_row_number)` order.
+- [ ] Prefer a positive native dividend-per-share `Kurs` when Avanza provides it; otherwise derive dividend-per-share in native currency from `Belopp`, `Valutakurs`, and eligible quantity. Preserve Avanza's cash amount and currency in the source-value fields for audit.
+- [ ] Preserve the existing missing-FX behavior where possible: SEK dividends default to FX `1`; foreign dividends with a native per-share price but missing or non-positive FX are accepted with the same warning style used for buys/sells and have unavailable base income until FX is supplied. If native price must be derived and FX is missing, skip with a stable warning.
+- [ ] Emit stable warnings/errors for dividend rows that cannot be mapped, such as missing ISIN, missing amount, missing native currency, non-positive derived eligible quantity, or non-positive derived per-share dividend.
+- [ ] Keep Sharesight dividends skipped unless a separate plan updates that adapter.
+- [ ] Update writer inputs or insertion logic so dividends are validated for ledger derivation while `transactions.quantity` stores the eligible share count, not the zero position delta returned by `domain::validate`.
+
+**Verification:**
+- Add mapper tests for Avanza dividend mapping, including SEK dividend, foreign dividend with FX, foreign dividend missing FX, and a dividend whose eligible quantity cannot be derived.
+- Adjust preview/commit expectations so mapped Avanza dividends count as writable dividend rows, not `dividend_deferred` skipped rows.
+- Run from `backend/`: `cargo test avanza` or `cargo test import_api` once the API behavior is wired.
+- Stage changed backend files.
 
 ### Task 1.1: Import batch repository helpers
 
@@ -150,10 +183,10 @@ Build the backend capability first, behind existing API behavior where possible.
 - [ ] Split the current `write_batch` flow into reusable pieces:
   - create/update batch metadata;
   - resolve instruments for mapped rows;
-  - validate proposed rows into signed ledger rows;
+  - validate proposed rows while preserving both stored transaction fields and ledger position effects;
   - insert/update/delete transaction rows;
   - re-derive affected ledgers before commit.
-- [ ] Preserve the existing two-pass instrument resolution: resolve Buy/Sell instruments first, then resolve Splits against already-known instruments. Split-only refreshes must not regress.
+- [ ] Preserve the existing two-pass instrument resolution: resolve non-split instruments first, then resolve Splits against already-known instruments. Split-only refreshes must not regress, and dividends must not be treated as position-changing rows.
 - [ ] Preserve current append behavior for Sharesight and first Avanza imports.
 - [ ] Keep transaction ownership clear: public append and refresh functions should each own one SQL transaction; lower helpers should accept `&mut SqliteConnection`.
 
@@ -173,8 +206,8 @@ Build the backend capability first, behind existing API behavior where possible.
 - [ ] Add a writer entry point such as `refresh_batch(state, source, expected_batch_id, hash, mapped)`.
 - [ ] Verify `expected_batch_id` exists, has source `AVANZA`, and is still the latest live Avanza batch. If a newer Avanza batch appeared after preview, fail with a clear conflict instead of refreshing a batch the user did not preview.
 - [ ] Resolve instruments for all mapped rows using the same ISIN/symbol rules as append.
-- [ ] Build canonical row keys for old imported rows and new mapped rows after instrument resolution. Include at least: `instrument_id`, transaction type/kind, trade date, signed quantity, price, currency, FX, brokerage, brokerage currency, source value, source currency, and note.
-- [ ] Keep the canonical-key code transaction-type aware and forward-compatible with future writable dividend rows; do not bake in a buy/sell/split-only assumption.
+- [ ] Build canonical row keys for old imported rows and new mapped rows after instrument resolution. Include at least: `instrument_id`, transaction type/kind, trade date, stored quantity, price, currency, FX, brokerage, brokerage currency, source value, source currency, and note. For dividends, stored quantity is eligible shares, not the zero position effect.
+- [ ] Keep the canonical-key code transaction-type aware; do not bake in a buy/sell/split-only assumption now that imported dividend rows are writable.
 - [ ] Match old/new rows as a multiset so duplicate identical source rows can preserve stable ids deterministically.
 - [ ] Preserve unchanged matched rows in place. Treat changed historical rows as delete+insert rather than an id-preserving in-place update.
 - [ ] Delete unmatched old rows.
@@ -185,16 +218,18 @@ Build the backend capability first, behind existing API behavior where possible.
 
 **Verification:**
 - Add integration tests in `backend/tests/import_api.rs`:
-  - First Avanza import writes normally.
+  - First Avanza import writes normally, including mapped dividend rows when present.
   - Second Avanza full-history import with an extra latest row refreshes instead of doubling historical rows.
   - Same exact Avanza file imported again through refresh does not double rows. **(F7)** Assert idempotency explicitly: capture `COUNT(*)` and `MAX(id)` of `transactions` before/after and assert both are unchanged (metadata-only no-op).
+  - Dividend idempotency: re-importing an unchanged Avanza dividend preserves the dividend transaction id and does not duplicate income.
+  - Avanza dividend mapping persists eligible share count, native dividend-per-share, currency, FX, and source cash amount as expected.
   - Same-day stable order: an imported buy plus a same-day manual buy (higher id) plus a later imported sell; refresh with the same history preserves the manual row's same-day position and yields an identical `derive_position` result.
   - Existing instruments are reused by ISIN and are not deleted.
   - Seed a price row and provider symbol for an imported instrument; refresh; assert those rows still exist and point to the same instrument id.
   - Seed a later manual sell that remains valid with the refreshed full-history file; refresh succeeds.
   - Omit/exclude the old buy required by a later manual sell; refresh is rejected and the old imported rows remain unchanged.
   - Stale candidate conflict: preview returns batch N; a newer Avanza batch appears before commit; replace commit returns `replace_candidate_changed` or equivalent.
-  - Split resolution parity: split rows continue to resolve only against instruments from Buy/Sell rows or existing ledger state; refresh does not create instruments from split-only input.
+  - Split resolution parity: split rows continue to resolve only against instruments from non-split mapped rows or existing ledger state; refresh does not create instruments from split-only input.
 - Run from `backend/`: `cargo test import_api`.
 - Stage changed backend files and tests.
 
@@ -296,6 +331,7 @@ Make the safe Avanza path the default while keeping append as an explicit advanc
 - [ ] When refresh mode is active, add concise text near the asset table or action area explaining that unchecked assets will be removed from the refreshed Avanza-imported ledger snapshot.
 - [ ] Keep skipped rows locked as today.
 - [ ] Ensure errors on selected assets still block refresh; errors only on unchecked assets should not block.
+- [ ] Ensure dividend counts are presented as writable imported dividend rows when mapping succeeds, with warnings only for dividend rows that could not be mapped.
 
 **Verification:**
 - Run from `frontend/`: `npm run check`.
@@ -318,11 +354,12 @@ Capture the accepted semantics once the implementation behavior is real.
 ```md
 ## YYYY-MM-DD: Avanza Full-History Refresh Import
 Decision: Avanza import treats a newer full-history export as a refresh of the previous Avanza import by default. Refresh replaces that Avanza batch's imported ledger rows atomically after final ledger validation, while preserving instruments, prices, FX rates, provider symbols, market-data runs, and manual transactions. Appending an Avanza file as a separate batch remains an explicit advanced action.
-Context: Avanza exports are full-history snapshots; appending a newer export duplicates historical transactions because duplicate detection by raw file hash only catches identical files.
-Consequences: The import UI defaults to refresh for Avanza after the first import. Excluding an asset during refresh removes that asset's old Avanza-imported rows from the refreshed snapshot. Refresh must validate the final ledger and leave the old snapshot unchanged on failure. Unchanged imported rows preserve transaction ids by multiset canonical matching; changed historical rows are delete+insert and may still move relative to same-day manual rows until an explicit ordering column exists.
+Context: Avanza exports are full-history snapshots; appending a newer export duplicates historical transactions because duplicate detection by raw file hash only catches identical files. Avanza dividend rows can now map into the existing dividend transaction model instead of remaining deferred.
+Consequences: The import UI defaults to refresh for Avanza after the first import. Excluding an asset during refresh removes that asset's old Avanza-imported rows, including dividends, from the refreshed snapshot. Refresh must validate the final ledger and leave the old snapshot unchanged on failure. Unchanged imported rows preserve transaction ids by multiset canonical matching; changed historical rows are delete+insert and may still move relative to same-day manual rows until an explicit ordering column exists.
 ```
 
 - [ ] Mention transaction-id preservation and the residual same-day ordering caveat from Decision 2.
+- [ ] Mention that this supersedes the Avanza portion of the 2026-06-23 Dividend Transaction Model note that import adapters still skip dividends; Sharesight remains unchanged unless separately implemented.
 
 **Verification:**
 - Read the new entry against existing import and rollback entries to ensure it does not contradict them; it should refine Avanza behavior specifically.
@@ -366,8 +403,8 @@ Use a disposable local database or a backup of the real database.
 - [ ] Confirm transaction count reflects the new snapshot, not old rows doubled.
 - [ ] Confirm existing instruments remain and price history still appears for them.
 - [ ] Confirm holdings/cost basis are plausible after refresh.
+- [ ] Confirm Avanza dividend rows import as dividend transactions and appear as income in Gains when FX is available.
 - [ ] Try the explicit append path once in the disposable database and confirm the UI warns before creating a second batch.
-- [ ] If dividend support is implemented by then, confirm old skipped dividend rows become writable after refresh without duplicating old buy/sell rows.
 
 ---
 
@@ -378,8 +415,9 @@ Use a disposable local database or a backup of the real database.
 3. Instruments, prices, FX rates, provider symbol mappings, market-data runs, and manual transactions are preserved.
 4. Unchanged imported rows preserve transaction ids; re-importing the identical Avanza file leaves transaction `COUNT(*)` and `MAX(id)` unchanged.
 5. Final ledger validation catches invalid refreshed snapshots and reports a clear API/UI error.
-6. Append remains available only as an explicit, confirmed advanced action.
-7. Backend and frontend checks pass, formatting has been run, and all changed files are staged for review.
+6. Avanza dividend rows are imported into the existing dividend transaction model when derivable, and repeated refreshes do not duplicate dividend income.
+7. Append remains available only as an explicit, confirmed advanced action.
+8. Backend and frontend checks pass, formatting has been run, and all changed files are staged for review.
 
 ---
 
@@ -387,5 +425,5 @@ Use a disposable local database or a backup of the real database.
 
 - **Same-day ordering:** Unchanged imported rows preserve transaction ids, but changed historical rows are delete+insert and may move relative to same-day manual rows. Add an explicit ordering column in a follow-up migration if that edge proves important.
 - **Multiple historical Avanza batches:** The default latest-batch choice is simple, but users who previously appended duplicates may need cleanup tooling. Do not silently delete multiple old batches in this plan.
-- **Dividend support:** Once dividend rows are writable, refresh should naturally backfill them from the full-history export. Keep the matcher transaction-type aware so dividends can participate later; dividend schema and valuation behavior need their own design.
+- **Dividend import derivation:** Avanza dividend rows do not carry eligible share count directly. The mapper must derive it from the full-history source rows; unusual files with missing earlier position history may need stable warnings instead of guessed quantities.
 - **Command undo:** If command-based writes land before this work, refresh should become an import command with stored pre/post snapshots rather than a standalone API mutation.
