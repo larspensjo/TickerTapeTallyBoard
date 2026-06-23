@@ -94,6 +94,7 @@ export interface PriceHistoryResponse {
 export interface ValueHistoryPoint {
   date: string;
   value_base: string;
+  invested_base: string | null;
   incomplete: boolean;
   included_count: number;
   excluded_count: number;
