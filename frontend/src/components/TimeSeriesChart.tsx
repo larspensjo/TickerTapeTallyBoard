@@ -4,6 +4,7 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  LineStyle,
   type SeriesMarker,
   TickMarkType,
   type Time,
@@ -141,17 +142,20 @@ export function TimeSeriesChart({
   ariaLabel,
   visibleStart,
   markers = [],
+  referenceData,
   height = 240,
 }: {
   data: TimeSeriesPoint[];
   ariaLabel: string;
   visibleStart?: string;
   markers?: ChartTradeMarker[];
+  referenceData?: TimeSeriesPoint[];
   height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const referenceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
 
@@ -192,8 +196,18 @@ export function TimeSeriesChart({
       autoscaleInfoProvider: zeroBaselineAutoscale,
     });
 
+    const referenceSeries = chart.addLineSeries({
+      color: "#e0b15e",
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
     chartRef.current = chart;
     seriesRef.current = series;
+    referenceSeriesRef.current = referenceSeries;
 
     const resize = () => chart.applyOptions({ width: container.clientWidth });
     resize();
@@ -220,6 +234,7 @@ export function TimeSeriesChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      referenceSeriesRef.current = null;
       setTooltip(null);
     };
   }, [height]);
@@ -232,6 +247,15 @@ export function TimeSeriesChart({
 
     seriesRef.current?.setData(chartData);
 
+    const referenceSeries = referenceSeriesRef.current;
+    if (referenceSeries) {
+      referenceSeries.setData(
+        referenceData && referenceData.length > 0
+          ? calendarSpineData(referenceData, rangeStart)
+          : [],
+      );
+    }
+
     if (rangeStart && end) {
       chartRef.current?.timeScale().setVisibleRange({
         from: rangeStart,
@@ -240,7 +264,7 @@ export function TimeSeriesChart({
     } else {
       chartRef.current?.timeScale().fitContent();
     }
-  }, [data, visibleStart]);
+  }, [data, visibleStart, referenceData]);
 
   useEffect(() => {
     const series = seriesRef.current;

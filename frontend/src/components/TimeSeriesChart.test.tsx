@@ -14,8 +14,11 @@ const chartMocks = vi.hoisted(() => {
   const subscribeCrosshairMove = vi.fn();
   const timeScale = vi.fn(() => ({ setVisibleRange, fitContent }));
   const addAreaSeries = vi.fn(() => ({ setData, setMarkers }));
+  const setReferenceData = vi.fn();
+  const addLineSeries = vi.fn(() => ({ setData: setReferenceData }));
   const createChart = vi.fn(() => ({
     addAreaSeries,
+    addLineSeries,
     applyOptions,
     remove,
     subscribeCrosshairMove,
@@ -24,12 +27,14 @@ const chartMocks = vi.hoisted(() => {
 
   return {
     addAreaSeries,
+    addLineSeries,
     applyOptions,
     createChart,
     fitContent,
     remove,
     setData,
     setMarkers,
+    setReferenceData,
     subscribeCrosshairMove,
     setVisibleRange,
     timeScale,
@@ -43,6 +48,13 @@ vi.mock("lightweight-charts", () => ({
     DayOfMonth: 2,
     Time: 3,
     TimeWithSeconds: 4,
+  },
+  LineStyle: {
+    Solid: 0,
+    Dotted: 1,
+    Dashed: 2,
+    LargeDashed: 3,
+    SparseDotted: 4,
   },
   createChart: chartMocks.createChart,
 }));
@@ -225,5 +237,35 @@ describe("TimeSeriesChart", () => {
     expect(chartData).toHaveLength(17);
     expect(chartMocks.setVisibleRange).not.toHaveBeenCalled();
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the invested reference as a dashed line on the same calendar spine", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        visibleStart="2026-01-02"
+        data={[
+          { time: "2026-01-02", value: 1000 },
+          { time: "2026-01-04", value: 1100 },
+        ]}
+        referenceData={[
+          { time: "2026-01-02", value: 1000 },
+          { time: "2026-01-04", value: 1000 },
+        ]}
+      />,
+    );
+
+    type LineSeriesOptions = { lineStyle: number };
+    const lineCalls = chartMocks.addLineSeries.mock.calls as unknown as Array<
+      [LineSeriesOptions]
+    >;
+    expect(lineCalls[0]?.[0].lineStyle).toBe(2); // LineStyle.Dashed
+
+    // Reference data is gap-filled onto the same daily spine as the value line.
+    expect(chartMocks.setReferenceData).toHaveBeenLastCalledWith([
+      { time: "2026-01-02", value: 1000 },
+      { time: "2026-01-03" },
+      { time: "2026-01-04", value: 1000 },
+    ]);
   });
 });
