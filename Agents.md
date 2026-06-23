@@ -17,6 +17,7 @@
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.
 - Reducers must stay pure and unit-testable.
+- Keep view-derivation logic in pure selectors/view-models (e.g. `assetViewModel`, `dashboardSelectors`), not inline in components; components consume state and render. This is the `state -> render` analogue of pure reducers.
 - Keep entry points (`main.rs`, `mod.rs` and `lib.rs`) files as thin wrappers only.
 - Keep shared constants and behavior DRY; prefer one source of truth over duplicated definitions.
 - Name runtime modules after stable behavior or domain concepts, not temporary plan phases or milestones.
@@ -25,6 +26,7 @@
 - Bug fixes should include a regression test when practical.
 - Prefer tests of reducer behavior, emitted effects, and public contracts over internal details.
 - `use super::*;` is acceptable for tests, but using explicit imports is preferable otherwise.
+- Frontend: prefer tests of reducers, selectors/view-models, pure helpers, and the effect layer (`api/client.ts`) over component-render details. Test components by role/text for user-visible behavior only when it lives nowhere else; avoid snapshots and assertions on internal state or DOM structure.
 
 ## Logging
 - Use `engine_logging` for backend logging.
