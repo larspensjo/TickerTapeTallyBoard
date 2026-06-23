@@ -31,5 +31,5 @@
 - Include enough context in error logs to identify the failing job, URL, or operation.
 
 ## Decisions
-- Keep `docs/DecisionLog.md` up to date for noteworthy decisions.
+- Keep `docs/DecisionLog.md` up to date for noteworthy decisions. Typically, this can be the reason a plan was created.
 - See the How to use section in the beginning.
