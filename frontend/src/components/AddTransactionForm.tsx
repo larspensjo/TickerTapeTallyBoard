@@ -143,6 +143,7 @@ export function AddTransactionForm({
   const createTransaction = useCreateTransaction();
 
   const isSplit = state.type === "Split";
+  const isDividend = state.type === "Dividend";
 
   const setField =
     (field: TextField) =>
@@ -180,7 +181,10 @@ export function AddTransactionForm({
         price: isSplit ? undefined : trimmedOrUndefined(state.price),
         currency: isSplit ? undefined : trimmedOrUndefined(state.currency),
         fx_rate_to_base: isSplit ? undefined : trimmedOrUndefined(state.fxRate),
-        brokerage: isSplit ? undefined : trimmedOrUndefined(state.brokerage),
+        brokerage:
+          isSplit || isDividend
+            ? undefined
+            : trimmedOrUndefined(state.brokerage),
         note: trimmedOrUndefined(state.note),
       };
 
@@ -290,6 +294,7 @@ export function AddTransactionForm({
             <option value="Buy">Buy</option>
             <option value="Sell">Sell</option>
             <option value="Split">Split</option>
+            <option value="Dividend">Dividend</option>
           </select>
         </label>
         <label className="form-field">
@@ -301,7 +306,13 @@ export function AddTransactionForm({
           />
         </label>
         <label className="form-field">
-          <span>{isSplit ? "Quantity delta" : "Quantity"}</span>
+          <span>
+            {isSplit
+              ? "Quantity delta"
+              : isDividend
+                ? "Shares eligible"
+                : "Quantity"}
+          </span>
           <input
             type="number"
             value={state.quantity}
@@ -313,7 +324,9 @@ export function AddTransactionForm({
       {!isSplit ? (
         <div className="form-row">
           <label className="form-field">
-            <span>Price (native)</span>
+            <span>
+              {isDividend ? "Dividend per share (native)" : "Price (native)"}
+            </span>
             <input value={state.price} onChange={setField("price")} />
           </label>
           <label className="form-field">
@@ -324,10 +337,12 @@ export function AddTransactionForm({
             <span>FX to SEK (optional)</span>
             <input value={state.fxRate} onChange={setField("fxRate")} />
           </label>
-          <label className="form-field">
-            <span>Brokerage (SEK)</span>
-            <input value={state.brokerage} onChange={setField("brokerage")} />
-          </label>
+          {!isDividend ? (
+            <label className="form-field">
+              <span>Brokerage (SEK)</span>
+              <input value={state.brokerage} onChange={setField("brokerage")} />
+            </label>
+          ) : null}
         </div>
       ) : null}
 
