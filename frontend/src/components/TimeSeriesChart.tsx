@@ -187,15 +187,6 @@ export function TimeSeriesChart({
       handleScale: false,
       handleScroll: false,
     });
-    const series = chart.addAreaSeries({
-      lineColor: "#4f9cff",
-      topColor: "rgba(79, 156, 255, 0.30)",
-      bottomColor: "rgba(79, 156, 255, 0.02)",
-      lineWidth: 2,
-      priceLineVisible: false,
-      autoscaleInfoProvider: zeroBaselineAutoscale,
-    });
-
     const referenceSeries = chart.addLineSeries({
       color: "#e0b15e",
       lineWidth: 2,
@@ -203,6 +194,15 @@ export function TimeSeriesChart({
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+    });
+
+    const series = chart.addAreaSeries({
+      lineColor: "#4f9cff",
+      topColor: "rgba(79, 156, 255, 0.30)",
+      bottomColor: "rgba(79, 156, 255, 0.02)",
+      lineWidth: 2,
+      priceLineVisible: false,
+      autoscaleInfoProvider: zeroBaselineAutoscale,
     });
 
     chartRef.current = chart;
