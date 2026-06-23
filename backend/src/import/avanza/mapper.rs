@@ -14,6 +14,93 @@ use crate::import::core::outcome::{
 
 const TITLE: &str = "Avanza All Trades";
 
+/// Build position events (sorted by (date, source_row)) from all buy/sell/split rows
+/// so dividend mapping can derive eligible share counts deterministically.
+fn build_position_events(
+    rows: &[ParsedAvanzaRow],
+) -> BTreeMap<String, Vec<(NaiveDate, usize, i64)>> {
+    let mut by_isin: BTreeMap<String, Vec<(NaiveDate, usize, i64)>> = BTreeMap::new();
+
+    // Buy and sell events directly
+    for row in rows {
+        if row.isin.trim().is_empty() {
+            continue;
+        }
+        match row.kind {
+            AvanzaKind::Buy => {
+                if let Some(q) = row.quantity.to_i64() {
+                    if q > 0 {
+                        by_isin.entry(row.isin.clone()).or_default().push((
+                            row.trade_date,
+                            row.source_row_number,
+                            q,
+                        ));
+                    }
+                }
+            }
+            AvanzaKind::Sell => {
+                if let Some(q) = row.quantity.abs().to_i64() {
+                    if q > 0 {
+                        by_isin.entry(row.isin.clone()).or_default().push((
+                            row.trade_date,
+                            row.source_row_number,
+                            -q,
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Net split events grouped by (date, isin), same netting as the main split mapper
+    let mut split_groups: BTreeMap<(NaiveDate, String), (Decimal, usize)> = BTreeMap::new();
+    for row in rows {
+        if row.isin.trim().is_empty() || row.kind != AvanzaKind::Split {
+            continue;
+        }
+        let entry = split_groups
+            .entry((row.trade_date, row.isin.clone()))
+            .or_insert((Decimal::ZERO, row.source_row_number));
+        entry.0 += row.quantity;
+        entry.1 = entry.1.min(row.source_row_number);
+    }
+    for ((date, isin), (net, first_row)) in split_groups {
+        if let Some(delta) = net.to_i64() {
+            if delta != 0 {
+                by_isin
+                    .entry(isin)
+                    .or_default()
+                    .push((date, first_row, delta));
+            }
+        }
+    }
+
+    for events in by_isin.values_mut() {
+        events.sort_by_key(|(d, row, _)| (*d, *row));
+    }
+
+    by_isin
+}
+
+fn eligible_quantity_at(
+    isin: &str,
+    date: NaiveDate,
+    source_row: usize,
+    position_events: &BTreeMap<String, Vec<(NaiveDate, usize, i64)>>,
+) -> i64 {
+    position_events
+        .get(isin)
+        .map(|events| {
+            events
+                .iter()
+                .filter(|(d, row, _)| (*d, *row) <= (date, source_row))
+                .map(|(_, _, delta)| delta)
+                .sum::<i64>()
+        })
+        .unwrap_or(0)
+}
+
 pub fn to_prepared(report: &ParsedAvanzaReport) -> PreparedImport {
     let mut counts = SourceKindCounts {
         rows: report.rows.len(),
@@ -30,6 +117,8 @@ pub fn to_prepared(report: &ParsedAvanzaReport) -> PreparedImport {
         }
     }
 
+    let position_events = build_position_events(&report.rows);
+
     let mut split_groups: BTreeMap<(NaiveDate, String), SplitGroup> = BTreeMap::new();
 
     for row in &report.rows {
@@ -44,14 +133,7 @@ pub fn to_prepared(report: &ParsedAvanzaReport) -> PreparedImport {
             }
             AvanzaKind::Dividend => {
                 counts.dividends += 1;
-                outcomes.push(RowOutcome::Skip {
-                    asset_key: asset_key_of(&row.isin),
-                    note: RowNote {
-                        row: Some(row.source_row_number),
-                        code: "dividend_deferred",
-                        message: format!("dividend for {} not written in this version", row.name),
-                    },
-                });
+                outcomes.push(map_dividend(row, &position_events, &instrument_by_isin));
             }
             AvanzaKind::Split => {
                 counts.splits += 1;
@@ -128,12 +210,17 @@ fn asset_key_of(isin: &str) -> Option<String> {
 
 fn map_buy_sell(row: &ParsedAvanzaRow, kind: TransactionKind) -> RowOutcome {
     if !row.quantity.fract().is_zero() {
-        return RowOutcome::Skip {
+        return RowOutcome::Excluded {
             asset_key: asset_key_of(&row.isin),
+            name: Some(row.name.clone()),
+            currency: Some(row.instrument_currency.clone()),
             note: RowNote {
                 row: Some(row.source_row_number),
-                code: "non_integer_quantity",
-                message: format!("quantity {} is not an integer (fund?)", row.quantity),
+                code: "fractional_fund_excluded",
+                message: format!(
+                    "{} has fractional quantity {}; fund transactions are excluded",
+                    row.name, row.quantity
+                ),
             },
         };
     }
@@ -168,6 +255,7 @@ fn map_buy_sell(row: &ParsedAvanzaRow, kind: TransactionKind) -> RowOutcome {
             trade_date: row.trade_date,
             quantity: magnitude,
             price: row.price,
+            dividend_per_share: None,
             currency: Some(row.instrument_currency.clone()),
             fx_rate_to_base,
             brokerage_base,
@@ -177,6 +265,214 @@ fn map_buy_sell(row: &ParsedAvanzaRow, kind: TransactionKind) -> RowOutcome {
         note: None,
         fx_warning,
     })
+}
+
+fn map_dividend(
+    row: &ParsedAvanzaRow,
+    position_events: &BTreeMap<String, Vec<(NaiveDate, usize, i64)>>,
+    instrument_by_isin: &BTreeMap<String, InstrumentKey>,
+) -> RowOutcome {
+    if row.isin.trim().is_empty() {
+        return RowOutcome::Skip {
+            asset_key: None,
+            note: RowNote {
+                row: Some(row.source_row_number),
+                code: "missing_isin",
+                message: format!("dividend for {} has no ISIN", row.name),
+            },
+        };
+    }
+
+    let Some(cash_amount) = row.amount else {
+        return RowOutcome::Skip {
+            asset_key: asset_key_of(&row.isin),
+            note: RowNote {
+                row: Some(row.source_row_number),
+                code: "missing_amount",
+                message: format!("dividend for {} has no cash amount", row.name),
+            },
+        };
+    };
+
+    if row.instrument_currency.trim().is_empty() {
+        return RowOutcome::Skip {
+            asset_key: asset_key_of(&row.isin),
+            note: RowNote {
+                row: Some(row.source_row_number),
+                code: "missing_currency",
+                message: format!("dividend for {} has no instrument currency", row.name),
+            },
+        };
+    }
+
+    let eligible_qty = match positive_integer_quantity(row) {
+        Ok(Some(quantity)) => quantity,
+        Ok(None) => eligible_quantity_at(
+            &row.isin,
+            row.trade_date,
+            row.source_row_number,
+            position_events,
+        ),
+        Err(note) => {
+            return RowOutcome::Skip {
+                asset_key: asset_key_of(&row.isin),
+                note,
+            };
+        }
+    };
+
+    if eligible_qty <= 0 {
+        return RowOutcome::Skip {
+            asset_key: asset_key_of(&row.isin),
+            note: RowNote {
+                row: Some(row.source_row_number),
+                code: "non_positive_eligible_quantity",
+                message: format!(
+                    "dividend for {} has no positive eligible quantity at {}",
+                    row.name, row.trade_date
+                ),
+            },
+        };
+    }
+
+    let native_price_per_share = if let Some(kurs) = row.price.filter(|k| *k > Decimal::ZERO) {
+        kurs
+    } else if let Some(fx) = dividend_fx_rate(row, cash_amount, eligible_qty, None).0 {
+        match derive_dividend_per_share(row, cash_amount, eligible_qty, fx) {
+            Ok(per_share) => per_share,
+            Err(note) => {
+                return RowOutcome::Skip {
+                    asset_key: asset_key_of(&row.isin),
+                    note,
+                };
+            }
+        }
+    } else {
+        return missing_dividend_fx(row);
+    };
+
+    let (fx_rate_to_base, fx_warning) =
+        dividend_fx_rate(row, cash_amount, eligible_qty, Some(native_price_per_share));
+
+    let instrument = instrument_by_isin
+        .get(&row.isin)
+        .cloned()
+        .unwrap_or_else(|| InstrumentKey {
+            exchange: "AVANZA".to_string(),
+            symbol: row.isin.clone(),
+            name: row.name.clone(),
+            currency: row.instrument_currency.clone(),
+            isin: Some(row.isin.clone()),
+        });
+
+    RowOutcome::Mapped(MappedRow {
+        source_row_number: row.source_row_number,
+        instrument,
+        proposed: ProposedTransaction {
+            kind: TransactionKind::Dividend,
+            trade_date: row.trade_date,
+            quantity: eligible_qty,
+            price: None,
+            dividend_per_share: Some(native_price_per_share),
+            currency: Some(row.instrument_currency.clone()),
+            fx_rate_to_base,
+            brokerage_base: None,
+        },
+        source_value: row.amount.map(|a| a.abs()),
+        source_currency: Some(row.transaction_currency.clone()),
+        note: None,
+        fx_warning,
+    })
+}
+
+fn positive_integer_quantity(row: &ParsedAvanzaRow) -> Result<Option<i64>, RowNote> {
+    if row.quantity <= Decimal::ZERO {
+        return Ok(None);
+    }
+    if !row.quantity.fract().is_zero() {
+        return Err(RowNote {
+            row: Some(row.source_row_number),
+            code: "non_integer_quantity",
+            message: format!(
+                "dividend quantity {} for {} is not an integer",
+                row.quantity, row.name
+            ),
+        });
+    }
+    row.quantity.to_i64().map(Some).ok_or_else(|| RowNote {
+        row: Some(row.source_row_number),
+        code: "non_integer_quantity",
+        message: format!(
+            "dividend quantity {} for {} does not fit in i64",
+            row.quantity, row.name
+        ),
+    })
+}
+
+fn dividend_fx_rate(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    native_price_per_share: Option<Decimal>,
+) -> (Option<Decimal>, bool) {
+    match row.fx_rate {
+        Some(rate) if rate > Decimal::ZERO => (Some(rate), false),
+        _ if row.instrument_currency.eq_ignore_ascii_case("SEK") => (Some(Decimal::ONE), false),
+        _ => derive_dividend_fx_from_source(row, cash_amount, eligible_qty, native_price_per_share)
+            .map_or((None, true), |fx| (Some(fx), false)),
+    }
+}
+
+fn derive_dividend_fx_from_source(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    native_price_per_share: Option<Decimal>,
+) -> Option<Decimal> {
+    if !row.transaction_currency.eq_ignore_ascii_case("SEK") {
+        return None;
+    }
+    let price = native_price_per_share.or(row.price)?;
+    if eligible_qty <= 0 || price <= Decimal::ZERO || cash_amount.is_zero() {
+        return None;
+    }
+    let native_total = Decimal::from(eligible_qty) * price;
+    (native_total > Decimal::ZERO).then(|| cash_amount.abs() / native_total)
+}
+
+fn derive_dividend_per_share(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    fx: Decimal,
+) -> Result<Decimal, RowNote> {
+    let native_total = cash_amount.abs() / fx;
+    let per_share = native_total / Decimal::from(eligible_qty);
+    if per_share <= Decimal::ZERO {
+        return Err(RowNote {
+            row: Some(row.source_row_number),
+            code: "non_positive_dividend",
+            message: format!(
+                "derived per-share dividend for {} is not positive",
+                row.name
+            ),
+        });
+    }
+    Ok(per_share)
+}
+
+fn missing_dividend_fx(row: &ParsedAvanzaRow) -> RowOutcome {
+    RowOutcome::Skip {
+        asset_key: asset_key_of(&row.isin),
+        note: RowNote {
+            row: Some(row.source_row_number),
+            code: "missing_fx_for_derivation",
+            message: format!(
+                "dividend for {} has no native price and no FX rate; cannot derive per-share amount",
+                row.name
+            ),
+        },
+    }
 }
 
 fn map_split(
@@ -239,6 +535,7 @@ fn map_split(
             trade_date,
             quantity: delta,
             price: None,
+            dividend_per_share: None,
             currency: None,
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -413,7 +710,227 @@ mod tests {
     }
 
     #[test]
-    fn dividend_rows_are_counted_and_skipped() {
+    fn dividend_with_prior_buys_maps_to_dividend_row() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 10),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(5),
+                price: Some(dec!(200)),
+                amount: Some(dec!(-9459)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(9)),
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 15),
+                raw_kind: "Sälj",
+                name: "Apple Inc",
+                quantity: dec!(-2),
+                price: Some(dec!(210)),
+                amount: Some(dec!(3960)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(9)),
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 4,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Apple Inc",
+                quantity: dec!(0),
+                price: None,
+                amount: Some(dec!(120)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.40)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+        ]));
+
+        let rows = mapped(&prepared);
+        // buy + sell + dividend (mapped)
+        assert_eq!(rows.len(), 3);
+
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+        // eligible_qty = 5 - 2 = 3
+        assert_eq!(dividend.proposed.quantity, 3);
+        assert_eq!(dividend.proposed.currency.as_deref(), Some("USD"));
+        assert_eq!(dividend.proposed.fx_rate_to_base, Some(dec!(9.40)));
+        // per_share = (120 / 9.40) / 3 ≈ 4.255319...
+        let expected = (dec!(120) / dec!(9.40)) / dec!(3);
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(expected));
+        assert_eq!(dividend.source_value, Some(dec!(120)));
+        assert_eq!(dividend.source_currency.as_deref(), Some("SEK"));
+        assert!(!dividend.fx_warning);
+    }
+
+    #[test]
+    fn dividend_with_native_kurs_uses_kurs_directly() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "Volvo B",
+                quantity: dec!(10),
+                price: Some(dec!(250)),
+                amount: Some(dec!(-2500)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "SEK",
+                isin: "SE0000115446",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Volvo B",
+                quantity: dec!(0),
+                price: Some(dec!(7.5)), // native per-share from Avanza
+                amount: Some(dec!(75)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "SEK",
+                isin: "SE0000115446",
+            }),
+        ]));
+
+        let rows = mapped(&prepared);
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+        assert_eq!(dividend.proposed.quantity, 10);
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(7.5)));
+        assert_eq!(dividend.proposed.fx_rate_to_base, Some(Decimal::ONE));
+        assert!(!dividend.fx_warning);
+    }
+
+    #[test]
+    fn dividend_foreign_missing_fx_warns_when_native_kurs_present() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "ASML",
+                quantity: dec!(4),
+                price: Some(dec!(800)),
+                amount: Some(dec!(-800)),
+                transaction_currency: "EUR",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "EUR",
+                isin: "NL0010273215",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "ASML",
+                quantity: dec!(0),
+                price: Some(dec!(6.40)), // native per-share, FX missing
+                amount: Some(dec!(25)),
+                transaction_currency: "EUR",
+                brokerage: None,
+                fx_rate: None, // missing FX
+                instrument_currency: "EUR",
+                isin: "NL0010273215",
+            }),
+        ]));
+
+        let rows = mapped(&prepared);
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+        assert_eq!(dividend.proposed.quantity, 4);
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(6.40)));
+        assert_eq!(dividend.proposed.fx_rate_to_base, None);
+        assert!(dividend.fx_warning);
+    }
+
+    #[test]
+    fn dividend_blank_fx_derives_rate_from_sek_amount_and_native_kurs() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2025, 9, 8),
+                raw_kind: "Köp",
+                name: "Vistra",
+                quantity: dec!(72),
+                price: Some(dec!(188.385556)),
+                amount: Some(dec!(-127253.55)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(87.74)),
+                fx_rate: Some(dec!(9.37541)),
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2025, 12, 30),
+                raw_kind: "Sälj",
+                name: "Vistra",
+                quantity: dec!(-72),
+                price: Some(dec!(161.670417)),
+                amount: Some(dec!(106748.07)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(73.69)),
+                fx_rate: Some(dec!(9.176915)),
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+            row(RowSpec {
+                source_row_number: 4,
+                trade_date: date(2026, 1, 2),
+                raw_kind: "Utdelning",
+                name: "Vistra",
+                quantity: dec!(72),
+                price: Some(dec!(0.227)),
+                amount: Some(dec!(150.02)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+        ]));
+
+        let dividend = mapped(&prepared)
+            .into_iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+
+        assert_eq!(dividend.proposed.quantity, 72);
+        assert_eq!(dividend.proposed.price, None);
+        assert_eq!(dividend.proposed.dividend_per_share, Some(dec!(0.227)));
+        assert_eq!(
+            dividend.proposed.fx_rate_to_base,
+            Some(dec!(150.02) / (dec!(72) * dec!(0.227)))
+        );
+        assert!(!dividend.fx_warning);
+    }
+
+    #[test]
+    fn dividend_without_prior_buys_is_skipped() {
         let prepared = to_prepared(&report(vec![row(RowSpec {
             source_row_number: 2,
             trade_date: date(2026, 5, 20),
@@ -435,8 +952,93 @@ mod tests {
             RowOutcome::Skip {
                 ref note,
                 asset_key: Some(_)
-            } if note.code == "dividend_deferred"
+            } if note.code == "non_positive_eligible_quantity"
         ));
+    }
+
+    #[test]
+    fn dividend_missing_fx_and_no_kurs_is_skipped() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(5),
+                price: Some(dec!(200)),
+                amount: Some(dec!(-200)),
+                transaction_currency: "EUR",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "EUR",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Apple Inc",
+                quantity: dec!(0),
+                price: None, // no native kurs
+                amount: Some(dec!(100)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: None, // no FX
+                instrument_currency: "EUR",
+                isin: "US0378331005",
+            }),
+        ]));
+
+        assert!(prepared
+            .outcomes
+            .iter()
+            .any(|o| matches!(o, RowOutcome::Skip { note, .. } if note.code == "missing_fx_for_derivation")));
+    }
+
+    #[test]
+    fn dividend_rows_counted_not_skipped_as_deferred() {
+        // Ensures the old "dividend_deferred" code is no longer used when there are prior buys.
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(5),
+                price: Some(dec!(200)),
+                amount: Some(dec!(-9459)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Apple Inc",
+                quantity: dec!(0),
+                price: None,
+                amount: Some(dec!(120)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.40)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+        ]));
+
+        assert_eq!(prepared.counts.dividends, 1);
+        // Should be Mapped, not a dividend_deferred skip
+        assert!(!prepared.outcomes.iter().any(|o| matches!(
+            o,
+            RowOutcome::Skip { note, .. } if note.code == "dividend_deferred"
+        )));
+        assert!(prepared.outcomes.iter().any(|o| matches!(
+            o,
+            RowOutcome::Mapped(m) if m.proposed.kind == TransactionKind::Dividend
+        )));
     }
 
     #[test]
@@ -466,12 +1068,12 @@ mod tests {
     }
 
     #[test]
-    fn fractional_rows_are_skipped() {
+    fn fractional_rows_are_excluded_without_warning_noise() {
         let prepared = to_prepared(&report(vec![row(RowSpec {
             source_row_number: 2,
             trade_date: date(2026, 6, 7),
             raw_kind: "Köp",
-            name: "Volvo B",
+            name: "Spiltan Aktiefond Investmentbolag",
             quantity: dec!(1.5),
             price: Some(dec!(250)),
             amount: Some(dec!(375)),
@@ -479,16 +1081,28 @@ mod tests {
             brokerage: Some(dec!(0)),
             fx_rate: None,
             instrument_currency: "SEK",
-            isin: "SE0000115446",
+            isin: "SE0004297927",
         })]));
 
         assert!(matches!(
             prepared.outcomes[0],
-            RowOutcome::Skip {
+            RowOutcome::Excluded {
                 ref note,
                 asset_key: Some(_)
-            } if note.code == "non_integer_quantity"
+                , ..
+            } if note.code == "fractional_fund_excluded"
         ));
+
+        let plan = build_plan(&prepared, &PlanContext::default());
+        assert_eq!(plan.counts.skipped, 1);
+        assert_eq!(plan.counts.warnings, 0);
+        let asset = plan.assets.first().expect("excluded fund asset");
+        assert!(!asset.default_selected);
+        assert_eq!(asset.warnings.len(), 0);
+        assert_eq!(
+            asset.skipped_reason.as_deref(),
+            Some("Spiltan Aktiefond Investmentbolag has fractional quantity 1.5; fund transactions are excluded")
+        );
     }
 
     #[test]
@@ -666,5 +1280,63 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.code == "reconciliation_residual"));
+    }
+
+    #[test]
+    fn dividend_excludes_same_day_later_buy_in_eligible_quantity() {
+        // A buy on the same date as the dividend, but appearing later in the
+        // source file, must not inflate the dividend's eligible share count.
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(5),
+                price: Some(dec!(200)),
+                amount: Some(dec!(-9459)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Apple Inc",
+                quantity: dec!(0),
+                price: None,
+                amount: Some(dec!(120)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.40)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 4,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(10),
+                price: Some(dec!(210)),
+                amount: Some(dec!(-19845)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+        ]));
+
+        let rows = mapped(&prepared);
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+        // Only the prior buy of 5 counts; the same-day later buy of 10 is excluded.
+        assert_eq!(dividend.proposed.quantity, 5);
     }
 }

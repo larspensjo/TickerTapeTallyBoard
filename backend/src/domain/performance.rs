@@ -248,7 +248,7 @@ pub fn compute_period_amounts(
                 capital_flows_at_end_fx -= qty * p * end_fx - tx.brokerage_base;
             }
             TransactionKind::Dividend => {
-                let p = match tx.price {
+                let p = match tx.dividend_per_share {
                     Some(p) => p,
                     None => {
                         return PeriodAmounts::unavailable(vec![
@@ -387,7 +387,7 @@ pub fn period_cash_flows(
                 });
             }
             TransactionKind::Dividend => {
-                let p = match tx.price {
+                let p = match tx.dividend_per_share {
                     Some(p) => p,
                     None => {
                         return Availability::Unavailable {
@@ -500,7 +500,7 @@ pub fn actual_period_cash_flows(
                 });
             }
             TransactionKind::Dividend => {
-                let p = match tx.price {
+                let p = match tx.dividend_per_share {
                     Some(p) => p,
                     None => {
                         return Availability::Unavailable {
@@ -836,6 +836,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: qty,
             price: Some(dec!(10)),
+            dividend_per_share: None,
             fx_rate_to_base: Some(dec!(10)),
             brokerage_base: Decimal::ZERO,
         }
@@ -848,6 +849,7 @@ mod tests {
             kind: TransactionKind::Split,
             quantity: delta,
             price: None,
+            dividend_per_share: None,
             fx_rate_to_base: None,
             brokerage_base: Decimal::ZERO,
         }
@@ -867,6 +869,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: qty,
             price: Some(price),
+            dividend_per_share: None,
             fx_rate_to_base: Some(fx),
             brokerage_base: brokerage,
         }
@@ -879,6 +882,7 @@ mod tests {
             kind: TransactionKind::Sell,
             quantity: -qty,
             price: Some(price),
+            dividend_per_share: None,
             fx_rate_to_base: Some(fx),
             brokerage_base: Decimal::ZERO,
         }
@@ -1508,7 +1512,8 @@ mod tests {
             trade_date: date(d),
             kind: TransactionKind::Dividend,
             quantity: qty,
-            price: Some(price),
+            price: None,
+            dividend_per_share: Some(price),
             fx_rate_to_base: fx,
             brokerage_base: Decimal::ZERO,
         }

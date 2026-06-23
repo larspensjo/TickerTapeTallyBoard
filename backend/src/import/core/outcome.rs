@@ -41,7 +41,8 @@ pub struct MappedRow {
     pub source_currency: Option<String>,
     /// Free-text note persisted to `transactions.note`.
     pub note: Option<String>,
-    /// True when a Buy/Sell had a blank or non-positive FX rate.
+    /// True when a mapped row had a blank or non-positive FX rate that leaves
+    /// base-currency values unavailable.
     pub fx_warning: bool,
 }
 
@@ -60,6 +61,12 @@ pub enum RowOutcome {
     Mapped(MappedRow),
     Skip {
         asset_key: Option<String>,
+        note: RowNote,
+    },
+    Excluded {
+        asset_key: Option<String>,
+        name: Option<String>,
+        currency: Option<String>,
         note: RowNote,
     },
     Error {

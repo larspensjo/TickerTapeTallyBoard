@@ -1309,6 +1309,7 @@ mod tests {
                 trade_date: NaiveDate::parse_from_str(trade_date, "%Y-%m-%d").expect("date"),
                 quantity,
                 price: Some(price.parse().expect("price")),
+                dividend_per_share: None,
                 currency: Some(currency.to_owned()),
                 fx_rate_to_base: fx_rate_to_base.map(|value| value.parse().expect("fx")),
                 brokerage: None,

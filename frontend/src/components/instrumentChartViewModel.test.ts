@@ -22,6 +22,7 @@ function tx(overrides: Partial<Transaction>): Transaction {
     trade_date: "2025-05-11",
     quantity: 1,
     price: "140.681299",
+    dividend_per_share: null,
     currency: "USD",
     fx_rate_to_base: "9.5701",
     brokerage: null,
@@ -137,6 +138,29 @@ describe("instrumentPriceSeries", () => {
     );
 
     expect(result.points).toEqual([{ time: "2025-06-04", value: 157.11 }]);
+  });
+
+  it("does not plot dividend per-share amounts as transaction price points", () => {
+    const result = instrumentPriceSeries(
+      resp([
+        {
+          date: "2026-06-04",
+          close: "1000",
+          close_base: { status: "available", value: "9570.10" },
+        },
+      ]),
+      [
+        tx({
+          id: 1,
+          type: "Dividend",
+          trade_date: "2025-09-16",
+          price: null,
+          dividend_per_share: "0.227",
+        }),
+      ],
+    );
+
+    expect(result.points).toEqual([{ time: "2026-06-04", value: 1000 }]);
   });
 });
 

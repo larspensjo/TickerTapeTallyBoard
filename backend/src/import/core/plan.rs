@@ -106,16 +106,30 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
                 );
             }
             RowOutcome::Skip { asset_key, note } => {
-                if note.code != "dividend_deferred" {
-                    skipped += 1;
-                }
+                skipped += 1;
                 warnings.push(note.clone());
                 if let Some(key) = asset_key {
                     let group = asset_group_mut(&mut assets, &mut asset_order, key, None, None);
-                    if note.code == "dividend_deferred" {
-                        group.dividends += 1;
-                    }
                     group.warnings.push(note.clone());
+                }
+            }
+            RowOutcome::Excluded {
+                asset_key,
+                name,
+                currency,
+                note,
+            } => {
+                skipped += 1;
+                if let Some(key) = asset_key {
+                    let group = asset_group_mut(
+                        &mut assets,
+                        &mut asset_order,
+                        key,
+                        name.as_deref(),
+                        currency.as_deref(),
+                    );
+                    group.skipped_reason = Some(note.message.clone());
+                    group.default_selected = false;
                 }
             }
             RowOutcome::Error { asset_key, note } => {
@@ -133,7 +147,7 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
     attach_asset_notes(&mut assets, &warnings, &errors, &mapped_rows);
 
     for group in assets.values_mut() {
-        if group.buys + group.sells + group.splits == 0
+        if group.buys + group.sells + group.splits + group.dividends == 0
             && (!group.warnings.is_empty() || !group.errors.is_empty())
         {
             group.skipped_reason = Some("no writable rows (all skipped)".to_string());
@@ -178,7 +192,9 @@ pub fn exclude_assets(prepared: &PreparedImport, exclude: &BTreeSet<String>) -> 
         .iter()
         .filter(|outcome| match outcome {
             RowOutcome::Mapped(mapped) => !exclude.contains(&mapped.instrument.asset_key()),
-            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
+            RowOutcome::Skip { asset_key, .. }
+            | RowOutcome::Excluded { asset_key, .. }
+            | RowOutcome::Error { asset_key, .. } => {
                 asset_key.as_ref().is_none_or(|key| !exclude.contains(key))
             }
         })
@@ -201,9 +217,9 @@ pub fn known_asset_keys(prepared: &PreparedImport) -> BTreeSet<String> {
         .iter()
         .filter_map(|outcome| match outcome {
             RowOutcome::Mapped(mapped) => Some(mapped.instrument.asset_key()),
-            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
-                asset_key.clone()
-            }
+            RowOutcome::Skip { asset_key, .. }
+            | RowOutcome::Excluded { asset_key, .. }
+            | RowOutcome::Error { asset_key, .. } => asset_key.clone(),
         })
         .collect()
 }
@@ -323,6 +339,7 @@ fn process_mapped(
                     kind: mapped.proposed.kind,
                     quantity: signed,
                     price: mapped.proposed.price,
+                    dividend_per_share: mapped.proposed.dividend_per_share,
                     fx_rate_to_base: mapped.proposed.fx_rate_to_base,
                     brokerage_base: mapped.proposed.brokerage_base.unwrap_or(Decimal::ZERO),
                 });
@@ -562,6 +579,7 @@ mod tests {
             kind: TransactionKind::Buy,
             quantity: 4,
             price: Some(dec!(10)),
+            dividend_per_share: None,
             fx_rate_to_base: Some(dec!(1)),
             brokerage_base: dec!(0),
         };
@@ -643,6 +661,71 @@ mod tests {
         assert_eq!(
             prepared.header.title,
             "All Trades Report between 2025-06-12 and 2026-06-12"
+        );
+    }
+
+    #[test]
+    fn dividend_only_asset_with_fx_warning_stays_selectable() {
+        use crate::domain::ProposedTransaction;
+        use crate::import::core::outcome::{
+            InstrumentKey, MappedRow, PlanHeader, PreparedImport, SourceKindCounts,
+        };
+
+        let date = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        let dividend = MappedRow {
+            source_row_number: 2,
+            instrument: InstrumentKey {
+                exchange: "AVANZA".into(),
+                symbol: "NL0010273215".into(),
+                name: "ASML".into(),
+                currency: "EUR".into(),
+                isin: Some("NL0010273215".into()),
+            },
+            proposed: ProposedTransaction {
+                kind: TransactionKind::Dividend,
+                trade_date: date,
+                quantity: 4,
+                price: None,
+                dividend_per_share: Some(dec!(6.40)),
+                currency: Some("EUR".into()),
+                fx_rate_to_base: None,
+                brokerage_base: None,
+            },
+            source_value: Some(dec!(25)),
+            source_currency: Some("EUR".into()),
+            note: None,
+            fx_warning: true,
+        };
+
+        let prepared = PreparedImport {
+            header: PlanHeader {
+                title: "Avanza All Trades".into(),
+                date_from: date,
+                date_to: date,
+            },
+            counts: SourceKindCounts {
+                rows: 1,
+                dividends: 1,
+                ..Default::default()
+            },
+            outcomes: vec![RowOutcome::Mapped(dividend)],
+        };
+
+        let plan = build_plan(&prepared, &PlanContext::default());
+        let group = plan
+            .assets
+            .iter()
+            .find(|group| group.asset_key == "NL0010273215")
+            .expect("dividend asset group");
+
+        assert_eq!(group.dividends, 1);
+        assert!(
+            group.skipped_reason.is_none(),
+            "dividend-only asset must not be marked as all-skipped"
+        );
+        assert!(
+            group.default_selected,
+            "dividend-only asset with an fx warning must stay selectable"
         );
     }
 }

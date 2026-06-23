@@ -77,6 +77,7 @@ export function TransactionsTable({
             exchange,
             transaction.quantity.toString(),
             transaction.price ?? "",
+            transaction.dividend_per_share ?? "",
             transaction.currency ?? "",
             transaction.note ?? "",
           ]
@@ -116,18 +117,24 @@ export function TransactionsTable({
         header: "Qty",
         cell: (info) => formatGroupedNumber(info.getValue()),
       }),
-      columnHelper.accessor((row) => row.transaction.price ?? "", {
-        id: "price",
-        header: "Price",
-        cell: (info) => {
-          const { price, currency } = info.row.original.transaction;
-          return price ? (
-            <FormattedNumber value={price} prefix={currency ?? ""} />
-          ) : (
-            "-"
-          );
+      columnHelper.accessor(
+        (row) =>
+          row.transaction.price ?? row.transaction.dividend_per_share ?? "",
+        {
+          id: "price",
+          header: "Price / dividend",
+          cell: (info) => {
+            const { dividend_per_share, price, currency } =
+              info.row.original.transaction;
+            const value = price ?? dividend_per_share;
+            return value ? (
+              <FormattedNumber value={value} prefix={currency ?? ""} />
+            ) : (
+              "-"
+            );
+          },
         },
-      }),
+      ),
       ...(showActions && onDelete
         ? [
             columnHelper.display({

@@ -20,7 +20,7 @@ use crate::import::core::plan::{
     build_plan, exclude_assets, known_asset_keys, AssetGroup, ExistingInstrument, ImportPlan,
     PlanContext,
 };
-use crate::import::core::writer::write_batch;
+use crate::import::core::writer::{refresh_batch, write_batch};
 use crate::import::raw_file_hash;
 use crate::import::sharesight::adapter::to_prepared as sharesight_prepared;
 use crate::import::sharesight::parser::parse_report;
@@ -35,6 +35,11 @@ pub struct ImportPreview {
     pub warnings: Vec<RowNoteDto>,
     pub errors: Vec<RowNoteDto>,
     pub duplicate_of_batch_id: Option<i64>,
+    /// Batch id that a subsequent Avanza refresh commit should target.
+    /// Null when no prior Avanza batch exists (first import).
+    pub replace_candidate_batch_id: Option<i64>,
+    /// Non-blocking warning when multiple live Avanza batches exist.
+    pub replace_candidate_warning: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +100,10 @@ pub struct CommitParams {
     pub allow_duplicate: bool,
     #[serde(default)]
     pub exclude: Option<String>,
+    /// `replace` triggers refresh mode; `append` (or absent) uses legacy append.
+    pub mode: Option<String>,
+    /// Required when `mode=replace`; the batch id returned by preview.
+    pub replace_batch_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,7 +138,7 @@ pub async fn avanza_preview(
     State(state): State<AppState>,
     bytes: Bytes,
 ) -> Result<Json<ImportPreview>, ApiError> {
-    preview_source(&state, &bytes, parse_avanza).await
+    avanza_preview_inner(&state, &bytes).await
 }
 
 pub async fn avanza_commit(
@@ -137,7 +146,18 @@ pub async fn avanza_commit(
     Query(params): Query<CommitParams>,
     bytes: Bytes,
 ) -> Result<Json<ImportResult>, ApiError> {
-    commit_source(&state, &bytes, "AVANZA", &params, parse_avanza).await
+    let is_replace = params.mode.as_deref() == Some("replace");
+    if is_replace {
+        let replace_batch_id = params.replace_batch_id.ok_or_else(|| {
+            ApiError::bad_request(
+                "missing_replace_batch_id",
+                "mode=replace requires replace_batch_id".to_string(),
+            )
+        })?;
+        avanza_commit_replace(&state, &bytes, replace_batch_id, &params).await
+    } else {
+        commit_source(&state, &bytes, "AVANZA", &params, parse_avanza).await
+    }
 }
 
 pub async fn rollback(
@@ -215,6 +235,128 @@ async fn preview_source(
         warnings: plan.warnings.iter().map(row_note_dto).collect(),
         errors: plan.errors.iter().map(row_note_dto).collect(),
         duplicate_of_batch_id,
+        replace_candidate_batch_id: None,
+        replace_candidate_warning: None,
+    }))
+}
+
+/// Avanza-specific preview: enriches the standard preview with replace-candidate metadata.
+async fn avanza_preview_inner(
+    state: &AppState,
+    bytes: &[u8],
+) -> Result<Json<ImportPreview>, ApiError> {
+    let hash = raw_file_hash(bytes);
+    let duplicate_of_batch_id = import_batches::find_by_hash(&state.pool, &hash)
+        .await?
+        .map(|batch| batch.id);
+
+    let prepared = match parse_avanza(bytes) {
+        Ok(prepared) => prepared,
+        Err(error) => return Ok(Json(parse_error_preview(error, duplicate_of_batch_id))),
+    };
+
+    // Look up the latest AVANZA batch for replace-candidate metadata
+    let latest_avanza = import_batches::find_latest_by_source(&state.pool, "AVANZA").await?;
+    let replace_candidate_batch_id = latest_avanza.as_ref().map(|b| b.id);
+    let replace_candidate_warning = if replace_candidate_batch_id.is_some() {
+        let count = import_batches::count_by_source(&state.pool, "AVANZA").await?;
+        if count > 1 {
+            replace_candidate_batch_id.map(|id| {
+                format!(
+                    "Multiple Avanza imports found; refreshing batch {id}, others are left untouched"
+                )
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let ctx = load_plan_context(state).await?;
+    let plan = build_plan(&prepared, &ctx);
+
+    Ok(Json(ImportPreview {
+        metadata: Some(PreviewMetadata {
+            title: prepared.header.title.clone(),
+            date_from: prepared.header.date_from.to_string(),
+            date_to: prepared.header.date_to.to_string(),
+        }),
+        counts: counts_dto(&plan),
+        assets: plan.assets.iter().map(asset_group_dto).collect(),
+        new_instruments: plan
+            .new_instruments
+            .iter()
+            .map(new_instrument_dto)
+            .collect(),
+        warnings: plan.warnings.iter().map(row_note_dto).collect(),
+        errors: plan.errors.iter().map(row_note_dto).collect(),
+        duplicate_of_batch_id,
+        replace_candidate_batch_id,
+        replace_candidate_warning,
+    }))
+}
+
+/// Avanza-specific commit in replace/refresh mode.
+async fn avanza_commit_replace(
+    state: &AppState,
+    bytes: &[u8],
+    replace_batch_id: i64,
+    params: &CommitParams,
+) -> Result<Json<ImportResult>, ApiError> {
+    let hash = raw_file_hash(bytes);
+    let prepared =
+        parse_avanza(bytes).map_err(|error| ApiError::bad_request(error.code, error.message))?;
+
+    let exclude: BTreeSet<String> = params
+        .exclude
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let known = known_asset_keys(&prepared);
+    let unknown: Vec<String> = exclude.difference(&known).cloned().collect();
+
+    let effective = exclude_assets(&prepared, &exclude);
+    let ctx = load_plan_context(state).await?;
+    let plan = build_plan(&effective, &ctx);
+    reject_on_errors(&plan)?;
+
+    let mapped: Vec<MappedRow> = effective
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            RowOutcome::Mapped(mapped) => Some(mapped.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let batch_id = refresh_batch(state, "AVANZA", replace_batch_id, &hash, &mapped).await?;
+
+    let mut warnings: Vec<RowNoteDto> = unknown
+        .into_iter()
+        .map(|key| RowNoteDto {
+            row: None,
+            code: "unknown_exclude_key",
+            message: format!("exclude key {key:?} matched no asset"),
+        })
+        .collect();
+
+    // Surface any plan-level fx_warning notes
+    for note in &plan.warnings {
+        if note.code == "missing_fx" {
+            warnings.push(row_note_dto(note));
+        }
+    }
+
+    Ok(Json(ImportResult {
+        batch_id,
+        counts: effective_counts(&plan, &mapped),
+        warnings,
     }))
 }
 
@@ -294,6 +436,8 @@ fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) ->
             message: error.message,
         }],
         duplicate_of_batch_id,
+        replace_candidate_batch_id: None,
+        replace_candidate_warning: None,
     }
 }
 
@@ -378,8 +522,7 @@ fn effective_counts(plan: &ImportPlan, mapped: &[MappedRow]) -> PreviewCounts {
     counts.buys = kind_count(mapped, domain::TransactionKind::Buy);
     counts.sells = kind_count(mapped, domain::TransactionKind::Sell);
     counts.splits = kind_count(mapped, domain::TransactionKind::Split);
-    // Dividends are deferred and never appear in mapped rows, so use the retained asset groups.
-    counts.dividends = plan.assets.iter().map(|asset| asset.dividends).sum();
+    counts.dividends = kind_count(mapped, domain::TransactionKind::Dividend);
     counts
 }
 
@@ -428,10 +571,46 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
 #[cfg(test)]
 mod tests {
     use super::{effective_counts, AssetGroup, ImportPlan};
+    use crate::domain::{ProposedTransaction, TransactionKind};
+    use crate::import::core::outcome::InstrumentKey;
+    use crate::import::core::outcome::MappedRow;
     use crate::import::core::plan::PlanCounts;
+    use chrono::NaiveDate;
+    use rust_decimal_macros::dec;
+
+    fn dummy_instrument() -> InstrumentKey {
+        InstrumentKey {
+            exchange: "AVANZA".to_string(),
+            symbol: "TEST".to_string(),
+            name: "Test".to_string(),
+            currency: "SEK".to_string(),
+            isin: Some("SE0000000001".to_string()),
+        }
+    }
+
+    fn dividend_row() -> MappedRow {
+        MappedRow {
+            source_row_number: 1,
+            instrument: dummy_instrument(),
+            proposed: ProposedTransaction {
+                kind: TransactionKind::Dividend,
+                trade_date: NaiveDate::from_ymd_opt(2026, 5, 20).unwrap(),
+                quantity: 5,
+                price: None,
+                dividend_per_share: Some(dec!(7.5)),
+                currency: Some("SEK".to_string()),
+                fx_rate_to_base: Some(dec!(1)),
+                brokerage_base: None,
+            },
+            source_value: Some(dec!(37.5)),
+            source_currency: Some("SEK".to_string()),
+            note: None,
+            fx_warning: false,
+        }
+    }
 
     #[test]
-    fn effective_counts_dividends_come_from_retained_assets() {
+    fn effective_counts_dividends_come_from_mapped_rows() {
         let plan = ImportPlan {
             counts: PlanCounts {
                 rows: 2,
@@ -457,9 +636,15 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let counts = effective_counts(&plan, &[]);
+        // No dividend in mapped rows → count is 0
+        let counts_no_dividend = effective_counts(&plan, &[]);
+        assert_eq!(counts_no_dividend.rows, 0);
+        assert_eq!(counts_no_dividend.dividends, 0);
 
-        assert_eq!(counts.rows, 0);
-        assert_eq!(counts.dividends, 1);
+        // Dividend in mapped rows → count is 1
+        let mapped = vec![dividend_row()];
+        let counts_with_dividend = effective_counts(&plan, &mapped);
+        assert_eq!(counts_with_dividend.rows, 1);
+        assert_eq!(counts_with_dividend.dividends, 1);
     }
 }

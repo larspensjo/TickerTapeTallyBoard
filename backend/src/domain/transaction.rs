@@ -41,6 +41,7 @@ pub struct ProposedTransaction {
     pub trade_date: NaiveDate,
     pub quantity: i64,
     pub price: Option<Decimal>,
+    pub dividend_per_share: Option<Decimal>,
     pub currency: Option<String>,
     pub fx_rate_to_base: Option<Decimal>,
     pub brokerage_base: Option<Decimal>,
@@ -57,6 +58,7 @@ pub struct LedgerTransaction {
     pub kind: TransactionKind,
     pub quantity: i64,
     pub price: Option<Decimal>,
+    pub dividend_per_share: Option<Decimal>,
     pub fx_rate_to_base: Option<Decimal>,
     pub brokerage_base: Decimal,
 }
@@ -72,7 +74,11 @@ pub enum ValidationError {
     BrokerageMustNotBeNegative,
     SplitQuantityMustBeNonZero,
     SplitMustNotCarryCostInputs,
+    DividendPerShareOnlyForDividend,
+    DividendMustNotCarryPrice,
     DividendMustNotCarryBrokerage,
+    DividendPerShareRequired,
+    DividendPerShareMustBePositive,
 }
 
 impl ValidationError {
@@ -86,7 +92,11 @@ impl ValidationError {
             Self::BrokerageMustNotBeNegative => "brokerage_must_not_be_negative",
             Self::SplitQuantityMustBeNonZero => "split_quantity_must_be_non_zero",
             Self::SplitMustNotCarryCostInputs => "split_must_not_carry_cost_inputs",
+            Self::DividendPerShareOnlyForDividend => "dividend_per_share_only_for_dividend",
+            Self::DividendMustNotCarryPrice => "dividend_must_not_carry_price",
             Self::DividendMustNotCarryBrokerage => "dividend_must_not_carry_brokerage",
+            Self::DividendPerShareRequired => "dividend_per_share_required",
+            Self::DividendPerShareMustBePositive => "dividend_per_share_must_be_positive",
         }
     }
 
@@ -100,9 +110,17 @@ impl ValidationError {
             Self::BrokerageMustNotBeNegative => "Brokerage must not be negative when present.",
             Self::SplitQuantityMustBeNonZero => "Split requires a non-zero quantity delta.",
             Self::SplitMustNotCarryCostInputs => {
-                "Split must not carry price, currency, FX, or brokerage."
+                "Split must not carry price, dividend, currency, FX, or brokerage."
             }
+            Self::DividendPerShareOnlyForDividend => {
+                "Dividend amount per share only applies to dividend transactions."
+            }
+            Self::DividendMustNotCarryPrice => "Dividend must not carry a market price.",
             Self::DividendMustNotCarryBrokerage => "Dividend must not carry brokerage.",
+            Self::DividendPerShareRequired => "Dividend requires a native amount per share.",
+            Self::DividendPerShareMustBePositive => {
+                "Dividend amount per share must be greater than zero."
+            }
         }
     }
 }
@@ -192,6 +210,9 @@ pub fn validate(proposed: &ProposedTransaction) -> Result<i64, ValidationError> 
             {
                 return Err(ValidationError::BrokerageMustNotBeNegative);
             }
+            if proposed.dividend_per_share.is_some() {
+                return Err(ValidationError::DividendPerShareOnlyForDividend);
+            }
 
             Ok(if proposed.kind == TransactionKind::Sell {
                 -proposed.quantity
@@ -204,6 +225,7 @@ pub fn validate(proposed: &ProposedTransaction) -> Result<i64, ValidationError> 
                 return Err(ValidationError::SplitQuantityMustBeNonZero);
             }
             if proposed.price.is_some()
+                || proposed.dividend_per_share.is_some()
                 || proposed.currency.is_some()
                 || proposed.fx_rate_to_base.is_some()
                 || proposed.brokerage_base.is_some()
@@ -216,10 +238,13 @@ pub fn validate(proposed: &ProposedTransaction) -> Result<i64, ValidationError> 
             if proposed.quantity <= 0 {
                 return Err(ValidationError::QuantityMustBePositive);
             }
-            match proposed.price {
-                None => return Err(ValidationError::PriceRequired),
-                Some(price) if price <= Decimal::ZERO => {
-                    return Err(ValidationError::PriceMustBePositive);
+            if proposed.price.is_some() {
+                return Err(ValidationError::DividendMustNotCarryPrice);
+            }
+            match proposed.dividend_per_share {
+                None => return Err(ValidationError::DividendPerShareRequired),
+                Some(dividend_per_share) if dividend_per_share <= Decimal::ZERO => {
+                    return Err(ValidationError::DividendPerShareMustBePositive);
                 }
                 Some(_) => {}
             }
@@ -262,6 +287,7 @@ mod tests {
             trade_date: date(),
             quantity: 10,
             price: Some(dec!(12.50)),
+            dividend_per_share: None,
             currency: Some("USD".to_owned()),
             fx_rate_to_base: Some(dec!(10.0)),
             brokerage_base: Some(dec!(9.60)),
@@ -360,6 +386,7 @@ mod tests {
             kind: TransactionKind::Split,
             quantity: 8,
             price: None,
+            dividend_per_share: None,
             currency: None,
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -374,6 +401,7 @@ mod tests {
             kind: TransactionKind::Split,
             quantity: 0,
             price: None,
+            dividend_per_share: None,
             currency: None,
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -408,7 +436,8 @@ mod tests {
             kind: TransactionKind::Dividend,
             trade_date: date(),
             quantity: 10,
-            price: Some(dec!(0.50)),
+            price: None,
+            dividend_per_share: Some(dec!(0.50)),
             currency: Some("USD".to_owned()),
             fx_rate_to_base: Some(dec!(10.5)),
             brokerage_base: None,
@@ -421,7 +450,8 @@ mod tests {
         let d = ProposedTransaction {
             kind: TransactionKind::Dividend,
             quantity: 0,
-            price: Some(dec!(0.50)),
+            price: None,
+            dividend_per_share: Some(dec!(0.50)),
             currency: Some("USD".to_owned()),
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -436,12 +466,13 @@ mod tests {
             kind: TransactionKind::Dividend,
             quantity: 10,
             price: None,
+            dividend_per_share: None,
             currency: Some("USD".to_owned()),
             fx_rate_to_base: None,
             brokerage_base: None,
             trade_date: date(),
         };
-        assert_eq!(validate(&d), Err(ValidationError::PriceRequired));
+        assert_eq!(validate(&d), Err(ValidationError::DividendPerShareRequired));
     }
 
     #[test]
@@ -449,7 +480,8 @@ mod tests {
         let d = ProposedTransaction {
             kind: TransactionKind::Dividend,
             quantity: 10,
-            price: Some(dec!(0.50)),
+            price: None,
+            dividend_per_share: Some(dec!(0.50)),
             currency: None,
             fx_rate_to_base: None,
             brokerage_base: None,
@@ -463,7 +495,8 @@ mod tests {
         let d = ProposedTransaction {
             kind: TransactionKind::Dividend,
             quantity: 10,
-            price: Some(dec!(0.50)),
+            price: None,
+            dividend_per_share: Some(dec!(0.50)),
             currency: Some("USD".to_owned()),
             fx_rate_to_base: None,
             brokerage_base: Some(dec!(5.00)),
