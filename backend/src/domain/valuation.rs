@@ -170,9 +170,79 @@ pub struct ValueHistoryInstrument {
 pub struct ValueHistoryPoint {
     pub date: NaiveDate,
     pub value_base: Decimal,
+    pub invested_base: Option<Decimal>,
     pub incomplete: bool,
     pub included_count: usize,
     pub excluded_count: usize,
+}
+
+struct InvestedCashFlow {
+    date: NaiveDate,
+    delta: Decimal,
+}
+
+/// Collect SEK cash-flow deltas from Buy/Sell trades and the earliest date from
+/// which invested capital becomes unavailable because a non-SEK trade lacks FX.
+/// Buys add cash out (price·qty·fx + brokerage); sells subtract cash returned
+/// (price·|qty|·fx − brokerage). Splits and dividends are ignored.
+fn invested_cash_flows(
+    instruments: &[ValueHistoryInstrument],
+) -> Result<(Vec<InvestedCashFlow>, Option<NaiveDate>), LedgerError> {
+    let mut events = Vec::new();
+    let mut unavailable_from: Option<NaiveDate> = None;
+    let mark_unavailable = |date: NaiveDate, slot: &mut Option<NaiveDate>| {
+        *slot = Some(match *slot {
+            Some(current) => current.min(date),
+            None => date,
+        });
+    };
+
+    for inst in instruments {
+        let is_base = inst.native_currency.eq_ignore_ascii_case("SEK");
+        for tx in &inst.ledger {
+            let (price, signed_qty) = match tx.kind {
+                TransactionKind::Buy => (
+                    tx.price.ok_or(LedgerError::BuyMissingPrice {
+                        transaction_id: tx.id,
+                    })?,
+                    Decimal::from(tx.quantity),
+                ),
+                TransactionKind::Sell => (
+                    tx.price.ok_or(LedgerError::SellMissingPrice {
+                        transaction_id: tx.id,
+                    })?,
+                    // Sell quantity is negative; cash returned reduces invested.
+                    Decimal::from(tx.quantity),
+                ),
+                TransactionKind::Split | TransactionKind::Dividend => continue,
+            };
+
+            let fx = if is_base {
+                Some(Decimal::ONE)
+            } else {
+                tx.fx_rate_to_base
+            };
+            let Some(fx) = fx else {
+                mark_unavailable(tx.trade_date, &mut unavailable_from);
+                continue;
+            };
+
+            // Both buys and sells *add* brokerage_base. Buy: +(price·qty·fx) +
+            // brokerage raises net invested. Sell: signed_qty is negative, so
+            // price·signed_qty·fx is already the (negative) cash returned;
+            // adding brokerage reduces that cash returned, i.e. keeps net
+            // invested higher. Matches the authoritative formula above:
+            //   −(price·|qty|·fx − brokerage) = price·signed_qty·fx + brokerage.
+            let delta = price * signed_qty * fx + tx.brokerage_base;
+            events.push(InvestedCashFlow {
+                date: tx.trade_date,
+                delta,
+            });
+        }
+    }
+
+    events.sort_by_key(|event| event.date);
+    Ok((events, unavailable_from))
 }
 
 /// Build the portfolio value series in SEK from a union of price and FX dates.
@@ -200,6 +270,10 @@ pub fn build_value_history(
     let Some(first_buy) = first_buy else {
         return Ok(Vec::new());
     };
+
+    let (cash_flows, invested_unavailable_from) = invested_cash_flows(instruments)?;
+    let mut next_flow = 0usize;
+    let mut invested_total = Decimal::ZERO;
 
     let mut spine: BTreeSet<NaiveDate> = BTreeSet::new();
     for inst in instruments {
@@ -279,9 +353,19 @@ pub fn build_value_history(
             continue;
         }
 
+        while next_flow < cash_flows.len() && cash_flows[next_flow].date <= date {
+            invested_total += cash_flows[next_flow].delta;
+            next_flow += 1;
+        }
+        let invested_base = match invested_unavailable_from {
+            Some(unavailable) if date >= unavailable => None,
+            _ => Some(invested_total),
+        };
+
         points.push(ValueHistoryPoint {
             date,
             value_base,
+            invested_base,
             incomplete: excluded_count > 0,
             included_count,
             excluded_count,
@@ -948,6 +1032,112 @@ mod tests {
             prices,
             fx_rates,
         }
+    }
+
+    fn ledger_buy(id: i64, date: NaiveDate, qty: i64, price: Decimal) -> LedgerTransaction {
+        LedgerTransaction {
+            id,
+            trade_date: date,
+            kind: TransactionKind::Buy,
+            quantity: qty,
+            price: Some(price),
+            dividend_per_share: None,
+            fx_rate_to_base: None,
+            brokerage_base: Decimal::ZERO,
+        }
+    }
+
+    fn ledger_sell(id: i64, date: NaiveDate, qty: i64, price: Decimal) -> LedgerTransaction {
+        LedgerTransaction {
+            id,
+            trade_date: date,
+            kind: TransactionKind::Sell,
+            quantity: -qty,
+            price: Some(price),
+            dividend_per_share: None,
+            fx_rate_to_base: None,
+            brokerage_base: Decimal::ZERO,
+        }
+    }
+
+    fn ledger_buy_fx(
+        id: i64,
+        date: NaiveDate,
+        qty: i64,
+        price: Decimal,
+        fx_rate_to_base: Option<Decimal>,
+    ) -> LedgerTransaction {
+        LedgerTransaction {
+            fx_rate_to_base,
+            ..ledger_buy(id, date, qty, price)
+        }
+    }
+
+    #[test]
+    fn invested_capital_tracks_buy_cost_including_brokerage() {
+        // SEK instrument: buy 10 @ 100 with 9 SEK brokerage on 2026-01-02.
+        let mut buy = ledger_buy(1, d(2026, 1, 2), 10, dec!(100));
+        buy.brokerage_base = dec!(9);
+        let inst = ValueHistoryInstrument {
+            native_currency: "SEK".to_string(),
+            ledger: vec![buy],
+            prices: vec![price(d(2026, 1, 2), dec!(100), "SEK")],
+            fx_rates: vec![],
+        };
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert_eq!(points.len(), 1);
+        // 10*100 + 9 = 1009
+        assert_eq!(points[0].invested_base, Some(dec!(1009)));
+    }
+
+    #[test]
+    fn invested_capital_drops_by_sell_proceeds_net_of_brokerage() {
+        // Buy 10 @ 100 (2026-01-02), sell 4 @ 150 with 5 SEK brokerage (2026-01-05).
+        let buy = ledger_buy(1, d(2026, 1, 2), 10, dec!(100));
+        let mut sell = ledger_sell(2, d(2026, 1, 5), 4, dec!(150));
+        sell.brokerage_base = dec!(5);
+        let inst = ValueHistoryInstrument {
+            native_currency: "SEK".to_string(),
+            ledger: vec![buy, sell],
+            prices: vec![
+                price(d(2026, 1, 2), dec!(100), "SEK"),
+                price(d(2026, 1, 5), dec!(150), "SEK"),
+            ],
+            fx_rates: vec![],
+        };
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        // Day 1: invested = 1000. Day 2: 1000 - (4*150 - 5) = 1000 - 595 = 405.
+        assert_eq!(points[0].invested_base, Some(dec!(1000)));
+        assert_eq!(points[1].invested_base, Some(dec!(405)));
+    }
+
+    #[test]
+    fn invested_capital_uses_trade_time_fx_for_non_sek() {
+        // USD instrument: buy 10 @ 100 USD at fx 10 on 2026-01-02.
+        let buy = ledger_buy_fx(1, d(2026, 1, 2), 10, dec!(100), Some(dec!(10)));
+        let inst = ValueHistoryInstrument {
+            native_currency: "USD".to_string(),
+            ledger: vec![buy],
+            prices: vec![price(d(2026, 1, 2), dec!(100), "USD")],
+            fx_rates: vec![fx(d(2026, 1, 2), dec!(10), "USD", "SEK")],
+        };
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        // 10*100*10 = 10000, no brokerage.
+        assert_eq!(points[0].invested_base, Some(dec!(10000)));
+    }
+
+    #[test]
+    fn invested_capital_unavailable_when_non_sek_trade_lacks_fx() {
+        // USD buy missing fx_rate_to_base => invested unavailable from that date.
+        let buy = ledger_buy_fx(1, d(2026, 1, 2), 10, dec!(100), None);
+        let inst = ValueHistoryInstrument {
+            native_currency: "USD".to_string(),
+            ledger: vec![buy],
+            prices: vec![price(d(2026, 1, 2), dec!(100), "USD")],
+            fx_rates: vec![fx(d(2026, 1, 2), dec!(10), "USD", "SEK")],
+        };
+        let points = build_value_history(&[inst], None, None).expect("derivable ledger");
+        assert_eq!(points[0].invested_base, None);
     }
 
     #[test]
