@@ -14,6 +14,7 @@ function mockResponse(status: number, body: unknown = undefined): Response {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("apiGet", () => {
