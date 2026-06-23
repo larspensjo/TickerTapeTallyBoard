@@ -42,6 +42,7 @@ function makeTransaction(
     trade_date: "2024-01-01",
     quantity,
     price: null,
+    dividend_per_share: null,
     currency: null,
     fx_rate_to_base: null,
     brokerage: null,

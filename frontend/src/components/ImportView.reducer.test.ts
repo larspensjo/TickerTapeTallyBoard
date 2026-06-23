@@ -42,6 +42,8 @@ function makePreview(
     warnings: [],
     errors: [],
     duplicate_of_batch_id: null,
+    replace_candidate_batch_id: null,
+    replace_candidate_warning: null,
   };
 }
 

@@ -41,6 +41,21 @@ function Invoke-Step {
     & $Command
 }
 
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    & $FilePath @ArgumentList
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $commandLine = (@($FilePath) + $ArgumentList) -join " "
+        throw "Command '$commandLine' failed with exit code $exitCode."
+    }
+}
+
 function Receive-AppJobOutput {
     param(
         [Parameter(Mandatory = $true)]
@@ -246,7 +261,7 @@ if (-not $SkipInstall) {
     Invoke-Step "Install frontend dependencies" {
         Push-Location $FrontendDir
         try {
-            npm install
+            Invoke-NativeCommand "npm" @("install")
         }
         finally {
             Pop-Location
@@ -258,7 +273,7 @@ if (-not $SkipBuild) {
     Invoke-Step "Build backend" {
         Push-Location $BackendDir
         try {
-            cargo build
+            Invoke-NativeCommand "cargo" @("build")
         }
         finally {
             Pop-Location
@@ -268,7 +283,7 @@ if (-not $SkipBuild) {
     Invoke-Step "Build frontend" {
         Push-Location $FrontendDir
         try {
-            npm run build
+            Invoke-NativeCommand "npm" @("run", "build")
         }
         finally {
             Pop-Location
