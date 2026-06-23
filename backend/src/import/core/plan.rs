@@ -106,15 +106,10 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
                 );
             }
             RowOutcome::Skip { asset_key, note } => {
-                if note.code != "dividend_deferred" {
-                    skipped += 1;
-                }
+                skipped += 1;
                 warnings.push(note.clone());
                 if let Some(key) = asset_key {
                     let group = asset_group_mut(&mut assets, &mut asset_order, key, None, None);
-                    if note.code == "dividend_deferred" {
-                        group.dividends += 1;
-                    }
                     group.warnings.push(note.clone());
                 }
             }

@@ -149,6 +149,12 @@ pub async fn write_batch(
         affected.insert(instrument_id);
 
         let signed = domain::validate(&row.proposed).map_err(ApiError::from)?;
+        // For dividends, store eligible share count rather than the zero position effect.
+        let quantity_to_store = if row.proposed.kind == domain::TransactionKind::Dividend {
+            row.proposed.quantity
+        } else {
+            signed
+        };
         let brokerage_currency = row.proposed.brokerage_base.map(|_| "SEK".to_string());
         transactions::insert_in_tx(
             &mut tx,
@@ -156,7 +162,7 @@ pub async fn write_batch(
                 instrument_id,
                 kind: row.proposed.kind,
                 trade_date: row.proposed.trade_date,
-                quantity: signed,
+                quantity: quantity_to_store,
                 price: row.proposed.price,
                 currency: row.proposed.currency.clone(),
                 fx_rate_to_base: row.proposed.fx_rate_to_base,

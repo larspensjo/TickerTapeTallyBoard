@@ -378,8 +378,7 @@ fn effective_counts(plan: &ImportPlan, mapped: &[MappedRow]) -> PreviewCounts {
     counts.buys = kind_count(mapped, domain::TransactionKind::Buy);
     counts.sells = kind_count(mapped, domain::TransactionKind::Sell);
     counts.splits = kind_count(mapped, domain::TransactionKind::Split);
-    // Dividends are deferred and never appear in mapped rows, so use the retained asset groups.
-    counts.dividends = plan.assets.iter().map(|asset| asset.dividends).sum();
+    counts.dividends = kind_count(mapped, domain::TransactionKind::Dividend);
     counts
 }
 
@@ -429,9 +428,44 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
 mod tests {
     use super::{effective_counts, AssetGroup, ImportPlan};
     use crate::import::core::plan::PlanCounts;
+    use crate::import::core::outcome::MappedRow;
+    use crate::domain::{ProposedTransaction, TransactionKind};
+    use chrono::NaiveDate;
+    use rust_decimal_macros::dec;
+    use crate::import::core::outcome::InstrumentKey;
+
+    fn dummy_instrument() -> InstrumentKey {
+        InstrumentKey {
+            exchange: "AVANZA".to_string(),
+            symbol: "TEST".to_string(),
+            name: "Test".to_string(),
+            currency: "SEK".to_string(),
+            isin: Some("SE0000000001".to_string()),
+        }
+    }
+
+    fn dividend_row() -> MappedRow {
+        MappedRow {
+            source_row_number: 1,
+            instrument: dummy_instrument(),
+            proposed: ProposedTransaction {
+                kind: TransactionKind::Dividend,
+                trade_date: NaiveDate::from_ymd_opt(2026, 5, 20).unwrap(),
+                quantity: 5,
+                price: Some(dec!(7.5)),
+                currency: Some("SEK".to_string()),
+                fx_rate_to_base: Some(dec!(1)),
+                brokerage_base: None,
+            },
+            source_value: Some(dec!(37.5)),
+            source_currency: Some("SEK".to_string()),
+            note: None,
+            fx_warning: false,
+        }
+    }
 
     #[test]
-    fn effective_counts_dividends_come_from_retained_assets() {
+    fn effective_counts_dividends_come_from_mapped_rows() {
         let plan = ImportPlan {
             counts: PlanCounts {
                 rows: 2,
@@ -457,9 +491,15 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let counts = effective_counts(&plan, &[]);
+        // No dividend in mapped rows → count is 0
+        let counts_no_dividend = effective_counts(&plan, &[]);
+        assert_eq!(counts_no_dividend.rows, 0);
+        assert_eq!(counts_no_dividend.dividends, 0);
 
-        assert_eq!(counts.rows, 0);
-        assert_eq!(counts.dividends, 1);
+        // Dividend in mapped rows → count is 1
+        let mapped = vec![dividend_row()];
+        let counts_with_dividend = effective_counts(&plan, &mapped);
+        assert_eq!(counts_with_dividend.rows, 1);
+        assert_eq!(counts_with_dividend.dividends, 1);
     }
 }
