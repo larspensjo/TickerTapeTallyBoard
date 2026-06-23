@@ -30,6 +30,7 @@ pub struct ValueHistoryResponse {
 pub struct ValueHistoryPointResponse {
     date: String,
     value_base: String,
+    invested_base: Option<String>,
     incomplete: bool,
     included_count: usize,
     excluded_count: usize,
@@ -44,6 +45,7 @@ fn point_response(point: &ValueHistoryPoint) -> ValueHistoryPointResponse {
     ValueHistoryPointResponse {
         date: point.date.format("%Y-%m-%d").to_string(),
         value_base: money_string(point.value_base),
+        invested_base: point.invested_base.map(money_string),
         incomplete: point.incomplete,
         included_count: point.included_count,
         excluded_count: point.excluded_count,
@@ -369,6 +371,8 @@ mod tests {
         assert_eq!(points[0]["incomplete"], false);
         assert_eq!(points[0]["included_count"], 1);
         assert_eq!(points[1]["value_base"], "1100.00");
+        assert_eq!(points[0]["invested_base"], "1000.00");
+        assert_eq!(points[1]["invested_base"], "1000.00");
     }
 
     #[tokio::test]
