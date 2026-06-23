@@ -16,7 +16,7 @@ import type {
 } from "../api/types";
 import { formatGroupedNumber } from "./valuationDisplay";
 
-type Phase =
+export type Phase =
   | "idle"
   | "previewing"
   | "previewReady"
@@ -24,7 +24,7 @@ type Phase =
   | "committed"
   | "error";
 
-interface State {
+export interface State {
   phase: Phase;
   source: ImportSource;
   fileName: string | null;
@@ -35,7 +35,7 @@ interface State {
   selected: Record<string, boolean>;
 }
 
-type Action =
+export type Action =
   | { type: "sourceSelected"; source: ImportSource }
   | { type: "fileSelected"; fileName: string }
   | { type: "previewReady"; preview: ImportPreview; fileName: string }
@@ -47,7 +47,7 @@ type Action =
   | { type: "failed"; message: string }
   | { type: "reset" };
 
-const INITIAL_STATE: State = {
+export const INITIAL_STATE: State = {
   phase: "idle",
   source: "avanza",
   fileName: null,
@@ -58,7 +58,9 @@ const INITIAL_STATE: State = {
   selected: {},
 };
 
-function selectedFromPreview(preview: ImportPreview): Record<string, boolean> {
+export function selectedFromPreview(
+  preview: ImportPreview,
+): Record<string, boolean> {
   return preview.assets.reduce<Record<string, boolean>>(
     (accumulator, asset) => {
       accumulator[asset.asset_key] = asset.default_selected;
@@ -68,7 +70,7 @@ function selectedFromPreview(preview: ImportPreview): Record<string, boolean> {
   );
 }
 
-function reducer(state: State, action: Action): State {
+export function importReducer(state: State, action: Action): State {
   switch (action.type) {
     case "sourceSelected":
       return {
@@ -211,7 +213,7 @@ function hasBlockingErrors(
 
 export function ImportView() {
   const navigate = useNavigate();
-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
+  const [state, dispatch] = useReducer(importReducer, INITIAL_STATE);
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
   const previewImport = usePreviewImport();
   const commitImport = useCommitImport();
