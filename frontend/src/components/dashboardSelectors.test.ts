@@ -35,6 +35,8 @@ function row(
     proceeds_base: money,
     unrealized_gain_base: money,
     unrealized_gain_percent: money,
+    realized_gain_base: money,
+    realized_cost_basis_base: money,
     price_effect_base: money,
     fx_effect_base: money,
     day_change_base: money,

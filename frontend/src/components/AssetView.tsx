@@ -16,14 +16,13 @@ import type {
 } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
 import {
-  type BreakdownView,
-  breakdownView,
   deriveAssetData,
   headerStatus,
   parseInstrumentId,
   type Tiles,
   tilesView,
 } from "./assetViewModel";
+import { GainsWaterfall } from "./GainsWaterfall";
 import {
   instrumentPriceSeries,
   tradeMarkers,
@@ -36,6 +35,7 @@ import {
   freshnessTone,
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
+import { waterfallView } from "./waterfallViewModel";
 
 export function AssetView() {
   const { id: idParam } = useParams();
@@ -126,7 +126,7 @@ export function AssetView() {
             transactions={data.transactions}
           />
           <div className="asset-two-col">
-            <AssetGainsBreakdown breakdown={breakdownView(data.gain)} />
+            <GainsWaterfall view={waterfallView(data.gain)} />
             <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
           </div>
         </>
@@ -402,45 +402,6 @@ function firstTransactionDate(transactions: Transaction[]): string | undefined {
 
     return firstDate;
   }, undefined);
-}
-
-function AssetGainsBreakdown({ breakdown }: { breakdown: BreakdownView }) {
-  return (
-    <section className="panel asset-panel" aria-label="Gains breakdown">
-      <h2>Gains breakdown</h2>
-      <dl className="breakdown-list">
-        <BreakdownRow
-          label="Capital (price effect)"
-          value={breakdown.priceEffect}
-        />
-        <BreakdownRow label="Currency (FX effect)" value={breakdown.fxEffect} />
-        <BreakdownRow
-          label={breakdown.totalLabel}
-          value={breakdown.total}
-          ruled
-        />
-      </dl>
-    </section>
-  );
-}
-
-function BreakdownRow({
-  label,
-  value,
-  ruled = false,
-}: {
-  label: string;
-  value: BreakdownView["total"];
-  ruled?: boolean;
-}) {
-  return (
-    <div className={ruled ? "breakdown-row ruled" : "breakdown-row"}>
-      <dt>{label}</dt>
-      <dd>
-        <SummaryAvailabilityValue value={value} prefix="SEK " tone="signed" />
-      </dd>
-    </div>
-  );
 }
 
 function AssetDataMapping({

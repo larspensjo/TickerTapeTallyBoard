@@ -49,6 +49,14 @@ this is an *in-product* dashboard):
 | `--hairline` | `#20242b` | 1px borders on panels and raised elements. |
 | `--hairline-soft` | `#181c22` | Table row dividers, chart grid lines. |
 
+### Gains waterfall neutral bars
+| Token | Hex | Role |
+|---|---|---|
+| `--wf-bar-base` | `#2b3138` | Cost-basis bar fill (darkest neutral). |
+| `--wf-bar-subtotal` | `#39414b` | Subtotal bar fill (mid neutral). |
+| `--wf-bar-total` | `#4a525d` | Total bar fill (lightest neutral). |
+| `--wf-hatch-stripe` | `#353b44` | Hatch-stripe fill for unavailable/placeholder bars. |
+
 ### Text
 | Token | Hex | Role |
 |---|---|---|
@@ -202,6 +210,12 @@ Paste-ready. This block is the implementation contract.
   --surface-2: #14181d;
   --hairline: #20242b;
   --hairline-soft: #181c22;
+
+  /* gains waterfall neutral bars (base < subtotal < total, progressively lighter) */
+  --wf-bar-base: #2b3138;
+  --wf-bar-subtotal: #39414b;
+  --wf-bar-total: #4a525d;
+  --wf-hatch-stripe: #353b44;
 
   /* text */
   --text-primary: #f5f6f7;

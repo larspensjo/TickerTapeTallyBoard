@@ -121,6 +121,8 @@ pub struct GainRow {
     pub proceeds_base: AvailabilityResponse,
     pub unrealized_gain_base: AvailabilityResponse,
     pub unrealized_gain_percent: AvailabilityResponse,
+    pub realized_gain_base: AvailabilityResponse,
+    pub realized_cost_basis_base: AvailabilityResponse,
     pub day_change_base: AvailabilityResponse,
     pub day_change_percent: AvailabilityResponse,
     pub reasons: Vec<String>,
@@ -272,6 +274,7 @@ pub async fn list(
         gain_rows.push(open_gain_row(
             instrument,
             &valued_holding,
+            &performance.realized,
             performance_start_date,
         )?);
     }
@@ -613,6 +616,7 @@ impl PerformanceAccumulator {
 fn open_gain_row(
     instrument: &instruments::InstrumentRow,
     valued_holding: &ValuedHolding,
+    realized: &RealizedGain,
     performance_start_date: Option<NaiveDate>,
 ) -> Result<GainRow, ApiError> {
     Ok(GainRow {
@@ -686,6 +690,8 @@ fn open_gain_row(
             &valued_holding.unrealized_gain_percent,
             |v| format!("{:.2}", v),
         ),
+        realized_gain_base: serialize_base_amount(&realized.gain_base),
+        realized_cost_basis_base: serialize_base_amount(&realized.cost_basis_base),
         day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
             money_string(*v)
         }),
@@ -767,6 +773,8 @@ fn closed_gain_row(
         proceeds_base: serialize_base_amount(&realized.proceeds_base),
         unrealized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
         unrealized_gain_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
+        realized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
+        realized_cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),
         day_change_base: AvailabilityResponse::Unavailable {
             reasons: Vec::new(),
         },
@@ -1785,5 +1793,61 @@ mod tests {
             .find(|r| r["instrument"]["symbol"] == "TSLA")
             .unwrap();
         assert_eq!(row["quantity"], 100);
+    }
+
+    #[tokio::test]
+    async fn gains_open_row_exposes_realized_gain_base() {
+        let state = AppState::for_tests().await;
+        let sold_id = instrument(&state, "SELLER", "STO", BASE_CURRENCY).await;
+        let never_id = instrument(&state, "HOLDER", "STO", BASE_CURRENCY).await;
+
+        // SELLER: buy 10 @100, sell 4 @150 (SEK, no fees) -> realized (150-100)*4 = 200, 6 open.
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":sold_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":10,"price":"100","currency":BASE_CURRENCY,"fx_rate_to_base":"1"}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":sold_id,"type":"Sell","trade_date":"2026-06-05",
+                   "quantity":4,"price":"150","currency":BASE_CURRENCY,"fx_rate_to_base":"1"}),
+        )
+        .await;
+        // HOLDER: buy only, never sold -> realized 0.
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":never_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":5,"price":"100","currency":BASE_CURRENCY,"fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let rows = body["rows"].as_array().expect("rows");
+        let sold = rows
+            .iter()
+            .find(|r| r["instrument"]["symbol"] == "SELLER")
+            .expect("seller row");
+        let never = rows
+            .iter()
+            .find(|r| r["instrument"]["symbol"] == "HOLDER")
+            .expect("holder row");
+
+        assert_eq!(sold["position_status"], "open");
+        assert_eq!(sold["quantity"], 6);
+        assert_available(&sold["realized_gain_base"], "200.00");
+        // Sold 4 @ cost 100 -> sold cost basis 400.00.
+        assert_available(&sold["realized_cost_basis_base"], "400.00");
+        assert_eq!(never["position_status"], "open");
+        assert_available(&never["realized_gain_base"], "0.00");
+        assert_available(&never["realized_cost_basis_base"], "0.00");
     }
 }

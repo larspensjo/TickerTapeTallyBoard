@@ -49,13 +49,6 @@ export interface ClosedTiles {
 
 export type Tiles = OpenTiles | ClosedTiles;
 
-export interface BreakdownView {
-  priceEffect: MoneyValue;
-  fxEffect: MoneyValue;
-  totalLabel: string;
-  total: MoneyValue;
-}
-
 export interface HeaderStatus {
   label: string;
   tone: "neutral" | "warning";
@@ -180,16 +173,6 @@ export function tilesView(
     quantity: gain.quantity,
     averageCost: averageCostBase(holding),
     costBasis: gain.cost_basis_base,
-  };
-}
-
-export function breakdownView(gain: GainsRow): BreakdownView {
-  return {
-    priceEffect: gain.price_effect_base,
-    fxEffect: gain.fx_effect_base,
-    totalLabel:
-      gain.position_status === "closed" ? "Realized total" : "Unrealized total",
-    total: gain.unrealized_gain_base,
   };
 }
 

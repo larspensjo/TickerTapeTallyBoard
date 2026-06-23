@@ -4,6 +4,11 @@
   --surface-2: #14181d;
   --hairline: #20242b;
   --hairline-soft: #181c22;
+  /* Gains waterfall neutral bars (base < subtotal < total, progressively lighter) */
+  --wf-bar-base: #2b3138;
+  --wf-bar-subtotal: #39414b;
+  --wf-bar-total: #4a525d;
+  --wf-hatch-stripe: #353b44;
   --text-primary: #f5f6f7;
   --text-secondary: #a8acb3;
   --text-muted: #6b7280;
@@ -1552,4 +1557,142 @@ th.number-head .sort-button {
   flex-direction: column;
   gap: var(--space-3);
   align-items: center;
+}
+
+/* Gains breakdown waterfall (asset view) */
+.gains-waterfall {
+  container-type: inline-size;
+}
+.gains-waterfall .wf-head {
+  display: grid;
+  grid-template-columns: 110px 1fr 96px 64px;
+  column-gap: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+.gains-waterfall .wf-head .wf-col-amount,
+.gains-waterfall .wf-head .wf-col-pct {
+  grid-column: auto;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.gains-waterfall .wf-head .wf-col-amount {
+  grid-column: 3;
+}
+.gains-waterfall .wf-head .wf-col-pct {
+  grid-column: 4;
+}
+.gains-waterfall .wf-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.gains-waterfall .wf-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 96px 64px;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 30px;
+}
+.gains-waterfall .wf-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.gains-waterfall .wf-row.kind-subtotal .wf-label,
+.gains-waterfall .wf-row.kind-total .wf-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.gains-waterfall .wf-row.kind-subtotal,
+.gains-waterfall .wf-row.kind-total {
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--space-2);
+}
+.gains-waterfall .wf-row.is-muted {
+  opacity: 0.7;
+}
+.gains-waterfall .wf-track {
+  position: relative;
+  height: 22px;
+}
+.gains-waterfall .wf-bar {
+  position: absolute;
+  top: 3px;
+  height: 16px;
+  border-radius: 3px;
+}
+.gains-waterfall .wf-bar.base {
+  background: var(--wf-bar-base);
+}
+.gains-waterfall .wf-bar.subtotal {
+  background: var(--wf-bar-subtotal);
+}
+.gains-waterfall .wf-bar.total {
+  background: var(--wf-bar-total);
+}
+.gains-waterfall .wf-bar.up {
+  background: var(--up);
+}
+.gains-waterfall .wf-bar.down {
+  background: var(--down);
+}
+.gains-waterfall .wf-bar.flat {
+  background: var(--wf-bar-base);
+  opacity: 0.5;
+}
+.gains-waterfall .wf-bar.unavailable {
+  left: 0;
+  width: 24px;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--wf-hatch-stripe),
+    var(--wf-hatch-stripe) 4px,
+    var(--surface-1) 4px,
+    var(--surface-1) 8px
+  );
+  border: 1px dashed var(--text-muted);
+}
+.gains-waterfall .wf-value {
+  text-align: right;
+}
+.gains-waterfall .wf-placeholder {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.gains-waterfall .wf-pct {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 13px;
+}
+.gains-waterfall .wf-pct.up {
+  color: var(--up);
+}
+.gains-waterfall .wf-pct.down {
+  color: var(--down);
+}
+.gains-waterfall .wf-pct.flat,
+.gains-waterfall .wf-pct.muted {
+  color: var(--text-muted);
+}
+
+/* The 4-column grid reserves ~306px before the track gets any width; use a container
+   query so the narrow columns activate when the panel itself is narrow, not just the
+   viewport — a two-column asset layout produces ~280px panels on wide viewports too. */
+@container (max-width: 420px) {
+  .gains-waterfall .wf-head,
+  .gains-waterfall .wf-row {
+    grid-template-columns: 84px 1fr 72px 52px;
+    column-gap: var(--space-2);
+  }
+  .gains-waterfall .wf-label {
+    font-size: 12px;
+  }
+  .gains-waterfall .wf-pct {
+    font-size: 12px;
+  }
 }

@@ -1,0 +1,63 @@
+// @vitest-environment jsdom
+
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { GainsWaterfall } from "./GainsWaterfall";
+import type { WaterfallView } from "./waterfallViewModel";
+
+const view: WaterfallView = {
+  mode: "open",
+  currency: "SEK",
+  minValue: 0,
+  maxValue: 335000,
+  rows: [
+    {
+      key: "cost-basis",
+      label: "Cost basis (held)",
+      kind: "base",
+      value: { status: "available", value: "265582.94" },
+      direction: null,
+      percent: null,
+      span: { from: 0, to: 265582.94 },
+    },
+    {
+      key: "price",
+      label: "Price effect",
+      kind: "effect",
+      value: { status: "available", value: "53546.54" },
+      direction: "up",
+      percent: { status: "available", value: "20.16" },
+      span: { from: 265582.94, to: 319129.48 },
+    },
+    {
+      key: "dividends",
+      label: "Dividends",
+      kind: "placeholder",
+      value: { status: "unavailable", reasons: ["income_not_tracked"] },
+      direction: null,
+      percent: null,
+      span: null,
+    },
+    {
+      key: "total-return",
+      label: "Total return",
+      kind: "total",
+      value: { status: "available", value: "62964.73" },
+      direction: "up",
+      percent: { status: "available", value: "23.71" },
+      span: { from: 265582.94, to: 328547.67 },
+    },
+  ],
+};
+
+describe("GainsWaterfall", () => {
+  it("renders each row label, the currency header, and the dividends placeholder", () => {
+    render(<GainsWaterfall view={view} />);
+    expect(screen.getByText("Cost basis (held)")).toBeInTheDocument();
+    expect(screen.getByText("Total return")).toBeInTheDocument();
+    expect(screen.getByText("SEK")).toBeInTheDocument();
+    expect(screen.getByText("% of cost")).toBeInTheDocument();
+    // Dividends placeholder is a calm "not tracked" note, not a warning chip.
+    expect(screen.getByText("Not tracked yet")).toBeInTheDocument();
+  });
+});
