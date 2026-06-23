@@ -91,6 +91,7 @@ pub struct PeriodAmounts {
     pub end_market_value_base: Availability<Decimal>,
     pub capital_gain_base: Availability<Decimal>,
     pub currency_gain_base: Availability<Decimal>,
+    pub income_base: Availability<Decimal>,
     pub total_return_base: Availability<Decimal>,
 }
 
@@ -107,6 +108,9 @@ impl PeriodAmounts {
                 reasons: reasons.clone(),
             },
             currency_gain_base: Availability::Unavailable {
+                reasons: reasons.clone(),
+            },
+            income_base: Availability::Unavailable {
                 reasons: reasons.clone(),
             },
             total_return_base: Availability::Unavailable { reasons },
@@ -181,6 +185,7 @@ pub fn compute_period_amounts(
     // Accumulate flows and capital-flow-at-constant-end-fx in one pass.
     let mut net_flows = Decimal::ZERO;
     let mut capital_flows_at_end_fx = Decimal::ZERO;
+    let mut income_total = Decimal::ZERO;
 
     for tx in &period.period_transactions {
         match tx.kind {
@@ -242,20 +247,54 @@ pub fn compute_period_amounts(
                 net_flows -= qty * p * f - tx.brokerage_base;
                 capital_flows_at_end_fx -= qty * p * end_fx - tx.brokerage_base;
             }
-            TransactionKind::Split | TransactionKind::Dividend => {}
+            TransactionKind::Dividend => {
+                let p = match tx.price {
+                    Some(p) => p,
+                    None => {
+                        return PeriodAmounts::unavailable(vec![
+                            ValuationReason::MissingTransactionPrice {
+                                transaction_id: tx.id,
+                            },
+                        ]);
+                    }
+                };
+                let f = if is_sek_instrument {
+                    Decimal::ONE
+                } else {
+                    match tx.fx_rate_to_base {
+                        Some(f) => f,
+                        None => {
+                            return PeriodAmounts::unavailable(vec![
+                                ValuationReason::MissingTransactionFx {
+                                    transaction_id: tx.id,
+                                },
+                            ]);
+                        }
+                    }
+                };
+                let income = Decimal::from(tx.quantity) * p * f;
+                income_total += income;
+                // Dividend reduces net_flows (investor received cash), increasing total_return.
+                // capital_flows_at_end_fx is deliberately excluded so capital_gain stays
+                // a pure price-movement metric at constant FX.
+                net_flows -= income;
+            }
+            TransactionKind::Split => {}
         }
     }
 
     let total_return = end_mv - begin_mv - net_flows;
     let capital_gain =
         (adj_end_qty * end_price - adj_start_qty * start_price) * end_fx - capital_flows_at_end_fx;
-    let currency_gain = total_return - capital_gain;
+    let income = income_total;
+    let currency_gain = total_return - capital_gain - income;
 
     PeriodAmounts {
         begin_market_value_base: Availability::Available(begin_mv),
         end_market_value_base: Availability::Available(end_mv),
         capital_gain_base: Availability::Available(capital_gain),
         currency_gain_base: Availability::Available(currency_gain),
+        income_base: Availability::Available(income),
         total_return_base: Availability::Available(total_return),
     }
 }
@@ -347,7 +386,39 @@ pub fn period_cash_flows(
                     amount_base: -proceeds,
                 });
             }
-            TransactionKind::Split | TransactionKind::Dividend => {}
+            TransactionKind::Dividend => {
+                let p = match tx.price {
+                    Some(p) => p,
+                    None => {
+                        return Availability::Unavailable {
+                            reasons: vec![ValuationReason::MissingTransactionPrice {
+                                transaction_id: tx.id,
+                            }],
+                        }
+                    }
+                };
+                let f = if is_sek_instrument {
+                    Decimal::ONE
+                } else {
+                    match tx.fx_rate_to_base {
+                        Some(f) => f,
+                        None => {
+                            return Availability::Unavailable {
+                                reasons: vec![ValuationReason::MissingTransactionFx {
+                                    transaction_id: tx.id,
+                                }],
+                            }
+                        }
+                    }
+                };
+                let income = Decimal::from(tx.quantity) * p * f;
+                // Dividend is cash the investor receives: negative flow (out of the investment).
+                flows.push(CashFlow {
+                    date: tx.trade_date,
+                    amount_base: -income,
+                });
+            }
+            TransactionKind::Split => {}
         }
     }
     Availability::Available(flows)
@@ -428,7 +499,39 @@ pub fn actual_period_cash_flows(
                     amount_base: -proceeds,
                 });
             }
-            TransactionKind::Split | TransactionKind::Dividend => {}
+            TransactionKind::Dividend => {
+                let p = match tx.price {
+                    Some(p) => p,
+                    None => {
+                        return Availability::Unavailable {
+                            reasons: vec![ValuationReason::MissingTransactionPrice {
+                                transaction_id: tx.id,
+                            }],
+                        }
+                    }
+                };
+                let f = if is_sek_instrument {
+                    Decimal::ONE
+                } else {
+                    match tx.fx_rate_to_base {
+                        Some(f) => f,
+                        None => {
+                            return Availability::Unavailable {
+                                reasons: vec![ValuationReason::MissingTransactionFx {
+                                    transaction_id: tx.id,
+                                }],
+                            }
+                        }
+                    }
+                };
+                let income = Decimal::from(tx.quantity) * p * f;
+                // Dividend is cash the investor receives: negative flow (out of the investment).
+                flows.push(CashFlow {
+                    date: tx.trade_date,
+                    amount_base: -income,
+                });
+            }
+            TransactionKind::Split => {}
         }
     }
     Availability::Available(flows)
@@ -1391,5 +1494,102 @@ mod tests {
             matches!(r, Availability::Unavailable { .. }),
             "degenerate all-zero NPV must be unavailable"
         );
+    }
+
+    fn dividend_tx(
+        id: i64,
+        d: &str,
+        qty: i64,
+        price: Decimal,
+        fx: Option<Decimal>,
+    ) -> LedgerTransaction {
+        LedgerTransaction {
+            id,
+            trade_date: date(d),
+            kind: TransactionKind::Dividend,
+            quantity: qty,
+            price: Some(price),
+            fx_rate_to_base: fx,
+            brokerage_base: Decimal::ZERO,
+        }
+    }
+
+    #[test]
+    fn period_amounts_dividend_adds_to_total_return_and_income() {
+        // 100 shares held from before start; price flat at 10 USD / FX 10;
+        // dividend $0.25/share on Jun 15 at FX 10.
+        let txs = vec![
+            buy_with_fx(1, "2026-01-01", 100, dec!(10), dec!(10), Decimal::ZERO),
+            dividend_tx(2, "2026-06-15", 100, dec!(0.25), Some(dec!(10))),
+        ];
+        let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
+        // price flat, FX flat -> capital_gain = 0, currency_gain = 0
+        // income = 100 * 0.25 * 10 = 250; total_return = 250
+        let a = compute_period_amounts(
+            &p,
+            Some(dec!(10)),
+            Some(dec!(10)),
+            Some(dec!(10)),
+            Some(dec!(10)),
+            false,
+        );
+        assert_eq!(avail(&a.income_base), dec!(250));
+        assert_eq!(avail(&a.total_return_base), dec!(250));
+        assert_eq!(avail(&a.capital_gain_base), dec!(0));
+        assert_eq!(avail(&a.currency_gain_base), dec!(0));
+    }
+
+    #[test]
+    fn period_amounts_dividend_components_sum_to_total_return() {
+        // 100 shares; price 10->12 USD; FX 10->11; dividend $0.25/share at FX 10
+        let txs = vec![
+            buy_with_fx(1, "2026-01-01", 100, dec!(10), dec!(10), Decimal::ZERO),
+            dividend_tx(2, "2026-06-15", 100, dec!(0.25), Some(dec!(10))),
+        ];
+        let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
+        let a = compute_period_amounts(
+            &p,
+            Some(dec!(10)),
+            Some(dec!(12)),
+            Some(dec!(10)),
+            Some(dec!(11)),
+            false,
+        );
+        // capital: (12-10)*100*11 = 2200; currency: 10*100*(11-10)=1000; income: 100*0.25*10=250
+        // total = 2200+1000+250 = 3450
+        let capital = avail(&a.capital_gain_base);
+        let currency = avail(&a.currency_gain_base);
+        let income = avail(&a.income_base);
+        let total = avail(&a.total_return_base);
+        assert_eq!(capital, dec!(2200));
+        assert_eq!(currency, dec!(1000));
+        assert_eq!(income, dec!(250));
+        assert_eq!(capital + currency + income, total);
+    }
+
+    #[test]
+    fn period_cash_flows_include_dividend_as_negative_flow() {
+        // Dividend = cash out of investment -> negative amount_base
+        let txs = vec![
+            buy_with_fx(1, "2026-06-05", 100, dec!(10), dec!(10), Decimal::ZERO),
+            dividend_tx(2, "2026-06-15", 100, dec!(0.25), Some(dec!(10))),
+        ];
+        let p = reconstruct_period(&txs, date("2026-06-01"), date("2026-06-30")).unwrap();
+        let flows = match period_cash_flows(&p, false) {
+            Availability::Available(v) => v,
+            _ => panic!("expected available"),
+        };
+        // buy: +10_000 (post-period split factor = 1); dividend: -250
+        assert_eq!(flows.len(), 2);
+        let buy_flow = flows
+            .iter()
+            .find(|f| f.amount_base > Decimal::ZERO)
+            .expect("buy flow");
+        let div_flow = flows
+            .iter()
+            .find(|f| f.amount_base < Decimal::ZERO)
+            .expect("dividend flow");
+        assert_eq!(buy_flow.amount_base, dec!(10000));
+        assert_eq!(div_flow.amount_base, dec!(-250));
     }
 }

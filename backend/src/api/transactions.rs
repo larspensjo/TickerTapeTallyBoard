@@ -275,11 +275,18 @@ fn new_transaction(
     currency: Option<String>,
     note: Option<String>,
 ) -> NewTransaction {
+    // Dividends store the shares-eligible count (proposed.quantity), not the position
+    // effect (signed_quantity == 0), so that income calculations can use the stored qty.
+    let db_quantity = if proposed.kind == TransactionKind::Dividend {
+        proposed.quantity
+    } else {
+        signed_quantity
+    };
     NewTransaction {
         instrument_id,
         kind: proposed.kind,
         trade_date: proposed.trade_date,
-        quantity: signed_quantity,
+        quantity: db_quantity,
         price: proposed.price,
         currency,
         fx_rate_to_base: proposed.fx_rate_to_base,
@@ -296,7 +303,10 @@ fn assert_currency_matches(
     proposed: &ProposedTransaction,
     instrument: &InstrumentRow,
 ) -> Result<(), ApiError> {
-    if !matches!(proposed.kind, TransactionKind::Buy | TransactionKind::Sell) {
+    if !matches!(
+        proposed.kind,
+        TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Dividend
+    ) {
         return Ok(());
     }
     if let Some(currency) = proposed.currency.as_deref() {
@@ -318,7 +328,10 @@ fn transaction_currency(
     proposed: &ProposedTransaction,
     instrument: &InstrumentRow,
 ) -> Option<String> {
-    if matches!(proposed.kind, TransactionKind::Buy | TransactionKind::Sell) {
+    if matches!(
+        proposed.kind,
+        TransactionKind::Buy | TransactionKind::Sell | TransactionKind::Dividend
+    ) {
         Some(instrument.currency.clone())
     } else {
         proposed.currency.clone()
@@ -552,18 +565,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dividend_is_rejected() {
+    async fn dividend_round_trips_through_list() {
+        let state = AppState::for_tests().await;
+        let instrument_id = create_instrument(&state).await;
+        // First add some shares so the dividend makes sense (not required by API but realistic)
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+                   "quantity":100,"price":"12.50","currency":"USD","fx_rate_to_base":"10.5"}),
+        )
+        .await;
+
+        let (status, created) = send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
+                   "quantity":100,"price":"0.25","currency":"USD","fx_rate_to_base":"10.5"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(created["type"], "Dividend");
+        assert_eq!(created["quantity"], 100);
+        assert_eq!(created["price"], "0.25");
+        assert_eq!(created["currency"], "USD");
+
+        let (status, list) = send(&state, "GET", "/api/transactions", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list.as_array().expect("array").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn dividend_with_brokerage_is_rejected() {
         let state = AppState::for_tests().await;
         let instrument_id = create_instrument(&state).await;
         let (status, error) = send(
             &state,
             "POST",
             "/api/transactions",
-            json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-01","quantity":0}),
+            json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
+                   "quantity":100,"price":"0.25","currency":"USD","brokerage":"5.00"}),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(error["error"]["code"], "dividend_not_supported");
+        assert_eq!(error["error"]["code"], "dividend_must_not_carry_brokerage");
     }
 
     #[tokio::test]

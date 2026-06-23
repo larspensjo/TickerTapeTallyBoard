@@ -107,6 +107,7 @@ pub struct GainRow {
     pub capital_gain_percent: AvailabilityResponse,
     pub currency_gain_base: AvailabilityResponse,
     pub currency_gain_percent: AvailabilityResponse,
+    pub income_base: AvailabilityResponse,
     pub total_return_base: AvailabilityResponse,
     pub total_return_percent: AvailabilityResponse,
     pub price_effect_base: AvailabilityResponse,
@@ -227,6 +228,7 @@ pub async fn list(
             || !period.period_transactions.is_empty()
             || period.end_position.quantity > 0;
         let performance_start_date = has_period_exposure.then_some(report_start_date);
+        let mut row_income_base: Availability<Decimal> = Availability::Available(Decimal::ZERO);
         if has_period_exposure {
             let period_inputs =
                 load_period_inputs(&state.pool, instrument, Some(report_start_date), end_date)
@@ -240,6 +242,7 @@ pub async fn list(
 
             let period_amounts =
                 compute_period_amounts(&period, start_price, end_price, start_fx, end_fx, is_sek);
+            row_income_base = period_amounts.income_base.clone();
             let cash_flows = period_cash_flows(&period, is_sek);
             let actual_cash_flows = actual_period_cash_flows(&period, is_sek);
 
@@ -252,6 +255,7 @@ pub async fn list(
                     instrument,
                     &performance.realized,
                     performance_start_date,
+                    &row_income_base,
                 )?);
             }
             continue;
@@ -276,6 +280,7 @@ pub async fn list(
             &valued_holding,
             &performance.realized,
             performance_start_date,
+            &row_income_base,
         )?);
     }
 
@@ -284,13 +289,19 @@ pub async fn list(
     // Snapshot the accumulated amounts before consuming the accumulator.
     let perf_capital_gain = perf_accum.capital_gain;
     let perf_currency_gain = perf_accum.currency_gain;
+    let perf_income_gain = perf_accum.income_gain;
     let perf_total_return = perf_accum.total_return;
     let perf_has_data = perf_accum.has_data;
     let perf_unavailable_reasons = perf_accum.unavailable_reasons.clone();
     let perf_excluded_rows = perf_accum.excluded_rows;
 
-    let (capital_gain_percent, currency_gain_percent, total_return_percent, display_percent_kind) =
-        perf_accum.into_percents(report_start_date, end_date, method);
+    let (
+        capital_gain_percent,
+        income_percent,
+        currency_gain_percent,
+        total_return_percent,
+        display_percent_kind,
+    ) = perf_accum.into_percents(report_start_date, end_date, method);
 
     let percentage_method = match method {
         ReturnMethod::Xirr => "money_weighted",
@@ -338,12 +349,12 @@ pub async fn list(
                 perf_capital_gain,
             ),
             capital_gain_percent,
-            income_base: AvailabilityResponse::Unavailable {
-                reasons: vec!["income_not_tracked".to_string()],
-            },
-            income_percent: AvailabilityResponse::Unavailable {
-                reasons: vec!["income_not_tracked".to_string()],
-            },
+            income_base: perf_amount_response(
+                perf_has_data,
+                &perf_unavailable_reasons,
+                perf_income_gain,
+            ),
+            income_percent,
             currency_gain_base: perf_amount_response(
                 perf_has_data,
                 &perf_unavailable_reasons,
@@ -433,6 +444,7 @@ struct PerformanceAccumulator {
     total_return: Decimal,
     capital_gain: Decimal,
     currency_gain: Decimal,
+    income_gain: Decimal,
     cash_flows: Vec<CashFlow>,
     actual_cash_flows: Vec<CashFlow>,
     unavailable_reasons: Vec<ValuationReason>,
@@ -453,6 +465,7 @@ impl PerformanceAccumulator {
             &amounts.total_return_base,
             &amounts.capital_gain_base,
             &amounts.currency_gain_base,
+            &amounts.income_base,
             flows,
             actual_flows,
         ) {
@@ -462,6 +475,7 @@ impl PerformanceAccumulator {
                 Availability::Available(total),
                 Availability::Available(cap),
                 Availability::Available(cur),
+                Availability::Available(income),
                 Availability::Available(cfs),
                 Availability::Available(actual_cfs),
             ) => {
@@ -470,6 +484,7 @@ impl PerformanceAccumulator {
                 self.total_return += total;
                 self.capital_gain += cap;
                 self.currency_gain += cur;
+                self.income_gain += income;
                 self.cash_flows.extend_from_slice(cfs);
                 self.actual_cash_flows.extend_from_slice(actual_cfs);
                 self.has_data = true;
@@ -482,6 +497,7 @@ impl PerformanceAccumulator {
                     amounts.total_return_base.reasons(),
                     amounts.capital_gain_base.reasons(),
                     amounts.currency_gain_base.reasons(),
+                    amounts.income_base.reasons(),
                     flows.reasons(),
                     actual_flows.reasons(),
                 ] {
@@ -499,6 +515,7 @@ impl PerformanceAccumulator {
         method: ReturnMethod,
     ) -> (
         AvailabilityResponse, // capital_gain_percent
+        AvailabilityResponse, // income_percent
         AvailabilityResponse, // currency_gain_percent
         AvailabilityResponse, // total_return_percent
         String,               // display_percent_kind
@@ -507,7 +524,7 @@ impl PerformanceAccumulator {
             let u = AvailabilityResponse::Unavailable {
                 reasons: serialize_reasons(&self.unavailable_reasons),
             };
-            return (u.clone(), u.clone(), u, "absolute".to_string());
+            return (u.clone(), u.clone(), u.clone(), u, "absolute".to_string());
         }
         let pct100 = |x: Decimal| format!("{:.2}", (x * Decimal::from(100)).round_dp(2));
         match method {
@@ -525,12 +542,21 @@ impl PerformanceAccumulator {
                         let u = AvailabilityResponse::Unavailable {
                             reasons: serialize_reasons(reasons),
                         };
-                        return (u.clone(), u.clone(), u, "money_weighted".to_string());
+                        return (
+                            u.clone(),
+                            u.clone(),
+                            u.clone(),
+                            u,
+                            "money_weighted".to_string(),
+                        );
                     }
                 };
                 let comp = |part: Decimal| -> AvailabilityResponse {
                     if self.total_return.is_zero() {
-                        if self.capital_gain.is_zero() && self.currency_gain.is_zero() {
+                        if self.capital_gain.is_zero()
+                            && self.currency_gain.is_zero()
+                            && self.income_gain.is_zero()
+                        {
                             return AvailabilityResponse::Available {
                                 value: "0.00".to_string(),
                             };
@@ -547,6 +573,7 @@ impl PerformanceAccumulator {
                 };
                 (
                     comp(self.capital_gain),
+                    comp(self.income_gain),
                     comp(self.currency_gain),
                     AvailabilityResponse::Available {
                         value: pct100(total_pct),
@@ -567,13 +594,14 @@ impl PerformanceAccumulator {
                             ValuationReason::ZeroOrInvalidPerformanceDenominator,
                         ]),
                     };
-                    return (u.clone(), u.clone(), u, "simple".to_string());
+                    return (u.clone(), u.clone(), u.clone(), u, "simple".to_string());
                 }
                 let comp = |part: Decimal| AvailabilityResponse::Available {
                     value: pct100(part / denom),
                 };
                 (
                     comp(self.capital_gain),
+                    comp(self.income_gain),
                     comp(self.currency_gain),
                     comp(self.total_return),
                     "simple".to_string(),
@@ -584,6 +612,7 @@ impl PerformanceAccumulator {
                 let denominator =
                     compute_modified_dietz_denominator(self.begin_mv, &self.cash_flows, start, end);
                 let cap = component_percent(self.capital_gain, &denominator);
+                let income = component_percent(self.income_gain, &denominator);
                 let cur = component_percent(self.currency_gain, &denominator);
                 match &denominator {
                     Availability::Available(d) => {
@@ -594,6 +623,7 @@ impl PerformanceAccumulator {
                         };
                         (
                             cap,
+                            income,
                             cur,
                             AvailabilityResponse::Available { value: pct100(v) },
                             label.to_string(),
@@ -601,6 +631,7 @@ impl PerformanceAccumulator {
                     }
                     Availability::Unavailable { reasons } => (
                         cap,
+                        income,
                         cur,
                         AvailabilityResponse::Unavailable {
                             reasons: serialize_reasons(reasons),
@@ -618,6 +649,7 @@ fn open_gain_row(
     valued_holding: &ValuedHolding,
     realized: &RealizedGain,
     performance_start_date: Option<NaiveDate>,
+    income_base: &Availability<Decimal>,
 ) -> Result<GainRow, ApiError> {
     Ok(GainRow {
         instrument: InstrumentResponse::from_row(instrument)?,
@@ -652,6 +684,7 @@ fn open_gain_row(
             &valued_holding.fx_effect_base,
             &valued_holding.cost_basis_base,
         ),
+        income_base: serialize_availability(income_base, |v| money_string(*v)),
         price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
             money_string(*v)
         }),
@@ -711,6 +744,7 @@ fn closed_gain_row(
     instrument: &instruments::InstrumentRow,
     realized: &RealizedGain,
     performance_start_date: Option<NaiveDate>,
+    income_base: &Availability<Decimal>,
 ) -> Result<GainRow, ApiError> {
     let cost_basis_base = base_amount_availability(&realized.cost_basis_base);
     let gain_base = base_amount_availability(&realized.gain_base);
@@ -753,6 +787,7 @@ fn closed_gain_row(
             &base_amount_availability(&realized.fx_effect_base),
             &cost_basis_base,
         ),
+        income_base: serialize_availability(income_base, |v| money_string(*v)),
         total_return_base: serialize_availability(&gain_base, |v| money_string(*v)),
         total_return_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
         price_effect_base: serialize_base_amount(&realized.price_effect_base),
@@ -871,7 +906,7 @@ mod tests {
         assert_eq!(body["summary"]["excluded_rows"], 0);
         assert_eq!(body["totals"]["excluded_rows"], 0);
         assert_unavailable(&body["totals"]["capital_gain_base"], &[]);
-        assert_unavailable(&body["totals"]["income_base"], &["income_not_tracked"]);
+        assert_unavailable(&body["totals"]["income_base"], &[]);
     }
 
     #[tokio::test]
@@ -948,7 +983,7 @@ mod tests {
         assert_unavailable(&body["totals"]["currency_gain_base"], &["missing_end_fx"]);
         assert_unavailable(&body["totals"]["total_return_base"], &["missing_end_fx"]);
         assert_unavailable_status(&body["totals"]["total_return_percent"]);
-        assert_unavailable(&body["totals"]["income_base"], &["income_not_tracked"]);
+        assert_unavailable(&body["totals"]["income_base"], &["missing_end_fx"]);
 
         let row = &body["rows"][0];
         assert_eq!(row["instrument"]["symbol"], "MSFT");
@@ -1237,6 +1272,38 @@ mod tests {
         // performance_denominator_base = cost_basis_base; SEK buys with no fx_rate_to_base are unavailable.
         assert_unavailable_status(&early_row["performance_denominator_base"]);
         assert_unavailable_status(&later_row["performance_denominator_base"]);
+    }
+
+    #[tokio::test]
+    async fn dividend_income_appears_in_gain_row_and_totals() {
+        let state = AppState::for_tests().await;
+        let instrument_id = instrument(&state, "ERICB", "STO", BASE_CURRENCY).await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-01",
+                   "quantity":100,"price":"10.00","currency":BASE_CURRENCY}),
+        )
+        .await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
+                   "quantity":100,"price":"0.50","currency":BASE_CURRENCY}),
+        )
+        .await;
+        seed_sek_prices(&state, instrument_id, "ERICB").await;
+
+        // income = 100 * 0.50 * 1 = 50 SEK
+        let (status, body) = send(&state, "GET", "/api/gains?end_date=2026-06-30", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let row = &body["rows"][0];
+        assert_eq!(row["income_base"]["status"], "available");
+        assert_eq!(row["income_base"]["value"], "50.00");
+        assert_eq!(body["totals"]["income_base"]["status"], "available");
+        assert_eq!(body["totals"]["income_base"]["value"], "50.00");
     }
 
     async fn seed_june_fixture(state: &AppState) -> i64 {

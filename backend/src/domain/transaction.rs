@@ -72,7 +72,7 @@ pub enum ValidationError {
     BrokerageMustNotBeNegative,
     SplitQuantityMustBeNonZero,
     SplitMustNotCarryCostInputs,
-    DividendNotSupported,
+    DividendMustNotCarryBrokerage,
 }
 
 impl ValidationError {
@@ -86,7 +86,7 @@ impl ValidationError {
             Self::BrokerageMustNotBeNegative => "brokerage_must_not_be_negative",
             Self::SplitQuantityMustBeNonZero => "split_quantity_must_be_non_zero",
             Self::SplitMustNotCarryCostInputs => "split_must_not_carry_cost_inputs",
-            Self::DividendNotSupported => "dividend_not_supported",
+            Self::DividendMustNotCarryBrokerage => "dividend_must_not_carry_brokerage",
         }
     }
 
@@ -102,7 +102,7 @@ impl ValidationError {
             Self::SplitMustNotCarryCostInputs => {
                 "Split must not carry price, currency, FX, or brokerage."
             }
-            Self::DividendNotSupported => "Dividend transactions are not supported yet.",
+            Self::DividendMustNotCarryBrokerage => "Dividend must not carry brokerage.",
         }
     }
 }
@@ -212,7 +212,37 @@ pub fn validate(proposed: &ProposedTransaction) -> Result<i64, ValidationError> 
             }
             Ok(proposed.quantity)
         }
-        TransactionKind::Dividend => Err(ValidationError::DividendNotSupported),
+        TransactionKind::Dividend => {
+            if proposed.quantity <= 0 {
+                return Err(ValidationError::QuantityMustBePositive);
+            }
+            match proposed.price {
+                None => return Err(ValidationError::PriceRequired),
+                Some(price) if price <= Decimal::ZERO => {
+                    return Err(ValidationError::PriceMustBePositive);
+                }
+                Some(_) => {}
+            }
+            if proposed
+                .currency
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                return Err(ValidationError::CurrencyRequired);
+            }
+            if proposed
+                .fx_rate_to_base
+                .is_some_and(|fx| fx <= Decimal::ZERO)
+            {
+                return Err(ValidationError::FxRateMustBePositive);
+            }
+            if proposed.brokerage_base.is_some_and(|b| b != Decimal::ZERO) {
+                return Err(ValidationError::DividendMustNotCarryBrokerage);
+            }
+            Ok(0) // dividend has no position quantity effect
+        }
     }
 }
 
@@ -373,14 +403,75 @@ mod tests {
     }
 
     #[test]
-    fn dividend_is_not_supported() {
-        let dividend = ProposedTransaction {
+    fn dividend_with_valid_fields_succeeds() {
+        let d = ProposedTransaction {
             kind: TransactionKind::Dividend,
-            ..buy()
+            trade_date: date(),
+            quantity: 10,
+            price: Some(dec!(0.50)),
+            currency: Some("USD".to_owned()),
+            fx_rate_to_base: Some(dec!(10.5)),
+            brokerage_base: None,
+        };
+        assert_eq!(validate(&d), Ok(0));
+    }
+
+    #[test]
+    fn dividend_without_quantity_is_rejected() {
+        let d = ProposedTransaction {
+            kind: TransactionKind::Dividend,
+            quantity: 0,
+            price: Some(dec!(0.50)),
+            currency: Some("USD".to_owned()),
+            fx_rate_to_base: None,
+            brokerage_base: None,
+            trade_date: date(),
+        };
+        assert_eq!(validate(&d), Err(ValidationError::QuantityMustBePositive));
+    }
+
+    #[test]
+    fn dividend_without_price_is_rejected() {
+        let d = ProposedTransaction {
+            kind: TransactionKind::Dividend,
+            quantity: 10,
+            price: None,
+            currency: Some("USD".to_owned()),
+            fx_rate_to_base: None,
+            brokerage_base: None,
+            trade_date: date(),
+        };
+        assert_eq!(validate(&d), Err(ValidationError::PriceRequired));
+    }
+
+    #[test]
+    fn dividend_without_currency_is_rejected() {
+        let d = ProposedTransaction {
+            kind: TransactionKind::Dividend,
+            quantity: 10,
+            price: Some(dec!(0.50)),
+            currency: None,
+            fx_rate_to_base: None,
+            brokerage_base: None,
+            trade_date: date(),
+        };
+        assert_eq!(validate(&d), Err(ValidationError::CurrencyRequired));
+    }
+
+    #[test]
+    fn dividend_with_brokerage_is_rejected() {
+        let d = ProposedTransaction {
+            kind: TransactionKind::Dividend,
+            quantity: 10,
+            price: Some(dec!(0.50)),
+            currency: Some("USD".to_owned()),
+            fx_rate_to_base: None,
+            brokerage_base: Some(dec!(5.00)),
+            trade_date: date(),
         };
         assert_eq!(
-            validate(&dividend),
-            Err(ValidationError::DividendNotSupported)
+            validate(&d),
+            Err(ValidationError::DividendMustNotCarryBrokerage)
         );
     }
 
