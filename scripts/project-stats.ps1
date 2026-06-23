@@ -79,6 +79,31 @@ function Measure-RustTestCount {
     return $totalTests
 }
 
+function Measure-TypeScriptTestCount {
+    param(
+        [System.IO.FileInfo[]]$Files = @()
+    )
+
+    if (-not $Files -or $Files.Count -eq 0) {
+        return 0
+    }
+
+    $totalTests = 0
+    foreach ($file in $Files) {
+        try {
+            $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+            if ($content) {
+                $testMatches = [regex]::Matches($content, '(?<![\w$])(?:it|test)(?:\.(?:concurrent|each|fails|only|skip|todo))*\s*\(')
+                $totalTests += $testMatches.Count
+            }
+        } catch {
+            Write-Warning "Could not read file: $($file.FullName)"
+        }
+    }
+
+    return $totalTests
+}
+
 function Test-IgnoredPath {
     param(
         [string]$Path
@@ -140,6 +165,7 @@ function Get-FrontendStats {
     $frontendRoot = Join-Path $projectRoot "frontend"
 
     $tsFiles = Get-FileSet -Root $frontendRoot -Include @("ts", "tsx") -ExcludeNames @("vite-env.d.ts")
+    $testFiles = @($tsFiles | Where-Object { $_.Name -match '\.(test|spec)\.(ts|tsx)$' })
     $cssFiles = Get-FileSet -Root $frontendRoot -Include @("css")
     $htmlFiles = Get-FileSet -Root $frontendRoot -Include @("html")
 
@@ -147,6 +173,7 @@ function Get-FrontendStats {
         TypeScript = @{
             Lines = Measure-LineCount -Files $tsFiles
             Files = $tsFiles.Count
+            Tests = Measure-TypeScriptTestCount -Files $testFiles
         }
         Css = @{
             Lines = Measure-LineCount -Files $cssFiles
@@ -314,7 +341,7 @@ function Show-StatisticsReport {
 
     Write-Host "  TypeScript ..................." -NoNewline
     Write-Host (Format-Number $FrontendStats.TypeScript.Lines -Width 10) -ForegroundColor Green -NoNewline
-    Write-Host " lines ($($FrontendStats.TypeScript.Files) files)"
+    Write-Host " lines ($($FrontendStats.TypeScript.Files) files, $($FrontendStats.TypeScript.Tests) tests)"
 
     Write-Host "  CSS .........................." -NoNewline
     Write-Host (Format-Number $FrontendStats.Css.Lines -Width 10) -ForegroundColor Green -NoNewline
