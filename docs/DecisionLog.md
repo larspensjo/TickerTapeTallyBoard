@@ -327,3 +327,9 @@ Decision: When a second Avanza export is imported and a prior Avanza batch exist
 Context: Avanza's AllTradesReport is a full-history export: a newer export fully supersedes the prior one. Appending would double-count all historical transactions. The refresh primitive preserves transaction ids so dependent manual transactions (recorded against specific ids) survive the replacement unchanged.
 Consequences: `refresh_batch` returns `replace_candidate_changed` when a concurrent batch appeared between preview and commit, causing the commit to fail with a 409. Re-deriving ledgers for all instruments affected by either the old or new batch set ensures the validity invariant is maintained after the replacement.
 
+## 2026-06-23 - Net-Invested-Capital Reference Line On Dashboard
+
+Decision: The dashboard portfolio value chart includes a dashed, muted net-invested-capital reference line, computed as cumulative buy cash-out minus sell cash-returned, using trade-time FX conversion. The gap between the portfolio value line and this reference line reads as total profit, even across sell-offs. Cost-basis-of-held was rejected because it hides realized gains when a position is fully closed and re-opened.
+Context: Phase 6 implementation of the invested-capital reference line for portfolio performance visualization.
+Consequences: The portfolio value-history endpoint includes `invested_capital_base` on each point. The chart legend displays both lines. The visual design uses a dashed line to distinguish reference from primary value. Subsequent phases may add per-instrument invested-capital lines or additional reference metrics.
+
