@@ -611,7 +611,10 @@ export function ImportView() {
                       className="button outline danger"
                       disabled={commitBlockedByErrors || isBusy}
                       onClick={() => {
-                        void onCommit(false, false);
+                        void onCommit(
+                          preview.duplicate_of_batch_id != null,
+                          false,
+                        );
                       }}
                     >
                       Confirm append

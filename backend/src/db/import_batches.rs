@@ -74,6 +74,18 @@ pub async fn find_in_tx(
     Ok(row)
 }
 
+/// Most-recent batch for a given source inside a caller-managed transaction.
+pub async fn find_latest_by_source_in_tx(
+    conn: &mut SqliteConnection,
+    source: &str,
+) -> Result<Option<ImportBatchRow>, RepoError> {
+    let row = sqlx::query_as::<_, ImportBatchRow>(FIND_LATEST_BY_SOURCE_SQL)
+        .bind(source)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(row)
+}
+
 /// Update the hash and timestamp of an existing batch in place inside a transaction.
 pub async fn update_metadata_in_tx(
     conn: &mut SqliteConnection,

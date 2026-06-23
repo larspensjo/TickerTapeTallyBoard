@@ -1130,6 +1130,50 @@ async fn avanza_refresh_same_day_order_preserves_manual_row_id() {
 }
 
 #[tokio::test]
+async fn avanza_refresh_inserts_extra_identical_canonical_row() {
+    const HEADER: &str = "Datum;Konto;Typ av transaktion;Värdepapper/beskrivning;Antal;Kurs;Belopp;Transaktionsvaluta;Courtage;Valutakurs;Instrumentvaluta;ISIN;Resultat\n";
+    const BUY_ROW: &str =
+        "2026-05-10;ISK;Köp;Volvo B;3;250,00;-750,00;SEK;0,00;;SEK;SE0000115446;\n";
+
+    let state = test_state().await;
+
+    // Initial import: one identical canonical buy row.
+    let v1 = format!("{HEADER}{BUY_ROW}");
+    let (_, first) = send_bytes(&state, "/api/import/avanza/commit", v1.as_bytes()).await;
+    let batch_id = first["batch_id"].as_i64().expect("batch id");
+
+    let volvo = db::instruments::find_by_isin(&state.pool, "SE0000115446")
+        .await
+        .expect("query")
+        .expect("volvo");
+
+    let before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE instrument_id = ?")
+            .bind(volvo.id)
+            .fetch_one(&state.pool)
+            .await
+            .expect("count before");
+    assert_eq!(before, 1);
+
+    // Refresh with two identical canonical buy rows (multiplicity 1 -> 2).
+    let v3 = format!("{HEADER}{BUY_ROW}{BUY_ROW}");
+    let uri = format!("/api/import/avanza/commit?mode=replace&replace_batch_id={batch_id}");
+    let (s, _) = send_bytes(&state, &uri, v3.as_bytes()).await;
+    assert_eq!(s, StatusCode::OK, "refresh should succeed");
+
+    let after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE instrument_id = ?")
+            .bind(volvo.id)
+            .fetch_one(&state.pool)
+            .await
+            .expect("count after");
+    assert_eq!(
+        after, 2,
+        "surplus identical canonical row must be inserted, not dropped"
+    );
+}
+
+#[tokio::test]
 async fn avanza_dividend_persists_eligible_shares_and_native_price() {
     let state = test_state().await;
     let (s, _) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;

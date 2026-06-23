@@ -86,6 +86,7 @@ fn build_position_events(
 fn eligible_quantity_at(
     isin: &str,
     date: NaiveDate,
+    source_row: usize,
     position_events: &BTreeMap<String, Vec<(NaiveDate, usize, i64)>>,
 ) -> i64 {
     position_events
@@ -93,7 +94,7 @@ fn eligible_quantity_at(
         .map(|events| {
             events
                 .iter()
-                .filter(|(d, _, _)| *d <= date)
+                .filter(|(d, row, _)| (*d, *row) <= (date, source_row))
                 .map(|(_, _, delta)| delta)
                 .sum::<i64>()
         })
@@ -298,7 +299,12 @@ fn map_dividend(
         };
     }
 
-    let eligible_qty = eligible_quantity_at(&row.isin, row.trade_date, position_events);
+    let eligible_qty = eligible_quantity_at(
+        &row.isin,
+        row.trade_date,
+        row.source_row_number,
+        position_events,
+    );
 
     if eligible_qty <= 0 {
         return RowOutcome::Skip {
@@ -1115,5 +1121,63 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.code == "reconciliation_residual"));
+    }
+
+    #[test]
+    fn dividend_excludes_same_day_later_buy_in_eligible_quantity() {
+        // A buy on the same date as the dividend, but appearing later in the
+        // source file, must not inflate the dividend's eligible share count.
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2026, 5, 1),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(5),
+                price: Some(dec!(200)),
+                amount: Some(dec!(-9459)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Utdelning",
+                name: "Apple Inc",
+                quantity: dec!(0),
+                price: None,
+                amount: Some(dec!(120)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.40)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+            row(RowSpec {
+                source_row_number: 4,
+                trade_date: date(2026, 5, 20),
+                raw_kind: "Köp",
+                name: "Apple Inc",
+                quantity: dec!(10),
+                price: Some(dec!(210)),
+                amount: Some(dec!(-19845)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: Some(dec!(9.45)),
+                instrument_currency: "USD",
+                isin: "US0378331005",
+            }),
+        ]));
+
+        let rows = mapped(&prepared);
+        let dividend = rows
+            .iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+        // Only the prior buy of 5 counts; the same-day later buy of 10 is excluded.
+        assert_eq!(dividend.proposed.quantity, 5);
     }
 }

@@ -390,6 +390,24 @@ pub async fn refresh_batch(
         ));
     }
 
+    // Re-verify inside the transaction that expected_batch_id is still the
+    // latest live batch for this source, closing the TOCTOU window between the
+    // pre-check above and this transaction.
+    let latest_in_tx_id = import_batches::find_latest_by_source_in_tx(&mut tx, source)
+        .await?
+        .map(|b| b.id);
+    if latest_in_tx_id != Some(expected_batch_id) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "replace_candidate_changed",
+            format!("a newer {source} batch appeared after preview; re-preview to continue"),
+        )
+        .with_details(serde_json::json!({
+            "expected_batch_id": expected_batch_id,
+            "actual_latest_id": latest_in_tx_id,
+        })));
+    }
+
     // Snapshot old batch transactions (ordered by trade_date, id)
     let old_rows = transactions::list_for_batch_in_tx(&mut tx, expected_batch_id).await?;
     let old_instrument_ids: BTreeSet<i64> = old_rows.iter().map(|r| r.instrument_id).collect();
@@ -425,9 +443,14 @@ pub async fn refresh_batch(
 
         let canonical = canonical_from_mapped(row, instrument_id).map_err(ApiError::from)?;
 
-        if let Some(ids) = old_by_canonical.get_mut(&canonical) {
-            ids.pop_front(); // Preserve the lowest old id
-        } else {
+        // Only treat the new row as preserved when an unconsumed old id remains
+        // for this canonical key. If the new file contains more identical
+        // canonical rows than the old batch, the surplus rows are inserted.
+        let preserved = old_by_canonical
+            .get_mut(&canonical)
+            .and_then(|ids| ids.pop_front())
+            .is_some();
+        if !preserved {
             to_insert.push((row, instrument_id));
         }
     }

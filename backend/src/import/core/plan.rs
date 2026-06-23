@@ -128,7 +128,7 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
     attach_asset_notes(&mut assets, &warnings, &errors, &mapped_rows);
 
     for group in assets.values_mut() {
-        if group.buys + group.sells + group.splits == 0
+        if group.buys + group.sells + group.splits + group.dividends == 0
             && (!group.warnings.is_empty() || !group.errors.is_empty())
         {
             group.skipped_reason = Some("no writable rows (all skipped)".to_string());
@@ -638,6 +638,70 @@ mod tests {
         assert_eq!(
             prepared.header.title,
             "All Trades Report between 2025-06-12 and 2026-06-12"
+        );
+    }
+
+    #[test]
+    fn dividend_only_asset_with_fx_warning_stays_selectable() {
+        use crate::domain::ProposedTransaction;
+        use crate::import::core::outcome::{
+            InstrumentKey, MappedRow, PlanHeader, PreparedImport, SourceKindCounts,
+        };
+
+        let date = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        let dividend = MappedRow {
+            source_row_number: 2,
+            instrument: InstrumentKey {
+                exchange: "AVANZA".into(),
+                symbol: "NL0010273215".into(),
+                name: "ASML".into(),
+                currency: "EUR".into(),
+                isin: Some("NL0010273215".into()),
+            },
+            proposed: ProposedTransaction {
+                kind: TransactionKind::Dividend,
+                trade_date: date,
+                quantity: 4,
+                price: Some(dec!(6.40)),
+                currency: Some("EUR".into()),
+                fx_rate_to_base: None,
+                brokerage_base: None,
+            },
+            source_value: Some(dec!(25)),
+            source_currency: Some("EUR".into()),
+            note: None,
+            fx_warning: true,
+        };
+
+        let prepared = PreparedImport {
+            header: PlanHeader {
+                title: "Avanza All Trades".into(),
+                date_from: date,
+                date_to: date,
+            },
+            counts: SourceKindCounts {
+                rows: 1,
+                dividends: 1,
+                ..Default::default()
+            },
+            outcomes: vec![RowOutcome::Mapped(dividend)],
+        };
+
+        let plan = build_plan(&prepared, &PlanContext::default());
+        let group = plan
+            .assets
+            .iter()
+            .find(|group| group.asset_key == "NL0010273215")
+            .expect("dividend asset group");
+
+        assert_eq!(group.dividends, 1);
+        assert!(
+            group.skipped_reason.is_none(),
+            "dividend-only asset must not be marked as all-skipped"
+        );
+        assert!(
+            group.default_selected,
+            "dividend-only asset with an fx warning must stay selectable"
         );
     }
 }
