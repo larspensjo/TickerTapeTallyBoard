@@ -19,7 +19,10 @@ export function portfolioValueSeries(
   const invested: TimeSeriesPoint[] = [];
 
   for (const point of points) {
-    value.push({ time: point.date, value: Number(point.value_base) });
+    const valueAmount = Number(point.value_base);
+    if (Number.isFinite(valueAmount)) {
+      value.push({ time: point.date, value: valueAmount });
+    }
 
     if (point.invested_base !== null) {
       const investedValue = Number(point.invested_base);
