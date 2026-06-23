@@ -29,7 +29,6 @@
 
 **Modified (production — behavior-preserving):**
 - `frontend/src/components/ImportView.tsx` — export the reducer + initial-state.
-- `frontend/src/components/BoardView.tsx` — export the reducer + initial-state factory.
 - `frontend/src/components/AddTransactionForm.tsx` — export the reducer + `createInitialState`.
 - `frontend/src/components/GainsTable.tsx` — drop local `parseFiniteNumber`, import the shared one.
 - `frontend/src/components/HoldingsTable.tsx` — drop local `parseFiniteNumber`, import the shared one.
@@ -37,11 +36,13 @@
 
 **Created (tests):**
 - `frontend/src/components/ImportView.reducer.test.ts`
-- `frontend/src/components/BoardView.reducer.test.ts`
 - `frontend/src/components/AddTransactionForm.reducer.test.ts`
 - `frontend/src/components/assetViewModel.test.ts`
 - `frontend/src/components/valuationDisplay.test.ts`
 - `frontend/src/api/client.test.ts`
+
+**Already done (code drift):**
+- `frontend/src/components/GainsPage.reducer.test.ts` — `BoardView.tsx` was refactored away; gains-page UI state now lives in `GainsPage.tsx` as the exported `gainsPageReducer`, and its test already exists.
 
 **Docs:**
 - `docs/DecisionLog.md` — testing-strategy entry.
@@ -77,7 +78,7 @@ Create `frontend/src/components/AddTransactionForm.reducer.test.ts`. Cover the p
 - `transactionTypeChanged` / `instrumentTypeChanged` set their field and clear `error`.
 - `submitStarted` sets `submitting: true`, `error: null`.
 - `submitFailed` sets `submitting: false` and the message.
-- `submitSucceeded` does a **partial** reset, not a fresh initial state: it spreads the existing state and clears only the transaction-entry fields (`instrumentId`, `symbol`, `exchange`, `name`, `quantity`, `price` → `""`; `instrumentType` → `"Stock"`; `type` → `"Buy"`; plus `submitting`/`error`). It **preserves** `instrumentMode`, `tradeDate`, `instrumentCurrency`, `currency`, `fxRate`, `brokerage`, and `note` so a user can log several trades in a row. Assert both the cleared and the preserved fields — production behavior must stay unchanged, so do **not** assert a full reset. (Read the `submitSucceeded` branch to confirm the exact field list before writing the assertions.)
+- `submitSucceeded` does a **partial** reset: it spreads the existing state and explicitly resets `instrumentId`, `symbol`, `exchange`, `name`, `instrumentType` → `"Stock"`, `type` → `"Buy"`, `quantity`, `price`, `currency` → `"USD"`, `fxRate`, `brokerage`, `note` → `""`, plus `submitting`/`error`. It **preserves** only `instrumentMode`, `tradeDate`, and `instrumentCurrency` (via the spread). Assert both the reset and the preserved fields. (Verify against the `submitSucceeded` branch in the source before writing assertions.)
 - `createInitialState(true)` yields `instrumentMode: "existing"`; `createInitialState(false)` yields `"new"`.
 
 ```ts
@@ -129,64 +130,11 @@ git add frontend/src/components/AddTransactionForm.tsx frontend/src/components/A
 
 ---
 
-### Task 1.2: `BoardView` reducer
+### Task 1.2: `GainsPage` reducer — **already done (code drift)**
 
-**Files:**
-- Modify: `frontend/src/components/BoardView.tsx`
-- Create: `frontend/src/components/BoardView.reducer.test.ts`
+`BoardView.tsx` no longer exists. The board was refactored into separate page components. The gains-page UI state (`includeClosedPositions`, `datePreset`, `dateRange`, `returnMethod`) now lives in `GainsPage.tsx` as the exported `gainsPageReducer`. That reducer is already exported and tested in `frontend/src/components/GainsPage.reducer.test.ts`.
 
-- [ ] **Step 1: Export the reducer and types**
-
-In `frontend/src/components/BoardView.tsx`:
-- Change `function uiReducer(` to `export function boardReducer(`.
-- Export the `UiState` and `UiAction` types.
-- The initial `UiState` is built inline at the `useReducer` call and pulls `returnMethod: loadReturnMethod()`, which reads `localStorage` — **not** available in the default `node` test environment. Extract it into an exported factory that takes its environment-dependent inputs as **parameters** so the test never touches browser storage:
-  ```ts
-  export function createInitialUiState(
-    boardView: BoardView,
-    returnMethod: ReturnMethod,
-  ): UiState {
-    return {
-      boardView,
-      boardFilter: "",
-      includeClosedPositions: false,
-      formOpen: false,
-      datePreset: "all",
-      dateRange: { startDate: null, endDate: null },
-      returnMethod,
-    };
-  }
-  ```
-  At the `useReducer` call site, pass the live values: `useReducer(boardReducer, createInitialUiState(initialBoardView, loadReturnMethod()))`. This keeps `loadReturnMethod()`/`localStorage` in the component (where jsdom/the browser provides it) and out of the pure factory the test calls.
-- Update the `useReducer(uiReducer, …)` call site to `useReducer(boardReducer, …)`.
-
-Run `npm run check`.
-
-- [ ] **Step 2: Write the reducer test**
-
-Create `frontend/src/components/BoardView.reducer.test.ts` (node env). Cover each action's single-field update and that unrelated fields are untouched:
-- `boardViewSelected` → `boardView`.
-- `boardFilterChanged` → `boardFilter`.
-- `closedPositionsToggled` → `includeClosedPositions`.
-- `formToggled` → `formOpen`.
-- `datePresetChanged` → `datePreset`.
-- `dateRangeChanged` → `dateRange`.
-- `returnMethodChanged` → `returnMethod`.
-
-Assert immutability (the input state object is not mutated) on at least one case. Pass `returnMethod` explicitly so the test stays in `node` with no `localStorage` dependency:
-```ts
-const before = createInitialUiState("holdings", "xirr");
-const after = boardReducer(before, { type: "boardViewSelected", boardView: "gains" });
-expect(after.boardView).toBe("gains");
-expect(before.boardView).not.toBe("gains"); // input untouched
-expect(after.boardFilter).toBe(before.boardFilter); // siblings preserved
-```
-
-- [ ] **Step 3: Verify, format, stage**
-```bash
-cd frontend && npm run check && npm run fmt
-git add frontend/src/components/BoardView.tsx frontend/src/components/BoardView.reducer.test.ts
-```
+No implementation work required. Skip to Task 1.3.
 
 ---
 
@@ -287,7 +235,7 @@ Create `frontend/src/components/assetViewModel.test.ts` covering:
 - `findInstrument` / `findGainsRow` / `findHolding` / `findPriceStatus`: hit returns the matching record; miss returns `null`.
 - `instrumentTransactions`: filters to the given instrument id, preserving order.
 - `sharesSold`: sums sold quantities per its definition (read the body for the exact rule).
-- If time allows: a focused case for `deriveAssetData` / `tilesView` / `breakdownView` / `headerStatus` using small fixtures. Prioritize the finders and `parseInstrumentId` first — they are the cheapest and most reused.
+- If time allows: a focused case for `deriveAssetData` / `tilesView` / `headerStatus` using small fixtures. Prioritize the finders and `parseInstrumentId` first — they are the cheapest and most reused.
 
 Use tiny inline fixtures built from `../api/types` (an `Instrument`, a couple of `GainsRow`/`Holding`/`Transaction` records). Keep fixtures minimal — only the fields the function reads.
 
@@ -531,7 +479,7 @@ Leave the changes staged for review; do not commit.
 | Area | Task | Kind |
 |------|------|------|
 | AddTransactionForm reducer | 1.1 | node reducer test |
-| BoardView reducer | 1.2 | node reducer test |
+| GainsPage reducer | 1.2 | **already done** — `GainsPage.reducer.test.ts` exists |
 | ImportView reducer (state machine) | 1.3 | node reducer test |
 | assetViewModel finders/derivations | 2.1 | node pure test |
 | valuationDisplay helpers | 2.2 | node pure test |
