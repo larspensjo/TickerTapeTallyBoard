@@ -17,6 +17,7 @@ import {
   FormattedNumber,
   formatGroupedNumber,
   isAvailable,
+  parseFiniteNumber,
   reasonSummary,
   unavailableValue,
 } from "./valuationDisplay";
@@ -161,11 +162,6 @@ function portfolioPercentageCell(value: PortfolioPercentage) {
       --
     </span>
   );
-}
-
-function parseFiniteNumber(value: string | number): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function availableNumber(

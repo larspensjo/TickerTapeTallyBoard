@@ -22,6 +22,7 @@ import {
   availabilitySortRows,
   formatGroupedNumber,
   freshnessLabel,
+  parseFiniteNumber,
   reasonLabel,
   reasonSummary,
   SummaryAvailabilityValue,
@@ -136,11 +137,6 @@ function stackedMetricCell(
       ) : null}
     </div>
   );
-}
-
-function parseFiniteNumber(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function availableNumber(value: AvailabilityValue<string>): number | null {

@@ -50,6 +50,11 @@ export function signedTone(value: string): "up" | "down" | "flat" {
   return parsed > 0 ? "up" : "down";
 }
 
+export function parseFiniteNumber(value: string | number): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function formatGroupedNumber(value: string | number): string {
   const rawValue = String(value).trim();
   const match = rawValue.match(/^([+-]?)(\d+)(\.\d+)?$/);
