@@ -22,7 +22,7 @@ type TextField =
   | "brokerage"
   | "note";
 
-interface FormState {
+export interface FormState {
   instrumentMode: InstrumentMode;
   instrumentId: string;
   symbol: string;
@@ -42,7 +42,7 @@ interface FormState {
   submitting: boolean;
 }
 
-type FormAction =
+export type FormAction =
   | { type: "fieldChanged"; field: TextField; value: string }
   | { type: "instrumentModeChanged"; mode: InstrumentMode }
   | { type: "instrumentTypeChanged"; value: InstrumentType }
@@ -51,7 +51,7 @@ type FormAction =
   | { type: "submitFailed"; message: string }
   | { type: "submitSucceeded" };
 
-function createInitialState(hasInstruments: boolean): FormState {
+export function createInitialState(hasInstruments: boolean): FormState {
   return {
     instrumentMode: hasInstruments ? "existing" : "new",
     instrumentId: "",
@@ -73,7 +73,10 @@ function createInitialState(hasInstruments: boolean): FormState {
   };
 }
 
-function reducer(state: FormState, action: FormAction): FormState {
+export function addTransactionReducer(
+  state: FormState,
+  action: FormAction,
+): FormState {
   switch (action.type) {
     case "fieldChanged":
       return { ...state, [action.field]: action.value, error: null };
@@ -135,7 +138,7 @@ export function AddTransactionForm({
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(
-    reducer,
+    addTransactionReducer,
     instruments.length > 0,
     createInitialState,
   );
