@@ -31,6 +31,7 @@ interface State {
   preview: ImportPreview | null;
   result: ImportResult | null;
   confirmingDuplicate: boolean;
+  confirmingAppend: boolean;
   error: string | null;
   selected: Record<string, boolean>;
 }
@@ -41,6 +42,8 @@ type Action =
   | { type: "previewReady"; preview: ImportPreview; fileName: string }
   | { type: "confirmDuplicate" }
   | { type: "cancelDuplicate" }
+  | { type: "confirmAppend" }
+  | { type: "cancelAppend" }
   | { type: "toggleAsset"; assetKey: string }
   | { type: "commitStarted" }
   | { type: "committed"; result: ImportResult }
@@ -54,6 +57,7 @@ const INITIAL_STATE: State = {
   preview: null,
   result: null,
   confirmingDuplicate: false,
+  confirmingAppend: false,
   error: null,
   selected: {},
 };
@@ -105,9 +109,23 @@ function reducer(state: State, action: Action): State {
         selected: selectedFromPreview(action.preview),
       };
     case "confirmDuplicate":
-      return { ...state, confirmingDuplicate: true, error: null };
+      return {
+        ...state,
+        confirmingDuplicate: true,
+        confirmingAppend: false,
+        error: null,
+      };
     case "cancelDuplicate":
       return { ...state, confirmingDuplicate: false, error: null };
+    case "confirmAppend":
+      return {
+        ...state,
+        confirmingAppend: true,
+        confirmingDuplicate: false,
+        error: null,
+      };
+    case "cancelAppend":
+      return { ...state, confirmingAppend: false, error: null };
     case "toggleAsset": {
       if (!state.preview) {
         return state;
@@ -140,6 +158,7 @@ function reducer(state: State, action: Action): State {
         preview: null,
         result: action.result,
         confirmingDuplicate: false,
+        confirmingAppend: false,
         error: null,
         selected: {},
       };
@@ -149,6 +168,7 @@ function reducer(state: State, action: Action): State {
         phase: "error",
         error: action.message,
         confirmingDuplicate: false,
+        confirmingAppend: false,
       };
     case "reset":
       return INITIAL_STATE;
@@ -260,7 +280,7 @@ export function ImportView() {
     setFileBytes(null);
   }
 
-  async function onCommit(allowDuplicate: boolean) {
+  async function onCommit(allowDuplicate: boolean, refresh = false) {
     if (!fileBytes || !state.preview) {
       return;
     }
@@ -271,12 +291,18 @@ export function ImportView() {
       .filter((asset) => !isAssetSelected(asset, state.selected))
       .map((asset) => asset.asset_key);
 
+    const replaceBatchId =
+      state.preview.replace_candidate_batch_id ?? undefined;
+
     try {
       const result = await commitImport.mutateAsync({
         source: state.source,
         file: fileBytes.slice(0),
         allowDuplicate,
         exclude,
+        ...(refresh && replaceBatchId !== undefined
+          ? { mode: "replace" as const, replaceBatchId }
+          : {}),
       });
       dispatch({ type: "committed", result });
     } catch (error) {
@@ -301,7 +327,9 @@ export function ImportView() {
   }
 
   const preview = state.preview;
-  const isDuplicate = preview?.duplicate_of_batch_id != null;
+  const isRefreshMode =
+    state.source === "avanza" && preview?.replace_candidate_batch_id != null;
+  const isDuplicate = preview?.duplicate_of_batch_id != null && !isRefreshMode;
   const commitBlockedByErrors = hasBlockingErrors(preview, state.selected);
   const isBusy =
     state.phase === "previewing" ||
@@ -384,9 +412,19 @@ export function ImportView() {
               {preview.metadata ? (
                 <span className="status-chip">{preview.metadata.title}</span>
               ) : null}
+              {isRefreshMode ? (
+                <span className="status-chip">
+                  Will refresh Avanza batch {preview.replace_candidate_batch_id}
+                </span>
+              ) : null}
               {isDuplicate ? (
                 <span className="status-chip warning">
                   Already imported as batch {preview.duplicate_of_batch_id}
+                </span>
+              ) : null}
+              {preview.replace_candidate_warning ? (
+                <span className="status-chip warning">
+                  {preview.replace_candidate_warning}
                 </span>
               ) : null}
             </section>
@@ -394,6 +432,11 @@ export function ImportView() {
             {preview.assets.length > 0 ? (
               <>
                 <p className="eyebrow">Assets</p>
+                {isRefreshMode ? (
+                  <p className="form-note muted">
+                    Unchecked assets will be removed from the refreshed batch.
+                  </p>
+                ) : null}
                 <div className="table-wrap asset-table">
                   <table>
                     <thead>
@@ -526,7 +569,15 @@ export function ImportView() {
               <p className="form-error">
                 This file was already imported as batch{" "}
                 {preview.duplicate_of_batch_id}. Importing again will create a
-                second batch. Click “Import anyway” to confirm.
+                second batch. Click "Import anyway" to confirm.
+              </p>
+            ) : null}
+
+            {isRefreshMode && state.confirmingAppend ? (
+              <p className="form-error">
+                This will append a new Avanza batch alongside the existing batch{" "}
+                {preview.replace_candidate_batch_id}. The existing batch will
+                not be modified.
               </p>
             ) : null}
 
@@ -542,7 +593,55 @@ export function ImportView() {
               >
                 Cancel
               </button>
-              {isDuplicate && !state.confirmingDuplicate ? (
+              {isRefreshMode ? (
+                state.confirmingAppend ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={isBusy}
+                      onClick={() => {
+                        dispatch({ type: "cancelAppend" });
+                      }}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="button outline danger"
+                      disabled={commitBlockedByErrors || isBusy}
+                      onClick={() => {
+                        void onCommit(false, false);
+                      }}
+                    >
+                      Confirm append
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={commitBlockedByErrors || isBusy}
+                      onClick={() => {
+                        dispatch({ type: "confirmAppend" });
+                      }}
+                    >
+                      Append as new batch…
+                    </button>
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={commitBlockedByErrors || isBusy}
+                      onClick={() => {
+                        void onCommit(false, true);
+                      }}
+                    >
+                      Refresh Avanza import
+                    </button>
+                  </>
+                )
+              ) : isDuplicate && !state.confirmingDuplicate ? (
                 <button
                   type="button"
                   className="button outline danger"

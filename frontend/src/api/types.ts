@@ -318,6 +318,10 @@ export interface ImportPreview {
   warnings: ImportRowNote[];
   errors: ImportRowNote[];
   duplicate_of_batch_id: number | null;
+  /** Batch id to target for a refresh commit. Null when no prior Avanza batch exists. */
+  replace_candidate_batch_id: number | null;
+  /** Non-blocking warning when multiple live Avanza batches exist. */
+  replace_candidate_warning: string | null;
 }
 
 export interface ImportResult {

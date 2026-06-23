@@ -203,11 +203,15 @@ export function useCommitImport() {
       file,
       allowDuplicate,
       exclude,
+      mode,
+      replaceBatchId,
     }: {
       source: ImportSource;
       file: ArrayBuffer;
       allowDuplicate: boolean;
       exclude: string[];
+      mode?: "replace" | "append";
+      replaceBatchId?: number;
     }) => {
       const params = new URLSearchParams();
 
@@ -217,6 +221,14 @@ export function useCommitImport() {
 
       if (exclude.length > 0) {
         params.set("exclude", exclude.join(","));
+      }
+
+      if (mode) {
+        params.set("mode", mode);
+      }
+
+      if (replaceBatchId !== undefined) {
+        params.set("replace_batch_id", String(replaceBatchId));
       }
 
       const query = params.toString();
