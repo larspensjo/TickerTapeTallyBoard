@@ -331,5 +331,5 @@ Consequences: `refresh_batch` returns `replace_candidate_changed` when a concurr
 
 Decision: The dashboard portfolio value chart includes a dashed, muted net-invested-capital reference line, computed as cumulative buy cash-out minus sell cash-returned, using trade-time FX conversion. The gap between the portfolio value line and this reference line reads as total profit, even across sell-offs. Cost-basis-of-held was rejected because it hides realized gains when a position is fully closed and re-opened.
 Context: Phase 6 implementation of the invested-capital reference line for portfolio performance visualization.
-Consequences: The portfolio value-history endpoint includes `invested_capital_base` on each point. The chart legend displays both lines. The visual design uses a dashed line to distinguish reference from primary value. Subsequent phases may add per-instrument invested-capital lines or additional reference metrics.
+Consequences: The portfolio value-history endpoint includes `invested_base` on each point. The chart legend displays both lines. The visual design uses a dashed line to distinguish reference from primary value. Subsequent phases may add per-instrument invested-capital lines or additional reference metrics.
 
