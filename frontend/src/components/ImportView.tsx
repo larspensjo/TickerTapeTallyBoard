@@ -1,9 +1,11 @@
+import { RefreshCw } from "lucide-react";
 import { type ChangeEvent, useReducer, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import {
   useCommitImport,
   usePreviewImport,
+  useRefreshPrices,
   useRollbackImport,
 } from "../api/queries";
 import type {
@@ -341,372 +343,256 @@ export function ImportView() {
     rollbackImport.isPending;
 
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">{sourceLabel(state.source)}</p>
-          <h1>Import All Trades CSV</h1>
-        </div>
+    <>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">{sourceLabel(state.source)}</p>
+            <h1>Import All Trades CSV</h1>
+          </div>
 
-        <fieldset className="segmented-control" aria-label="Import source">
-          <legend className="sr-only">Import source</legend>
-          <button
-            className={state.source === "sharesight" ? "active" : undefined}
-            type="button"
-            aria-pressed={state.source === "sharesight"}
-            disabled={isBusy}
-            onClick={() => {
-              void onSourceChange("sharesight");
-            }}
-          >
-            Sharesight
-          </button>
-          <button
-            className={state.source === "avanza" ? "active" : undefined}
-            type="button"
-            aria-pressed={state.source === "avanza"}
-            disabled={isBusy}
-            onClick={() => {
-              void onSourceChange("avanza");
-            }}
-          >
-            Avanza
-          </button>
-        </fieldset>
-      </div>
-
-      <div className="transaction-form">
-        <div className="form-row">
-          <label className="form-field grow">
-            <span>CSV file</span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(event) => {
-                void onFileChange(event);
-              }}
+          <fieldset className="segmented-control" aria-label="Import source">
+            <legend className="sr-only">Import source</legend>
+            <button
+              className={state.source === "sharesight" ? "active" : undefined}
+              type="button"
+              aria-pressed={state.source === "sharesight"}
               disabled={isBusy}
-            />
-          </label>
-          <div className="form-field">
-            <span>Selected</span>
-            <div className="status-chip">
-              {state.fileName ?? "No file selected"}
-            </div>
-          </div>
+              onClick={() => {
+                void onSourceChange("sharesight");
+              }}
+            >
+              Sharesight
+            </button>
+            <button
+              className={state.source === "avanza" ? "active" : undefined}
+              type="button"
+              aria-pressed={state.source === "avanza"}
+              disabled={isBusy}
+              onClick={() => {
+                void onSourceChange("avanza");
+              }}
+            >
+              Avanza
+            </button>
+          </fieldset>
         </div>
 
-        {state.phase === "previewing" ? (
-          <div className="board-state muted">
-            <div className="skeleton-bar" />
-            <div className="skeleton-bar" />
-            <div className="skeleton-bar" />
-          </div>
-        ) : null}
-
-        {preview && state.phase !== "previewing" ? (
-          <>
-            <section className="board-state muted import-summary">
-              <p className="total-value">
-                {formatGroupedNumber(preview.counts.rows)} trades
-              </p>
-              <ImportCountsMetrics counts={preview.counts} />
-              {preview.metadata ? (
-                <span className="status-chip">{preview.metadata.title}</span>
-              ) : null}
-              {isRefreshMode ? (
-                <span className="status-chip">
-                  Will refresh Avanza batch {preview.replace_candidate_batch_id}
-                </span>
-              ) : null}
-              {isDuplicate ? (
-                <span className="status-chip warning">
-                  Already imported as batch {preview.duplicate_of_batch_id}
-                </span>
-              ) : null}
-              {preview.replace_candidate_warning ? (
-                <span className="status-chip warning">
-                  {preview.replace_candidate_warning}
-                </span>
-              ) : null}
-            </section>
-
-            {preview.assets.length > 0 ? (
-              <>
-                <p className="eyebrow">Assets</p>
-                {isRefreshMode ? (
-                  <p className="form-note muted">
-                    Unchecked assets will be removed from the refreshed batch.
-                  </p>
-                ) : null}
-                <div className="table-wrap asset-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th className="checkbox-head">
-                          <span className="sr-only">Select</span>
-                        </th>
-                        <th>Asset</th>
-                        <th>Currency</th>
-                        <th>Buys</th>
-                        <th>Sells</th>
-                        <th>Splits</th>
-                        <th>Dividends</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.assets.map((asset) => {
-                        const checked = isAssetSelected(asset, state.selected);
-                        const locked = asset.skipped_reason != null;
-
-                        return (
-                          <tr key={asset.asset_key}>
-                            <td className="checkbox-cell">
-                              <input
-                                type="checkbox"
-                                className="asset-check"
-                                checked={checked}
-                                disabled={locked || isBusy}
-                                aria-label={`Include ${asset.name}`}
-                                onChange={() => {
-                                  dispatch({
-                                    type: "toggleAsset",
-                                    assetKey: asset.asset_key,
-                                  });
-                                }}
-                              />
-                            </td>
-                            <td>
-                              <div className="asset-name-cell">
-                                <strong>{asset.name}</strong>
-                                <div className="asset-meta-line">
-                                  <span>{asset.asset_key}</span>
-                                  <div className="asset-badges">
-                                    {asset.is_new_instrument ? (
-                                      <span className="asset-badge">
-                                        New instrument
-                                      </span>
-                                    ) : null}
-                                    {asset.skipped_reason ? (
-                                      <span className="asset-badge warning">
-                                        {asset.skipped_reason}
-                                      </span>
-                                    ) : null}
-                                    {asset.errors.length > 0 ? (
-                                      <span className="asset-badge warning">
-                                        {formatGroupedNumber(
-                                          asset.errors.length,
-                                        )}{" "}
-                                        error
-                                        {asset.errors.length === 1 ? "" : "s"}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td>{asset.currency}</td>
-                            <td className="number">
-                              {formatGroupedNumber(asset.buys)}
-                            </td>
-                            <td className="number">
-                              {formatGroupedNumber(asset.sells)}
-                            </td>
-                            <td className="number">
-                              {formatGroupedNumber(asset.splits)}
-                            </td>
-                            <td className="number">
-                              {formatGroupedNumber(asset.dividends)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : null}
-
-            {preview.errors.length > 0 ? (
-              <ImportNoteSection title="Errors" notes={preview.errors} />
-            ) : null}
-
-            {preview.warnings.length > 0 ? (
-              <ImportNoteSection title="Warnings" notes={preview.warnings} />
-            ) : null}
-
-            {preview.new_instruments.length > 0 ? (
-              <>
-                <p className="eyebrow">New instruments</p>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Exchange</th>
-                        <th>Symbol</th>
-                        <th>ISIN</th>
-                        <th>Name</th>
-                        <th>Currency</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.new_instruments.map((instrument) => (
-                        <tr key={`${instrument.exchange}-${instrument.symbol}`}>
-                          <td>{instrument.exchange}</td>
-                          <td>{instrument.symbol}</td>
-                          <td>{instrument.isin ?? "-"}</td>
-                          <td>{instrument.name}</td>
-                          <td>{instrument.currency}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : null}
-
-            {state.error ? <p className="form-error">{state.error}</p> : null}
-
-            {isDuplicate && state.confirmingDuplicate ? (
-              <p className="form-error">
-                This file was already imported as batch{" "}
-                {preview.duplicate_of_batch_id}. Importing again will create a
-                second batch. Click "Import anyway" to confirm.
-              </p>
-            ) : null}
-
-            {isRefreshMode && state.confirmingAppend ? (
-              <p className="form-error">
-                This will append a new Avanza batch alongside the existing batch{" "}
-                {preview.replace_candidate_batch_id}. The existing batch will
-                not be modified.
-              </p>
-            ) : null}
-
-            <div className="form-actions">
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => {
-                  dispatch({ type: "reset" });
-                  setFileBytes(null);
+        <div className="transaction-form">
+          <div className="form-row">
+            <label className="form-field grow">
+              <span>CSV file</span>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => {
+                  void onFileChange(event);
                 }}
                 disabled={isBusy}
-              >
-                Cancel
-              </button>
-              {isRefreshMode ? (
-                state.confirmingAppend ? (
-                  <>
-                    <button
-                      type="button"
-                      className="button secondary"
-                      disabled={isBusy}
-                      onClick={() => {
-                        dispatch({ type: "cancelAppend" });
-                      }}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      className="button outline danger"
-                      disabled={commitBlockedByErrors || isBusy}
-                      onClick={() => {
-                        void onCommit(
-                          preview.duplicate_of_batch_id != null,
-                          false,
-                        );
-                      }}
-                    >
-                      Confirm append
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="button secondary"
-                      disabled={commitBlockedByErrors || isBusy}
-                      onClick={() => {
-                        dispatch({ type: "confirmAppend" });
-                      }}
-                    >
-                      Append as new batch…
-                    </button>
-                    <button
-                      type="button"
-                      className="button primary"
-                      disabled={commitBlockedByErrors || isBusy}
-                      onClick={() => {
-                        void onCommit(false, true);
-                      }}
-                    >
-                      Refresh Avanza import
-                    </button>
-                  </>
-                )
-              ) : isDuplicate && !state.confirmingDuplicate ? (
-                <button
-                  type="button"
-                  className="button outline danger"
-                  disabled={commitBlockedByErrors || isBusy}
-                  onClick={() => {
-                    dispatch({ type: "confirmDuplicate" });
-                  }}
-                >
-                  Import anyway...
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="button primary"
-                  disabled={commitBlockedByErrors || isBusy}
-                  onClick={() => {
-                    void onCommit(isDuplicate);
-                  }}
-                >
-                  {isDuplicate ? "Import anyway" : "Commit import"}
-                </button>
-              )}
+              />
+            </label>
+            <div className="form-field">
+              <span>Selected</span>
+              <div className="status-chip">
+                {state.fileName ?? "No file selected"}
+              </div>
             </div>
-          </>
-        ) : null}
+          </div>
 
-        {state.phase === "error" && !preview ? (
-          <>
-            <p className="form-error">{state.error}</p>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => {
-                  dispatch({ type: "reset" });
-                  setFileBytes(null);
-                }}
-              >
-                Choose another CSV
-              </button>
+          {state.phase === "previewing" ? (
+            <div className="board-state muted">
+              <div className="skeleton-bar" />
+              <div className="skeleton-bar" />
+              <div className="skeleton-bar" />
             </div>
-          </>
-        ) : null}
+          ) : null}
 
-        {state.phase === "committed" && state.result ? (
-          <>
-            <div className="board-state">
-              <p className="total-value">
-                Imported batch {formatGroupedNumber(state.result.batch_id)}
-              </p>
-              <ImportCountsMetrics counts={state.result.counts} showRows />
+          {preview && state.phase !== "previewing" ? (
+            <>
+              <section className="board-state muted import-summary">
+                <p className="total-value">
+                  {formatGroupedNumber(preview.counts.rows)} trades
+                </p>
+                <ImportCountsMetrics counts={preview.counts} />
+                {preview.metadata ? (
+                  <span className="status-chip">{preview.metadata.title}</span>
+                ) : null}
+                {isRefreshMode ? (
+                  <span className="status-chip">
+                    Will refresh Avanza batch{" "}
+                    {preview.replace_candidate_batch_id}
+                  </span>
+                ) : null}
+                {isDuplicate ? (
+                  <span className="status-chip warning">
+                    Already imported as batch {preview.duplicate_of_batch_id}
+                  </span>
+                ) : null}
+                {preview.replace_candidate_warning ? (
+                  <span className="status-chip warning">
+                    {preview.replace_candidate_warning}
+                  </span>
+                ) : null}
+              </section>
+
+              {preview.assets.length > 0 ? (
+                <>
+                  <p className="eyebrow">Assets</p>
+                  {isRefreshMode ? (
+                    <p className="form-note muted">
+                      Unchecked assets will be removed from the refreshed batch.
+                    </p>
+                  ) : null}
+                  <div className="table-wrap asset-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th className="checkbox-head">
+                            <span className="sr-only">Select</span>
+                          </th>
+                          <th>Asset</th>
+                          <th>Currency</th>
+                          <th>Buys</th>
+                          <th>Sells</th>
+                          <th>Splits</th>
+                          <th>Dividends</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.assets.map((asset) => {
+                          const checked = isAssetSelected(
+                            asset,
+                            state.selected,
+                          );
+                          const locked = asset.skipped_reason != null;
+
+                          return (
+                            <tr key={asset.asset_key}>
+                              <td className="checkbox-cell">
+                                <input
+                                  type="checkbox"
+                                  className="asset-check"
+                                  checked={checked}
+                                  disabled={locked || isBusy}
+                                  aria-label={`Include ${asset.name}`}
+                                  onChange={() => {
+                                    dispatch({
+                                      type: "toggleAsset",
+                                      assetKey: asset.asset_key,
+                                    });
+                                  }}
+                                />
+                              </td>
+                              <td>
+                                <div className="asset-name-cell">
+                                  <strong>{asset.name}</strong>
+                                  <div className="asset-meta-line">
+                                    <span>{asset.asset_key}</span>
+                                    <div className="asset-badges">
+                                      {asset.is_new_instrument ? (
+                                        <span className="asset-badge">
+                                          New instrument
+                                        </span>
+                                      ) : null}
+                                      {asset.skipped_reason ? (
+                                        <span className="asset-badge warning">
+                                          {asset.skipped_reason}
+                                        </span>
+                                      ) : null}
+                                      {asset.errors.length > 0 ? (
+                                        <span className="asset-badge warning">
+                                          {formatGroupedNumber(
+                                            asset.errors.length,
+                                          )}{" "}
+                                          error
+                                          {asset.errors.length === 1 ? "" : "s"}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{asset.currency}</td>
+                              <td className="number">
+                                {formatGroupedNumber(asset.buys)}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(asset.sells)}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(asset.splits)}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(asset.dividends)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+
+              {preview.errors.length > 0 ? (
+                <ImportNoteSection title="Errors" notes={preview.errors} />
+              ) : null}
+
+              {preview.warnings.length > 0 ? (
+                <ImportNoteSection title="Warnings" notes={preview.warnings} />
+              ) : null}
+
+              {preview.new_instruments.length > 0 ? (
+                <>
+                  <p className="eyebrow">New instruments</p>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Exchange</th>
+                          <th>Symbol</th>
+                          <th>ISIN</th>
+                          <th>Name</th>
+                          <th>Currency</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.new_instruments.map((instrument) => (
+                          <tr
+                            key={`${instrument.exchange}-${instrument.symbol}`}
+                          >
+                            <td>{instrument.exchange}</td>
+                            <td>{instrument.symbol}</td>
+                            <td>{instrument.isin ?? "-"}</td>
+                            <td>{instrument.name}</td>
+                            <td>{instrument.currency}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+
+              {state.error ? <p className="form-error">{state.error}</p> : null}
+
+              {isDuplicate && state.confirmingDuplicate ? (
+                <p className="form-error">
+                  This file was already imported as batch{" "}
+                  {preview.duplicate_of_batch_id}. Importing again will create a
+                  second batch. Click "Import anyway" to confirm.
+                </p>
+              ) : null}
+
+              {isRefreshMode && state.confirmingAppend ? (
+                <p className="form-error">
+                  This will append a new Avanza batch alongside the existing
+                  batch {preview.replace_candidate_batch_id}. The existing batch
+                  will not be modified.
+                </p>
+              ) : null}
+
               <div className="form-actions">
-                <button
-                  type="button"
-                  className="button primary"
-                  onClick={() => navigate("/transactions")}
-                  disabled={rollbackImport.isPending}
-                >
-                  View transactions
-                </button>
                 <button
                   type="button"
                   className="button secondary"
@@ -714,29 +600,215 @@ export function ImportView() {
                     dispatch({ type: "reset" });
                     setFileBytes(null);
                   }}
-                  disabled={rollbackImport.isPending}
+                  disabled={isBusy}
                 >
-                  Import another file
+                  Cancel
                 </button>
+                {isRefreshMode ? (
+                  state.confirmingAppend ? (
+                    <>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={isBusy}
+                        onClick={() => {
+                          dispatch({ type: "cancelAppend" });
+                        }}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        className="button outline danger"
+                        disabled={commitBlockedByErrors || isBusy}
+                        onClick={() => {
+                          void onCommit(
+                            preview.duplicate_of_batch_id != null,
+                            false,
+                          );
+                        }}
+                      >
+                        Confirm append
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={commitBlockedByErrors || isBusy}
+                        onClick={() => {
+                          dispatch({ type: "confirmAppend" });
+                        }}
+                      >
+                        Append as new batch…
+                      </button>
+                      <button
+                        type="button"
+                        className="button primary"
+                        disabled={commitBlockedByErrors || isBusy}
+                        onClick={() => {
+                          void onCommit(false, true);
+                        }}
+                      >
+                        Refresh Avanza import
+                      </button>
+                    </>
+                  )
+                ) : isDuplicate && !state.confirmingDuplicate ? (
+                  <button
+                    type="button"
+                    className="button outline danger"
+                    disabled={commitBlockedByErrors || isBusy}
+                    onClick={() => {
+                      dispatch({ type: "confirmDuplicate" });
+                    }}
+                  >
+                    Import anyway...
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={commitBlockedByErrors || isBusy}
+                    onClick={() => {
+                      void onCommit(isDuplicate);
+                    }}
+                  >
+                    {isDuplicate ? "Import anyway" : "Commit import"}
+                  </button>
+                )}
+              </div>
+            </>
+          ) : null}
+
+          {state.phase === "error" && !preview ? (
+            <>
+              <p className="form-error">{state.error}</p>
+              <div className="form-actions">
                 <button
                   type="button"
-                  className="button outline danger"
+                  className="button secondary"
                   onClick={() => {
-                    void onRollback(state.result?.batch_id ?? 0);
+                    dispatch({ type: "reset" });
+                    setFileBytes(null);
                   }}
-                  disabled={rollbackImport.isPending}
                 >
-                  Undo this import
+                  Choose another CSV
                 </button>
               </div>
-            </div>
-            {state.result.warnings.length > 0 ? (
-              <ImportNoteSection
-                title="Warnings"
-                notes={state.result.warnings}
-              />
-            ) : null}
-          </>
+            </>
+          ) : null}
+
+          {state.phase === "committed" && state.result ? (
+            <>
+              <div className="board-state">
+                <p className="total-value">
+                  Imported batch {formatGroupedNumber(state.result.batch_id)}
+                </p>
+                <ImportCountsMetrics counts={state.result.counts} showRows />
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => navigate("/transactions")}
+                    disabled={rollbackImport.isPending}
+                  >
+                    View transactions
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => {
+                      dispatch({ type: "reset" });
+                      setFileBytes(null);
+                    }}
+                    disabled={rollbackImport.isPending}
+                  >
+                    Import another file
+                  </button>
+                  <button
+                    type="button"
+                    className="button outline danger"
+                    onClick={() => {
+                      void onRollback(state.result?.batch_id ?? 0);
+                    }}
+                    disabled={rollbackImport.isPending}
+                  >
+                    Undo this import
+                  </button>
+                </div>
+              </div>
+              {state.result.warnings.length > 0 ? (
+                <ImportNoteSection
+                  title="Warnings"
+                  notes={state.result.warnings}
+                />
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </section>
+
+      <BackfillPanel />
+    </>
+  );
+}
+
+function BackfillPanel() {
+  const refreshPrices = useRefreshPrices();
+  const isBackfilling = refreshPrices.isPending;
+  const result = refreshPrices.data;
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">Maintenance</p>
+          <h2>Price history</h2>
+        </div>
+      </div>
+      <div className="transaction-form">
+        <p className="muted">
+          Fetches daily prices and FX from your earliest transaction up to
+          today. Normally only needed once, after setting up your portfolio.
+        </p>
+        <div className="form-actions">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={isBackfilling}
+            onClick={() => {
+              void refreshPrices.mutateAsync({ mode: "backfill" });
+            }}
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={isBackfilling ? "spin" : undefined}
+              size={16}
+            />
+            <span>Backfill full price history</span>
+          </button>
+        </div>
+        {refreshPrices.isError ? (
+          <p className="form-error">
+            {refreshPrices.error instanceof ApiError
+              ? refreshPrices.error.message
+              : "Backfill failed. Please try again."}
+          </p>
+        ) : null}
+        {result ? (
+          <p className="muted">
+            Backfill {result.status}: wrote{" "}
+            <strong className="number">
+              {formatGroupedNumber(result.prices_written)}
+            </strong>{" "}
+            price rows and{" "}
+            <strong className="number">
+              {formatGroupedNumber(result.fx_rates_written)}
+            </strong>{" "}
+            FX rates.
+          </p>
         ) : null}
       </div>
     </section>
