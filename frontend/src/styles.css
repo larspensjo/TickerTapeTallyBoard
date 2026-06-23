@@ -1405,6 +1405,37 @@ th.number-head .sort-button {
   align-items: center;
 }
 
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chart-legend-item::before {
+  content: "";
+  width: 14px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+
+.chart-legend-item.value::before {
+  border-top-color: #4f9cff;
+}
+
+.chart-legend-item.invested::before {
+  border-top-style: dashed;
+  border-top-color: #e0b15e;
+}
+
 .asset-two-col {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

@@ -8,6 +8,7 @@ import {
   type MoverRow,
   topMovers,
 } from "./dashboardSelectors";
+import { portfolioValueSeries } from "./portfolioValueViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { formatGroupedNumber } from "./valuationDisplay";
 
@@ -30,14 +31,7 @@ function DashboardValueChart({
   query: ReturnType<typeof usePortfolioValueHistory>;
 }) {
   const history = query.data?.points;
-  const points = useMemo(
-    () =>
-      (history ?? []).map((point) => ({
-        time: point.date,
-        value: Number(point.value_base),
-      })),
-    [history],
-  );
+  const series = useMemo(() => portfolioValueSeries(history ?? []), [history]);
   const incompleteDays = useMemo(
     () => (history ?? []).filter((point) => point.incomplete).length,
     [history],
@@ -66,7 +60,7 @@ function DashboardValueChart({
     );
   }
 
-  if (points.length === 0) {
+  if (series.value.length === 0) {
     return (
       <section className="chart-band muted" aria-label="Portfolio value">
         <span className="chart-band-label">
@@ -86,9 +80,14 @@ function DashboardValueChart({
           </span>
         ) : null}
       </div>
+      <div className="chart-legend" aria-hidden="true">
+        <span className="chart-legend-item value">Value</span>
+        <span className="chart-legend-item invested">Invested capital</span>
+      </div>
       <TimeSeriesChart
-        data={points}
-        ariaLabel="Portfolio value over time in SEK"
+        data={series.value}
+        referenceData={series.invested}
+        ariaLabel="Portfolio value over time in SEK, with net invested capital reference line"
         visibleStart={query.data?.start_date ?? undefined}
         height={280}
       />
