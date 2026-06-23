@@ -1,6 +1,6 @@
 # Frontend Test Expansion Plan
 
-> **For agentic workers:** Implement this plan task-by-task, in order. Steps use checkbox (`- [ ]`) syntax for tracking. Each task ends by *staging* its files (`git add …`) for review — do **not** `git commit`. Follow each task's verification step before moving on.
+> **For agentic workers:** Implement this plan task-by-task, in order. Steps use checkbox (`- [x]`) syntax for tracking. Each task ends by *staging* its files (`git add …`) for review — do **not** `git commit`. Follow each task's verification step before moving on.
 
 **Goal:** Build on the Vitest runner introduced by the Phase 4 charts work and extend automated coverage to the parts of the frontend that carry real logic but are currently untested: the three `useReducer` reducers, the pure view-model / selector helpers, the duplicated number-parsing helper, and the `api/client.ts` fetch/error layer.
 
@@ -17,11 +17,11 @@
 - Keep production behavior unchanged. The only production edits this plan makes are: (a) widening reducer visibility to `export` so they can be imported by tests, and (b) the DRY extraction of `parseFiniteNumber` in Phase 4. Both are behavior-preserving.
 - **Staging, not committing:** each task ends with `git add` of the listed files. Committing is a separate human action after review.
 
-## Open Questions (resolve before / during implementation)
+## Open Questions (resolved during implementation)
 
-1. **Reducer export style.** The reducers are module-private (`function reducer`, `function uiReducer`). This plan exports them under explicit names (`importReducer`, `boardReducer`, `addTransactionReducer`) plus their initial-state factories, keeping the components' internal `useReducer(...)` calls working. If you would rather extract each reducer into a sibling `*.reducer.ts` file (stronger separation, mirrors `dashboardSelectors.ts`), that is a reasonable alternative — pick one approach and apply it consistently. The plan assumes **in-place export**.
-2. **Version bump.** This is a test/refactor change with no user-facing behavior change except the behavior-preserving DRY extraction. The plan bumps `frontend/package.json` by a **patch** level at the end. Skip if the project treats test-only changes as non-versioned.
-3. **DecisionLog.** The plan adds one DecisionLog entry recording the frontend testing strategy (what is tested, the node-vs-jsdom convention). Drop it if you consider this too granular.
+1. **Reducer export style.** Resolved: in-place export used. Reducers exported as `importReducer`, `addTransactionReducer` with their types and factories; components' `useReducer` calls updated accordingly.
+2. **Version bump.** Skipped — test/refactor-only change with no user-facing behavior change.
+3. **DecisionLog.** Added. Entry dated 2026-06-23 documents the node-vs-jsdom convention, parseFiniteNumber consolidation, and the client test mock approach for null-body status codes.
 
 ---
 
@@ -60,7 +60,7 @@ These reducers are pure functions today; the only blocker to testing is that the
 - Modify: `frontend/src/components/AddTransactionForm.tsx`
 - Create: `frontend/src/components/AddTransactionForm.reducer.test.ts`
 
-- [ ] **Step 1: Export the reducer and types**
+- [x] **Step 1: Export the reducer and types**
 
 In `frontend/src/components/AddTransactionForm.tsx`:
 - Change `function reducer(` to `export function addTransactionReducer(`.
@@ -70,7 +70,7 @@ In `frontend/src/components/AddTransactionForm.tsx`:
 
 Run from `frontend/`: `npm run check` to confirm the rename compiles and the component still wires up.
 
-- [ ] **Step 2: Write the reducer test**
+- [x] **Step 2: Write the reducer test**
 
 Create `frontend/src/components/AddTransactionForm.reducer.test.ts`. Cover the public contract:
 - `fieldChanged` updates the named field and clears `error`.
@@ -122,7 +122,7 @@ describe("addTransactionReducer", () => {
 ```
 Add the remaining cases (`instrumentModeChanged`, `transactionTypeChanged`, `instrumentTypeChanged`, `submitSucceeded`) following the same shape, asserting exactly what the source branches do.
 
-- [ ] **Step 3: Verify, format, stage**
+- [x] **Step 3: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/components/AddTransactionForm.tsx frontend/src/components/AddTransactionForm.reducer.test.ts
@@ -146,7 +146,7 @@ No implementation work required. Skip to Task 1.3.
 
 **Interfaces:** the reducer drives the phase machine `idle → previewing → previewReady → committing → committed | error`, plus `confirmDuplicate`/`cancelDuplicate` and per-asset `toggleAsset` selection.
 
-- [ ] **Step 1: Export the reducer, types, and helpers**
+- [x] **Step 1: Export the reducer, types, and helpers**
 
 In `frontend/src/components/ImportView.tsx`:
 - Change `function reducer(` to `export function importReducer(`.
@@ -157,7 +157,7 @@ In `frontend/src/components/ImportView.tsx`:
 
 Run `npm run check`.
 
-- [ ] **Step 2: Write the state-machine test**
+- [x] **Step 2: Write the state-machine test**
 
 Create `frontend/src/components/ImportView.reducer.test.ts` (node env). Build minimal `ImportPreview` fixtures (read `../api/types` for the exact shape; only the fields the reducer touches — `assets[].asset_key`, `default_selected`, `skipped_reason` — need realistic values). Cover:
 - `sourceSelected` resets phase to `idle` and clears `fileName`/`preview`/`result`/`selected`/`error`.
@@ -211,7 +211,7 @@ describe("importReducer", () => {
 ```
 Expand with the remaining transitions above. This is the most valuable test in the plan — the import flow has the most states and the most user-visible consequences.
 
-- [ ] **Step 3: Verify, format, stage**
+- [x] **Step 3: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/components/ImportView.tsx frontend/src/components/ImportView.reducer.test.ts
@@ -228,7 +228,7 @@ git add frontend/src/components/ImportView.tsx frontend/src/components/ImportVie
 
 All functions here are already exported and pure — no production edit needed.
 
-- [ ] **Step 1: Write the test (node env)**
+- [x] **Step 1: Write the test (node env)**
 
 Create `frontend/src/components/assetViewModel.test.ts` covering:
 - `parseInstrumentId`: a valid numeric string → number; `undefined`, empty, non-numeric, negative/zero (read the function to confirm whether it rejects ≤0) → `null`.
@@ -239,7 +239,7 @@ Create `frontend/src/components/assetViewModel.test.ts` covering:
 
 Use tiny inline fixtures built from `../api/types` (an `Instrument`, a couple of `GainsRow`/`Holding`/`Transaction` records). Keep fixtures minimal — only the fields the function reads.
 
-- [ ] **Step 2: Verify, format, stage**
+- [x] **Step 2: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/components/assetViewModel.test.ts
@@ -254,7 +254,7 @@ git add frontend/src/components/assetViewModel.test.ts
 
 The pure helpers (`isAvailable`, `availabilityNumber`, `availabilitySortValues`, `signedTone`, `formatGroupedNumber`, `unavailableValue`) are exported already. `availabilitySortRows` depends on a TanStack `Row` and is better left to integration; skip it here.
 
-- [ ] **Step 1: Write the test (node env)**
+- [x] **Step 1: Write the test (node env)**
 
 Create `frontend/src/components/valuationDisplay.test.ts` covering:
 - `isAvailable`: `available` → true; `unavailable`/`undefined` → false (type-guard narrowing).
@@ -300,7 +300,7 @@ describe("formatGroupedNumber", () => {
 ```
 The current implementation groups with a comma separator (`replace(/\B(?=(\d{3})+(?!\d))/g, ",")`) and preserves the sign and fractional part, so `"1234567.89" → "1,234,567.89"`. If the implementation's separator ever changes, update the expectation to match the source.
 
-- [ ] **Step 2: Verify, format, stage**
+- [x] **Step 2: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/components/valuationDisplay.test.ts
@@ -320,7 +320,7 @@ git add frontend/src/components/valuationDisplay.test.ts
 - Modify: `frontend/src/components/HoldingsTable.tsx`
 - Create: `frontend/src/components/valuationDisplay.test.ts` is extended (or add to the Phase 2 file)
 
-- [ ] **Step 1: Add the shared helper**
+- [x] **Step 1: Add the shared helper**
 
 In `frontend/src/components/valuationDisplay.tsx`, add the more general signature (matches the HoldingsTable variant so both call sites compile):
 ```ts
@@ -330,14 +330,14 @@ export function parseFiniteNumber(value: string | number): number | null {
 }
 ```
 
-- [ ] **Step 2: Replace the two local copies**
+- [x] **Step 2: Replace the two local copies**
 
 - In `frontend/src/components/GainsTable.tsx`: delete the local `function parseFiniteNumber(…)` and import `parseFiniteNumber` from `./valuationDisplay` (merge into the existing `./valuationDisplay` import block).
 - In `frontend/src/components/HoldingsTable.tsx`: delete the local `function parseFiniteNumber(…)` and import it from `./valuationDisplay`.
 
 Confirm the local `availableNumber` / `moneyValue` helpers in each file still compile against the shared function.
 
-- [ ] **Step 3: Test the shared helper**
+- [x] **Step 3: Test the shared helper**
 
 Add to `frontend/src/components/valuationDisplay.test.ts`:
 ```ts
@@ -355,7 +355,7 @@ describe("parseFiniteNumber", () => {
 ```
 Note: `Number("")` is `0`, which **is** finite, so `parseFiniteNumber("")` returns `0`, not `null`. Read the call sites to confirm that is acceptable (the original helpers had the same behavior, so this is behavior-preserving). Adjust the assertion to the true result and add a comment if it is a surprising-but-intended edge.
 
-- [ ] **Step 4: Verify, format, stage**
+- [x] **Step 4: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/components/valuationDisplay.tsx frontend/src/components/GainsTable.tsx frontend/src/components/HoldingsTable.tsx frontend/src/components/valuationDisplay.test.ts
@@ -372,7 +372,7 @@ git add frontend/src/components/valuationDisplay.tsx frontend/src/components/Gai
 **Files:**
 - Create: `frontend/src/api/client.test.ts`
 
-- [ ] **Step 1: Write the test (node env — `fetch`/`Response` are global in the Vitest runtime)**
+- [x] **Step 1: Write the test (node env — `fetch`/`Response` are global in the Vitest runtime)**
 
 Create `frontend/src/api/client.test.ts`. Stub `global.fetch` per-case with `vi.fn()` returning a `Response`. Restore it in `afterEach`. Cover (all via the public callers — `parse` and `parseJson` stay private):
 - `apiGet` success: returns the parsed JSON body.
@@ -434,7 +434,7 @@ describe("client error mapping", () => {
 ```
 Confirm `vi.stubGlobal`/`new Response(...)` are available in the configured Vitest runtime; if `Response` is not global in `node` env, add `// @vitest-environment jsdom` to the top of this file (jsdom provides `fetch`/`Response`), or import from `undici`. Prefer the pragma over a new dependency.
 
-- [ ] **Step 2: Verify, format, stage**
+- [x] **Step 2: Verify, format, stage**
 ```bash
 cd frontend && npm run check && npm run fmt
 git add frontend/src/api/client.test.ts
@@ -448,7 +448,7 @@ git add frontend/src/api/client.test.ts
 - Modify: `docs/DecisionLog.md`
 - Modify: `frontend/package.json` (optional patch bump — see Open Question 2)
 
-- [ ] **Step 1: DecisionLog entry**
+- [x] **Step 1: DecisionLog entry**
 
 Append to `docs/DecisionLog.md` (match the existing dated-heading style):
 ```markdown
@@ -458,15 +458,15 @@ Context: `Agents.md` mandates pure, unit-testable reducers and prefers tests of 
 Consequences: The duplicated `parseFiniteNumber` was consolidated into one exported helper (one source of truth). No new dependencies; no runtime behavior change beyond that behavior-preserving extraction.
 ```
 
-- [ ] **Step 2: Optional patch bump**
+- [x] **Step 2: Optional patch bump**
 
 If versioning test/refactor changes (Open Question 2), bump `frontend/package.json` `"version"` by one patch level and refresh the lockfile: `npm.cmd install --package-lock-only` from `frontend/`. Otherwise skip.
 
-- [ ] **Step 3: Full verification**
+- [x] **Step 3: Full verification**
 
 Run from `frontend/`: `npm run check` then `npm run fmt`. Expected: types, Biome, and the full Vitest suite all green.
 
-- [ ] **Step 4: Stage**
+- [x] **Step 4: Stage**
 ```bash
 git add docs/DecisionLog.md frontend/package.json frontend/package-lock.json
 ```
