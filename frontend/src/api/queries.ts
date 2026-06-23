@@ -123,6 +123,16 @@ export interface NewTransactionInput {
   note?: string;
 }
 
+function invalidatePortfolioData(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+  void queryClient.invalidateQueries({ queryKey: ["gains"] });
+  void queryClient.invalidateQueries({ queryKey: ["price-status"] });
+  void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
+}
+
 export function useUpsertInstrument() {
   const queryClient = useQueryClient();
 
@@ -142,9 +152,7 @@ export function useCreateTransaction() {
     mutationFn: (input: NewTransactionInput) =>
       apiSend<Transaction>("POST", "/api/transactions", input),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      invalidatePortfolioData(queryClient);
     },
   });
 }
@@ -156,9 +164,7 @@ export function useDeleteTransaction() {
     mutationFn: (id: number) =>
       apiSend<void>("DELETE", `/api/transactions/${id}`, undefined),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      invalidatePortfolioData(queryClient);
     },
   });
 }
@@ -173,6 +179,10 @@ export function useRefreshPrices() {
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
       void queryClient.invalidateQueries({ queryKey: ["gains"] });
       void queryClient.invalidateQueries({ queryKey: ["price-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["portfolio-value-history"],
+      });
     },
   });
 }
@@ -229,9 +239,7 @@ export function useCommitImport() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      invalidatePortfolioData(queryClient);
     },
   });
 }
@@ -248,9 +256,7 @@ export function useRollbackImport() {
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      invalidatePortfolioData(queryClient);
     },
   });
 }

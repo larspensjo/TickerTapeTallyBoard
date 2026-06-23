@@ -19,6 +19,8 @@ import {
   deriveAssetData,
   headerStatus,
   parseInstrumentId,
+  type SplitEvent,
+  splitEvents,
   type Tiles,
   tilesView,
 } from "./assetViewModel";
@@ -107,6 +109,7 @@ export function AssetView() {
 
   const instruments = instrumentsQuery.data ?? [];
   const gain = data.kind === "position" ? data.gain : null;
+  const splits = splitEvents(data.transactions);
 
   return (
     <article className="asset-page">
@@ -128,6 +131,7 @@ export function AssetView() {
           <div className="asset-two-col">
             <GainsWaterfall view={waterfallView(data.gain)} />
             <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
+            <AssetSplits events={splits} />
           </div>
         </>
       ) : (
@@ -137,6 +141,7 @@ export function AssetView() {
             transactions={data.transactions}
           />
           <AssetDataMapping gain={null} priceStatus={data.priceStatus} />
+          <AssetSplits events={splits} />
         </>
       )}
 
@@ -310,7 +315,13 @@ function AssetPriceChart({
   );
   const currency = query.data?.currency;
   const markers = useMemo(
-    () => (currency ? tradeChartMarkers(transactions, currency) : []),
+    () =>
+      currency
+        ? [
+            ...tradeChartMarkers(transactions, currency),
+            ...splitChartMarkers(splitEvents(transactions)),
+          ]
+        : [],
     [transactions, currency],
   );
 
@@ -394,6 +405,30 @@ function tradeChartMarkers(
   });
 }
 
+function splitChartMarkers(events: SplitEvent[]): ChartTradeMarker[] {
+  return events.map((event) => ({
+    time: event.tradeDate,
+    side: "split",
+    title: "Split",
+    rows: [
+      { label: "Date", value: event.tradeDate },
+      { label: "Ratio", value: event.ratioLabel },
+      {
+        label: "Before",
+        value: formatGroupedNumber(event.beforeQuantity),
+      },
+      {
+        label: "After",
+        value: formatGroupedNumber(event.afterQuantity),
+      },
+      {
+        label: "Delta",
+        value: formatSignedQuantity(event.quantityDelta),
+      },
+    ],
+  }));
+}
+
 function firstTransactionDate(transactions: Transaction[]): string | undefined {
   return transactions.reduce<string | undefined>((firstDate, transaction) => {
     if (firstDate === undefined || transaction.trade_date < firstDate) {
@@ -402,6 +437,57 @@ function firstTransactionDate(transactions: Transaction[]): string | undefined {
 
     return firstDate;
   }, undefined);
+}
+
+function AssetSplits({ events }: { events: SplitEvent[] }) {
+  if (events.length === 0) {
+    return null;
+  }
+
+  const latest = events[events.length - 1];
+  const totalDelta = events.reduce(
+    (sum, event) => sum + event.quantityDelta,
+    0,
+  );
+
+  return (
+    <section className="panel asset-panel asset-splits" aria-label="Splits">
+      <h2>Splits</h2>
+      <dl className="data-list split-summary">
+        <DataRow label="Count">
+          <span className="number">{formatGroupedNumber(events.length)}</span>
+        </DataRow>
+        <DataRow label="Latest">
+          <span className="data-value">
+            <span className="number">{latest.ratioLabel}</span>
+            <span className="asset-subtle">{latest.tradeDate}</span>
+          </span>
+        </DataRow>
+        <DataRow label="Net delta">
+          <span className="number">{formatSignedQuantity(totalDelta)}</span>
+        </DataRow>
+      </dl>
+      <div className="split-event-list">
+        {events.map((event) => (
+          <article className="split-event" key={event.id}>
+            <div>
+              <span className="split-date number">{event.tradeDate}</span>
+              <span className="asset-subtle">
+                {formatGroupedNumber(event.beforeQuantity)} →{" "}
+                {formatGroupedNumber(event.afterQuantity)}
+              </span>
+            </div>
+            <div className="split-event-metrics">
+              <span className="status-chip compact">{event.ratioLabel}</span>
+              <span className="number">
+                {formatSignedQuantity(event.quantityDelta)}
+              </span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function AssetDataMapping({
@@ -425,6 +511,13 @@ function AssetDataMapping({
       </dl>
     </section>
   );
+}
+
+function formatSignedQuantity(value: number): string {
+  const formatted = formatGroupedNumber(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
 }
 
 function DataRow({ label, children }: { label: string; children: ReactNode }) {

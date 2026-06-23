@@ -18,7 +18,7 @@ export interface TimeSeriesPoint {
 
 export interface ChartTradeMarker {
   time: string;
-  side: "buy" | "sell";
+  side: "buy" | "sell" | "split";
   title: string;
   rows: { label: string; value: string }[];
 }
@@ -26,12 +26,13 @@ export interface ChartTradeMarker {
 interface TradeTooltipState {
   x: number;
   y: number;
-  marker: ChartTradeMarker;
+  markers: ChartTradeMarker[];
 }
 
 const markerColors = {
   buy: "#16c784",
   sell: "#ff4d4f",
+  split: "#a8acb3",
 } as const;
 
 function isoFromTime(time: Time): string | null {
@@ -151,10 +152,10 @@ export function TimeSeriesChart({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-  const markersRef = useRef<Map<string, ChartTradeMarker>>(new Map());
+  const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
 
-  markersRef.current = new Map(markers.map((marker) => [marker.time, marker]));
+  markersRef.current = groupedMarkers(markers);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -201,13 +202,17 @@ export function TimeSeriesChart({
 
     chart.subscribeCrosshairMove((param) => {
       const iso = param.time ? isoFromTime(param.time) : null;
-      const marker = iso ? markersRef.current.get(iso) : undefined;
-      if (!marker || !param.point) {
+      const tooltipMarkers = iso ? markersRef.current.get(iso) : undefined;
+      if (!tooltipMarkers || !param.point) {
         setTooltip(null);
         return;
       }
 
-      setTooltip({ x: param.point.x, y: param.point.y, marker });
+      setTooltip({
+        x: param.point.x,
+        y: param.point.y,
+        markers: tooltipMarkers,
+      });
     });
 
     return () => {
@@ -246,8 +251,18 @@ export function TimeSeriesChart({
       .sort((a, b) => a.time.localeCompare(b.time))
       .map((marker) => ({
         time: marker.time,
-        position: marker.side === "buy" ? "belowBar" : "aboveBar",
-        shape: marker.side === "buy" ? "arrowUp" : "arrowDown",
+        position:
+          marker.side === "buy"
+            ? "belowBar"
+            : marker.side === "sell"
+              ? "aboveBar"
+              : "inBar",
+        shape:
+          marker.side === "buy"
+            ? "arrowUp"
+            : marker.side === "sell"
+              ? "arrowDown"
+              : "circle",
         color: markerColors[marker.side],
       }));
 
@@ -265,23 +280,52 @@ export function TimeSeriesChart({
       />
       {tooltip ? (
         <div
-          className={`chart-trade-tooltip ${tooltip.marker.side}`}
+          className={`chart-trade-tooltip ${tooltip.markers[0]?.side ?? "split"}`}
           style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
           role="tooltip"
         >
-          <span className="chart-trade-tooltip-title">
-            {tooltip.marker.title}
-          </span>
-          <dl>
-            {tooltip.marker.rows.map((entry) => (
-              <div key={entry.label}>
-                <dt>{entry.label}</dt>
-                <dd>{entry.value}</dd>
-              </div>
-            ))}
-          </dl>
+          {tooltip.markers.map((marker) => (
+            <div
+              className={`chart-trade-tooltip-section ${marker.side}`}
+              key={`${marker.time}-${marker.title}`}
+            >
+              <span className="chart-trade-tooltip-title">{marker.title}</span>
+              <dl>
+                {marker.rows.map((entry) => (
+                  <div key={entry.label}>
+                    <dt>{entry.label}</dt>
+                    <dd>{entry.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function groupedMarkers(
+  markers: ChartTradeMarker[],
+): Map<string, ChartTradeMarker[]> {
+  const grouped = new Map<string, ChartTradeMarker[]>();
+
+  for (const marker of markers) {
+    const entries = grouped.get(marker.time) ?? [];
+    entries.push(marker);
+    grouped.set(marker.time, entries);
+  }
+
+  for (const entries of grouped.values()) {
+    entries.sort((a, b) => markerSortValue(a) - markerSortValue(b));
+  }
+
+  return grouped;
+}
+
+function markerSortValue(marker: ChartTradeMarker): number {
+  if (marker.side === "buy") return 0;
+  if (marker.side === "sell") return 1;
+  return 2;
 }

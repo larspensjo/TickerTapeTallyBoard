@@ -54,6 +54,16 @@ export interface HeaderStatus {
   tone: "neutral" | "warning";
 }
 
+export interface SplitEvent {
+  id: number;
+  tradeDate: string;
+  quantityDelta: number;
+  beforeQuantity: number;
+  afterQuantity: number;
+  ratioLabel: string;
+  factor: number;
+}
+
 export function parseInstrumentId(raw: string | undefined): number | null {
   if (raw === undefined) {
     return null;
@@ -101,6 +111,64 @@ export function sharesSold(transactions: Transaction[]): number {
   return transactions
     .filter((transaction) => transaction.type === "Sell")
     .reduce((sum, transaction) => sum + Math.abs(transaction.quantity), 0);
+}
+
+export function splitEvents(transactions: Transaction[]): SplitEvent[] {
+  const sorted = transactions
+    .slice()
+    .sort((a, b) => a.trade_date.localeCompare(b.trade_date) || a.id - b.id);
+  const events: SplitEvent[] = [];
+  let runningQuantity = 0;
+
+  for (const transaction of sorted) {
+    if (transaction.type === "Split") {
+      const beforeQuantity = runningQuantity;
+      const afterQuantity = runningQuantity + transaction.quantity;
+      const factor =
+        beforeQuantity > 0 && afterQuantity > 0
+          ? afterQuantity / beforeQuantity
+          : 0;
+      events.push({
+        id: transaction.id,
+        tradeDate: transaction.trade_date,
+        quantityDelta: transaction.quantity,
+        beforeQuantity,
+        afterQuantity,
+        ratioLabel: splitRatioLabel(beforeQuantity, afterQuantity),
+        factor,
+      });
+      runningQuantity = afterQuantity;
+    } else if (transaction.type === "Buy" || transaction.type === "Sell") {
+      runningQuantity += transaction.quantity;
+    }
+  }
+
+  return events;
+}
+
+function splitRatioLabel(
+  beforeQuantity: number,
+  afterQuantity: number,
+): string {
+  if (beforeQuantity <= 0 || afterQuantity <= 0) {
+    return "n/a";
+  }
+
+  const divisor = gcd(Math.abs(beforeQuantity), Math.abs(afterQuantity));
+  return `${afterQuantity / divisor}:${beforeQuantity / divisor}`;
+}
+
+function gcd(a: number, b: number): number {
+  let left = Math.trunc(a);
+  let right = Math.trunc(b);
+
+  while (right !== 0) {
+    const next = left % right;
+    left = right;
+    right = next;
+  }
+
+  return left || 1;
 }
 
 function averageCostBase(holding: Holding | null): MoneyValue {

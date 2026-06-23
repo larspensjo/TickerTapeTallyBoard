@@ -15,6 +15,7 @@ import {
   instrumentTransactions,
   parseInstrumentId,
   sharesSold,
+  splitEvents,
 } from "./assetViewModel";
 
 function makeInstrument(id: number): Instrument {
@@ -260,5 +261,51 @@ describe("sharesSold", () => {
   it("uses absolute value of quantity", () => {
     const txns = [makeTransaction(1, 1, "Sell", -5)];
     expect(sharesSold(txns)).toBe(5);
+  });
+});
+
+describe("splitEvents", () => {
+  it("derives split ratios from running ledger quantity", () => {
+    const events = splitEvents([
+      makeTransaction(1, 1, "Buy", 10),
+      makeTransaction(2, 1, "Split", 40),
+      makeTransaction(3, 1, "Sell", -5),
+      makeTransaction(4, 1, "Split", -36),
+    ]);
+
+    expect(events).toEqual([
+      {
+        id: 2,
+        tradeDate: "2024-01-01",
+        quantityDelta: 40,
+        beforeQuantity: 10,
+        afterQuantity: 50,
+        ratioLabel: "5:1",
+        factor: 5,
+      },
+      {
+        id: 4,
+        tradeDate: "2024-01-01",
+        quantityDelta: -36,
+        beforeQuantity: 45,
+        afterQuantity: 9,
+        ratioLabel: "1:5",
+        factor: 0.2,
+      },
+    ]);
+  });
+
+  it("sorts transactions by date and id before deriving split state", () => {
+    const events = splitEvents([
+      { ...makeTransaction(4, 1, "Split", 10), trade_date: "2024-01-03" },
+      { ...makeTransaction(2, 1, "Buy", 5), trade_date: "2024-01-01" },
+      { ...makeTransaction(3, 1, "Buy", 5), trade_date: "2024-01-03" },
+    ]);
+
+    expect(events[0]).toMatchObject({
+      beforeQuantity: 10,
+      afterQuantity: 20,
+      ratioLabel: "2:1",
+    });
   });
 });

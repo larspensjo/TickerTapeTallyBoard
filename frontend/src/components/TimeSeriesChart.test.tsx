@@ -176,6 +176,32 @@ describe("TimeSeriesChart", () => {
     });
   });
 
+  it("renders split markers as neutral in-bar circles", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-06-01", value: 300 }]}
+        markers={[
+          {
+            time: "2026-06-01",
+            side: "split",
+            title: "Split",
+            rows: [],
+          },
+        ]}
+      />,
+    );
+
+    expect(chartMocks.setMarkers).toHaveBeenLastCalledWith([
+      {
+        time: "2026-06-01",
+        position: "inBar",
+        shape: "circle",
+        color: "#a8acb3",
+      },
+    ]);
+  });
+
   it("falls back to fitContent when the requested visible start is after the data", () => {
     const data = [
       { time: "2026-01-02", value: 9150 },
