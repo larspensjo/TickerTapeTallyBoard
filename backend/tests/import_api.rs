@@ -174,7 +174,22 @@ async fn avanza_preview_counts_and_groups() {
         .any(|warning| warning["code"] == "missing_fx"));
     assert!(warnings
         .iter()
-        .any(|warning| warning["code"] == "non_integer_quantity"));
+        .all(|warning| warning["code"] != "non_integer_quantity"));
+
+    let assets = body["assets"].as_array().expect("assets");
+    let fund = assets
+        .iter()
+        .find(|asset| asset["name"] == "Avanza Global")
+        .expect("excluded fund asset");
+    assert_eq!(fund["default_selected"], false);
+    assert!(fund["warnings"]
+        .as_array()
+        .expect("fund warnings")
+        .is_empty());
+    assert_eq!(
+        fund["skipped_reason"],
+        "Avanza Global has fractional quantity 1.5; fund transactions are excluded"
+    );
 }
 
 #[tokio::test]

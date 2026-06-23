@@ -113,6 +113,25 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
                     group.warnings.push(note.clone());
                 }
             }
+            RowOutcome::Excluded {
+                asset_key,
+                name,
+                currency,
+                note,
+            } => {
+                skipped += 1;
+                if let Some(key) = asset_key {
+                    let group = asset_group_mut(
+                        &mut assets,
+                        &mut asset_order,
+                        key,
+                        name.as_deref(),
+                        currency.as_deref(),
+                    );
+                    group.skipped_reason = Some(note.message.clone());
+                    group.default_selected = false;
+                }
+            }
             RowOutcome::Error { asset_key, note } => {
                 errors.push(note.clone());
                 if let Some(key) = asset_key {
@@ -173,7 +192,9 @@ pub fn exclude_assets(prepared: &PreparedImport, exclude: &BTreeSet<String>) -> 
         .iter()
         .filter(|outcome| match outcome {
             RowOutcome::Mapped(mapped) => !exclude.contains(&mapped.instrument.asset_key()),
-            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
+            RowOutcome::Skip { asset_key, .. }
+            | RowOutcome::Excluded { asset_key, .. }
+            | RowOutcome::Error { asset_key, .. } => {
                 asset_key.as_ref().is_none_or(|key| !exclude.contains(key))
             }
         })
@@ -196,9 +217,9 @@ pub fn known_asset_keys(prepared: &PreparedImport) -> BTreeSet<String> {
         .iter()
         .filter_map(|outcome| match outcome {
             RowOutcome::Mapped(mapped) => Some(mapped.instrument.asset_key()),
-            RowOutcome::Skip { asset_key, .. } | RowOutcome::Error { asset_key, .. } => {
-                asset_key.clone()
-            }
+            RowOutcome::Skip { asset_key, .. }
+            | RowOutcome::Excluded { asset_key, .. }
+            | RowOutcome::Error { asset_key, .. } => asset_key.clone(),
         })
         .collect()
 }

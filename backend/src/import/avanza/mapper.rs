@@ -210,12 +210,17 @@ fn asset_key_of(isin: &str) -> Option<String> {
 
 fn map_buy_sell(row: &ParsedAvanzaRow, kind: TransactionKind) -> RowOutcome {
     if !row.quantity.fract().is_zero() {
-        return RowOutcome::Skip {
+        return RowOutcome::Excluded {
             asset_key: asset_key_of(&row.isin),
+            name: Some(row.name.clone()),
+            currency: Some(row.instrument_currency.clone()),
             note: RowNote {
                 row: Some(row.source_row_number),
-                code: "non_integer_quantity",
-                message: format!("quantity {} is not an integer (fund?)", row.quantity),
+                code: "fractional_fund_excluded",
+                message: format!(
+                    "{} has fractional quantity {}; fund transactions are excluded",
+                    row.name, row.quantity
+                ),
             },
         };
     }
@@ -299,12 +304,21 @@ fn map_dividend(
         };
     }
 
-    let eligible_qty = eligible_quantity_at(
-        &row.isin,
-        row.trade_date,
-        row.source_row_number,
-        position_events,
-    );
+    let eligible_qty = match positive_integer_quantity(row) {
+        Ok(Some(quantity)) => quantity,
+        Ok(None) => eligible_quantity_at(
+            &row.isin,
+            row.trade_date,
+            row.source_row_number,
+            position_events,
+        ),
+        Err(note) => {
+            return RowOutcome::Skip {
+                asset_key: asset_key_of(&row.isin),
+                note,
+            };
+        }
+    };
 
     if eligible_qty <= 0 {
         return RowOutcome::Skip {
@@ -320,49 +334,24 @@ fn map_dividend(
         };
     }
 
-    // Prefer positive native per-share Kurs when Avanza provides it.
-    // Otherwise derive from cash amount converted to native currency.
-    let (fx_rate_to_base, fx_warning) = match row.fx_rate {
-        Some(rate) if rate > Decimal::ZERO => (Some(rate), false),
-        _ if row.instrument_currency.eq_ignore_ascii_case("SEK") => (Some(Decimal::ONE), false),
-        _ => (None, true),
+    let native_price_per_share = if let Some(kurs) = row.price.filter(|k| *k > Decimal::ZERO) {
+        kurs
+    } else if let Some(fx) = dividend_fx_rate(row, cash_amount, eligible_qty, None).0 {
+        match derive_dividend_per_share(row, cash_amount, eligible_qty, fx) {
+            Ok(per_share) => per_share,
+            Err(note) => {
+                return RowOutcome::Skip {
+                    asset_key: asset_key_of(&row.isin),
+                    note,
+                };
+            }
+        }
+    } else {
+        return missing_dividend_fx(row);
     };
 
-    let native_price_per_share = if let Some(kurs) = row.price.filter(|k| *k > Decimal::ZERO) {
-        // Native per-share Kurs directly from Avanza
-        kurs
-    } else if let Some(fx) = fx_rate_to_base {
-        // Derive: cash_in_transaction_currency / fx / eligible_qty = native per share
-        let native_total = cash_amount.abs() / fx;
-        let per_share = native_total / Decimal::from(eligible_qty);
-        if per_share <= Decimal::ZERO {
-            return RowOutcome::Skip {
-                asset_key: asset_key_of(&row.isin),
-                note: RowNote {
-                    row: Some(row.source_row_number),
-                    code: "non_positive_dividend",
-                    message: format!(
-                        "derived per-share dividend for {} is not positive",
-                        row.name
-                    ),
-                },
-            };
-        }
-        per_share
-    } else {
-        // No native price and no FX — cannot derive native per-share for foreign dividend
-        return RowOutcome::Skip {
-            asset_key: asset_key_of(&row.isin),
-            note: RowNote {
-                row: Some(row.source_row_number),
-                code: "missing_fx_for_derivation",
-                message: format!(
-                    "dividend for {} has no native price and no FX rate; cannot derive per-share amount",
-                    row.name
-                ),
-            },
-        };
-    };
+    let (fx_rate_to_base, fx_warning) =
+        dividend_fx_rate(row, cash_amount, eligible_qty, Some(native_price_per_share));
 
     let instrument = instrument_by_isin
         .get(&row.isin)
@@ -392,6 +381,96 @@ fn map_dividend(
         note: None,
         fx_warning,
     })
+}
+
+fn positive_integer_quantity(row: &ParsedAvanzaRow) -> Result<Option<i64>, RowNote> {
+    if row.quantity <= Decimal::ZERO {
+        return Ok(None);
+    }
+    if !row.quantity.fract().is_zero() {
+        return Err(RowNote {
+            row: Some(row.source_row_number),
+            code: "non_integer_quantity",
+            message: format!(
+                "dividend quantity {} for {} is not an integer",
+                row.quantity, row.name
+            ),
+        });
+    }
+    row.quantity.to_i64().map(Some).ok_or_else(|| RowNote {
+        row: Some(row.source_row_number),
+        code: "non_integer_quantity",
+        message: format!(
+            "dividend quantity {} for {} does not fit in i64",
+            row.quantity, row.name
+        ),
+    })
+}
+
+fn dividend_fx_rate(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    native_price_per_share: Option<Decimal>,
+) -> (Option<Decimal>, bool) {
+    match row.fx_rate {
+        Some(rate) if rate > Decimal::ZERO => (Some(rate), false),
+        _ if row.instrument_currency.eq_ignore_ascii_case("SEK") => (Some(Decimal::ONE), false),
+        _ => derive_dividend_fx_from_source(row, cash_amount, eligible_qty, native_price_per_share)
+            .map_or((None, true), |fx| (Some(fx), false)),
+    }
+}
+
+fn derive_dividend_fx_from_source(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    native_price_per_share: Option<Decimal>,
+) -> Option<Decimal> {
+    if !row.transaction_currency.eq_ignore_ascii_case("SEK") {
+        return None;
+    }
+    let price = native_price_per_share.or(row.price)?;
+    if eligible_qty <= 0 || price <= Decimal::ZERO || cash_amount.is_zero() {
+        return None;
+    }
+    let native_total = Decimal::from(eligible_qty) * price;
+    (native_total > Decimal::ZERO).then(|| cash_amount.abs() / native_total)
+}
+
+fn derive_dividend_per_share(
+    row: &ParsedAvanzaRow,
+    cash_amount: Decimal,
+    eligible_qty: i64,
+    fx: Decimal,
+) -> Result<Decimal, RowNote> {
+    let native_total = cash_amount.abs() / fx;
+    let per_share = native_total / Decimal::from(eligible_qty);
+    if per_share <= Decimal::ZERO {
+        return Err(RowNote {
+            row: Some(row.source_row_number),
+            code: "non_positive_dividend",
+            message: format!(
+                "derived per-share dividend for {} is not positive",
+                row.name
+            ),
+        });
+    }
+    Ok(per_share)
+}
+
+fn missing_dividend_fx(row: &ParsedAvanzaRow) -> RowOutcome {
+    RowOutcome::Skip {
+        asset_key: asset_key_of(&row.isin),
+        note: RowNote {
+            row: Some(row.source_row_number),
+            code: "missing_fx_for_derivation",
+            message: format!(
+                "dividend for {} has no native price and no FX rate; cannot derive per-share amount",
+                row.name
+            ),
+        },
+    }
 }
 
 fn map_split(
@@ -783,6 +862,67 @@ mod tests {
     }
 
     #[test]
+    fn dividend_blank_fx_derives_rate_from_sek_amount_and_native_kurs() {
+        let prepared = to_prepared(&report(vec![
+            row(RowSpec {
+                source_row_number: 2,
+                trade_date: date(2025, 9, 8),
+                raw_kind: "Köp",
+                name: "Vistra",
+                quantity: dec!(72),
+                price: Some(dec!(188.385556)),
+                amount: Some(dec!(-127253.55)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(87.74)),
+                fx_rate: Some(dec!(9.37541)),
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+            row(RowSpec {
+                source_row_number: 3,
+                trade_date: date(2025, 12, 30),
+                raw_kind: "Sälj",
+                name: "Vistra",
+                quantity: dec!(-72),
+                price: Some(dec!(161.670417)),
+                amount: Some(dec!(106748.07)),
+                transaction_currency: "SEK",
+                brokerage: Some(dec!(73.69)),
+                fx_rate: Some(dec!(9.176915)),
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+            row(RowSpec {
+                source_row_number: 4,
+                trade_date: date(2026, 1, 2),
+                raw_kind: "Utdelning",
+                name: "Vistra",
+                quantity: dec!(72),
+                price: Some(dec!(0.227)),
+                amount: Some(dec!(150.02)),
+                transaction_currency: "SEK",
+                brokerage: None,
+                fx_rate: None,
+                instrument_currency: "USD",
+                isin: "US92840M1027",
+            }),
+        ]));
+
+        let dividend = mapped(&prepared)
+            .into_iter()
+            .find(|r| r.proposed.kind == TransactionKind::Dividend)
+            .expect("dividend row");
+
+        assert_eq!(dividend.proposed.quantity, 72);
+        assert_eq!(dividend.proposed.price, Some(dec!(0.227)));
+        assert_eq!(
+            dividend.proposed.fx_rate_to_base,
+            Some(dec!(150.02) / (dec!(72) * dec!(0.227)))
+        );
+        assert!(!dividend.fx_warning);
+    }
+
+    #[test]
     fn dividend_without_prior_buys_is_skipped() {
         let prepared = to_prepared(&report(vec![row(RowSpec {
             source_row_number: 2,
@@ -921,12 +1061,12 @@ mod tests {
     }
 
     #[test]
-    fn fractional_rows_are_skipped() {
+    fn fractional_rows_are_excluded_without_warning_noise() {
         let prepared = to_prepared(&report(vec![row(RowSpec {
             source_row_number: 2,
             trade_date: date(2026, 6, 7),
             raw_kind: "Köp",
-            name: "Volvo B",
+            name: "Spiltan Aktiefond Investmentbolag",
             quantity: dec!(1.5),
             price: Some(dec!(250)),
             amount: Some(dec!(375)),
@@ -934,16 +1074,28 @@ mod tests {
             brokerage: Some(dec!(0)),
             fx_rate: None,
             instrument_currency: "SEK",
-            isin: "SE0000115446",
+            isin: "SE0004297927",
         })]));
 
         assert!(matches!(
             prepared.outcomes[0],
-            RowOutcome::Skip {
+            RowOutcome::Excluded {
                 ref note,
                 asset_key: Some(_)
-            } if note.code == "non_integer_quantity"
+                , ..
+            } if note.code == "fractional_fund_excluded"
         ));
+
+        let plan = build_plan(&prepared, &PlanContext::default());
+        assert_eq!(plan.counts.skipped, 1);
+        assert_eq!(plan.counts.warnings, 0);
+        let asset = plan.assets.first().expect("excluded fund asset");
+        assert!(!asset.default_selected);
+        assert_eq!(asset.warnings.len(), 0);
+        assert_eq!(
+            asset.skipped_reason.as_deref(),
+            Some("Spiltan Aktiefond Investmentbolag has fractional quantity 1.5; fund transactions are excluded")
+        );
     }
 
     #[test]
