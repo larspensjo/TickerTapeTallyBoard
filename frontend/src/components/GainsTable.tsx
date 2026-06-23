@@ -103,6 +103,7 @@ interface GainsColumnSummary {
   marketValueBase: SummaryValue;
   totalReturnBase: SummaryValue;
   capitalGainBase: SummaryValue;
+  incomeBase: SummaryValue;
   currencyGainBase: SummaryValue;
   dayChangeBase: SummaryValue;
   dayChangePercent: SummaryValue;
@@ -116,6 +117,7 @@ const numericColumns = new Set([
   "market_value_base",
   "total_return_base",
   "capital_gain_base",
+  "income_base",
   "currency_gain_base",
   "day_change_base",
 ]);
@@ -240,6 +242,7 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
       gain.market_value_base,
       gain.total_return_base,
       gain.capital_gain_base,
+      gain.income_base,
       gain.currency_gain_base,
       gain.day_change_base,
     ];
@@ -278,6 +281,7 @@ function computeGainsColumnSummary(rows: RowView[]): GainsColumnSummary {
     capitalGainBase: summarizeMoneyValues(
       rows.map(({ gain }) => gain.capital_gain_base),
     ),
+    incomeBase: summarizeMoneyValues(rows.map(({ gain }) => gain.income_base)),
     currencyGainBase: summarizeMoneyValues(
       rows.map(({ gain }) => gain.currency_gain_base),
     ),
@@ -407,6 +411,14 @@ const columns = [
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
   }),
+  columnHelper.accessor((row) => row.gain.income_base, {
+    id: "income_base",
+    header: () => stackedHeader("Income", "SEK"),
+    sortingFn: availabilitySortRows,
+    cell: (info) => (
+      <AvailabilityValueCell value={info.getValue()} tone="signed" />
+    ),
+  }),
   columnHelper.accessor((row) => row.gain.currency_gain_base, {
     id: "currency_gain_base",
     header: () => stackedHeader("Currency gain", "SEK"),
@@ -521,6 +533,9 @@ export function GainsTable({
               : "",
             gain.capital_gain_base.status === "available"
               ? gain.capital_gain_base.value
+              : "",
+            gain.income_base.status === "available"
+              ? gain.income_base.value
               : "",
             gain.currency_gain_base.status === "available"
               ? gain.currency_gain_base.value
@@ -717,6 +732,9 @@ export function GainsTable({
                 {plainSummaryCell(summary.capitalGainBase, true)}
               </td>
               <td className="number">
+                {plainSummaryCell(summary.incomeBase, true)}
+              </td>
+              <td className="number">
                 {plainSummaryCell(summary.currencyGainBase, true)}
               </td>
               <td>
@@ -752,7 +770,7 @@ function totalReturnLabel(
   if (percentageMethod === "money_weighted") {
     return {
       label: "Total return (money-weighted)",
-      title: "Cumulative period return, ex-dividends",
+      title: "Cumulative period return, including dividend income",
     };
   }
   if (percentageMethod === "simple") {

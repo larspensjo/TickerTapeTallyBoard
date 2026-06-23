@@ -30,8 +30,8 @@ const view: WaterfallView = {
       span: { from: 265582.94, to: 319129.48 },
     },
     {
-      key: "dividends",
-      label: "Dividends",
+      key: "income",
+      label: "Dividend income",
       kind: "placeholder",
       value: { status: "unavailable", reasons: ["income_not_tracked"] },
       direction: null,
@@ -51,13 +51,14 @@ const view: WaterfallView = {
 };
 
 describe("GainsWaterfall", () => {
-  it("renders each row label, the currency header, and the dividends placeholder", () => {
+  it("renders each row label, the currency header, and the income placeholder", () => {
     render(<GainsWaterfall view={view} />);
     expect(screen.getByText("Cost basis (held)")).toBeInTheDocument();
+    expect(screen.getByText("Dividend income")).toBeInTheDocument();
     expect(screen.getByText("Total return")).toBeInTheDocument();
     expect(screen.getByText("SEK")).toBeInTheDocument();
     expect(screen.getByText("% of cost")).toBeInTheDocument();
-    // Dividends placeholder is a calm "not tracked" note, not a warning chip.
+    // Income placeholder is a calm "not tracked" note, not a warning chip.
     expect(screen.getByText("Not tracked yet")).toBeInTheDocument();
   });
 });

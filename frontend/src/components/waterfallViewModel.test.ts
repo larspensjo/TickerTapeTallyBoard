@@ -231,4 +231,30 @@ describe("waterfallView (closed)", () => {
     expect(total?.value).toEqual({ status: "available", value: "3175.00" });
     expect(total?.span).toEqual({ from: 10020, to: 13195 });
   });
+
+  it("adds available dividend income to closed total return", () => {
+    const view = waterfallView(
+      openGain({
+        position_status: "closed",
+        market_value_base: money("0.00"),
+        proceeds_base: money("13195.00"),
+        cost_basis_base: money("10020.00"),
+        price_effect_base: money("2175.00"),
+        fx_effect_base: money("1000.00"),
+        unrealized_gain_base: money("3175.00"),
+        realized_gain_base: money("3175.00"),
+        realized_cost_basis_base: money("10020.00"),
+        income_base: money("25.00"),
+        total_return_base: money("3175.00"),
+      }),
+    );
+
+    const income = view.rows.find((r) => r.key === "income");
+    expect(income?.kind).toBe("effect");
+    expect(income?.value).toEqual({ status: "available", value: "25.00" });
+
+    const total = view.rows.find((r) => r.key === "total-return");
+    expect(total?.value).toEqual({ status: "available", value: "3200.00" });
+    expect(total?.span).toEqual({ from: 10020, to: 13220 });
+  });
 });

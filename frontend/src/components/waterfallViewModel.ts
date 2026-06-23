@@ -144,6 +144,17 @@ function incomeRow(
   );
 }
 
+function incomeForTotalReturn(gain: GainsRow): MoneyValue {
+  if (
+    gain.income_base.status === "unavailable" &&
+    gain.income_base.reasons.includes("income_not_tracked")
+  ) {
+    return { status: "available", value: "0.00" };
+  }
+
+  return gain.income_base;
+}
+
 // Pushes an effect row, advances the running total, and returns the new running total.
 // An unavailable effect renders without a bar and does not move the running total.
 function pushEffect(
@@ -266,16 +277,9 @@ function openWaterfall(gain: GainsRow): WaterfallView {
   );
   running = incomeRow(gain, costBasis, running, rows);
 
-  // For total-return, income_not_tracked means no dividend history exists;
-  // treat it as zero rather than making total-return unavailable.
-  const incomeForSum: MoneyValue =
-    gain.income_base.status === "unavailable" &&
-    gain.income_base.reasons.includes("income_not_tracked")
-      ? { status: "available", value: "0.00" }
-      : gain.income_base;
   const totalReturn = displaySum(
     displaySum(gain.unrealized_gain_base, gain.realized_gain_base),
-    incomeForSum,
+    incomeForTotalReturn(gain),
   );
   // Total-return % is vs total capital deployed = held + sold cost basis; the delta bar
   // still floats from the held cost basis baseline.
@@ -310,11 +314,13 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
   );
   rows.push(levelRow("proceeds", "Proceeds", "subtotal", gain.proceeds_base));
   incomeRow(gain, costBasis, running, rows);
+  const totalReturn = displaySum(
+    gain.total_return_base,
+    incomeForTotalReturn(gain),
+  );
   // Closed: cost_basis_base already represents the full sold cost basis, so it serves as
   // both the denominator and the baseline (do not re-add realized_cost_basis_base).
-  rows.push(
-    totalRow("Total return", gain.total_return_base, costBasis, costBasis),
-  );
+  rows.push(totalRow("Total return", totalReturn, costBasis, costBasis));
 
   const { minValue, maxValue } = computeDomain(rows);
   return { mode: "closed", currency: CURRENCY, rows, minValue, maxValue };
