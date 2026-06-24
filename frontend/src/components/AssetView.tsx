@@ -196,25 +196,6 @@ function AssetMetricTiles({ tiles }: { tiles: Tiles }) {
   if (tiles.status === "open") {
     return (
       <section className="metric-tiles" aria-label="Position metrics">
-        <MetricTile label="Market value">
-          <SummaryAvailabilityValue
-            value={tiles.marketValue}
-            prefix="SEK "
-            tone="plain"
-          />
-        </MetricTile>
-        <MetricTile label="Unrealized">
-          <SummaryAvailabilityValue
-            value={tiles.unrealizedGain}
-            prefix="SEK "
-            tone="signed"
-          />{" "}
-          <SummaryAvailabilityValue
-            value={tiles.unrealizedPercent}
-            suffix="%"
-            tone="signed"
-          />
-        </MetricTile>
         <MetricTile label="Day change">
           <SummaryAvailabilityValue
             value={tiles.dayChange}
@@ -233,13 +214,6 @@ function AssetMetricTiles({ tiles }: { tiles: Tiles }) {
         <MetricTile label="Avg cost">
           <SummaryAvailabilityValue
             value={tiles.averageCost}
-            prefix="SEK "
-            tone="plain"
-          />
-        </MetricTile>
-        <MetricTile label="Cost basis">
-          <SummaryAvailabilityValue
-            value={tiles.costBasis}
             prefix="SEK "
             tone="plain"
           />

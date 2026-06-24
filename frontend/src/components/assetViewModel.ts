@@ -28,14 +28,10 @@ export type AssetData =
 
 export interface OpenTiles {
   status: "open";
-  marketValue: MoneyValue;
-  unrealizedGain: MoneyValue;
-  unrealizedPercent: PercentValue;
   dayChange: MoneyValue;
   dayChangePercent: PercentValue;
   quantity: number;
   averageCost: MoneyValue;
-  costBasis: MoneyValue;
 }
 
 export interface ClosedTiles {
@@ -233,14 +229,10 @@ export function tilesView(
 
   return {
     status: "open",
-    marketValue: gain.market_value_base,
-    unrealizedGain: gain.unrealized_gain_base,
-    unrealizedPercent: gain.unrealized_gain_percent,
     dayChange: gain.day_change_base,
     dayChangePercent: gain.day_change_percent,
     quantity: gain.quantity,
     averageCost: averageCostBase(holding),
-    costBasis: gain.cost_basis_base,
   };
 }
 
