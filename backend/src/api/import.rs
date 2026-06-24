@@ -406,6 +406,13 @@ async fn commit_source(
     let plan = build_plan(&effective, &ctx);
     reject_on_errors(&plan)?;
 
+    if plan.new_mapped_rows.is_empty() && !plan.already_imported_assets.is_empty() {
+        return Err(ApiError::bad_request(
+            "nothing_to_import",
+            "All rows are already imported — nothing to write.".to_string(),
+        ));
+    }
+
     if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
         if !params.allow_duplicate {
             return Err(duplicate_conflict(existing.id));

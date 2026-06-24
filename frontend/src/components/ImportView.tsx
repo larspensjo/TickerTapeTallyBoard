@@ -743,7 +743,9 @@ export function ImportView() {
                       <button
                         type="button"
                         className="button outline danger"
-                        disabled={commitBlockedByErrors || isBusy}
+                        disabled={
+                          commitBlockedByErrors || isBusy || noWritableAssets
+                        }
                         onClick={() => {
                           void onCommit(
                             preview.duplicate_of_batch_id != null,
@@ -759,7 +761,9 @@ export function ImportView() {
                       <button
                         type="button"
                         className="button secondary"
-                        disabled={commitBlockedByErrors || isBusy}
+                        disabled={
+                          commitBlockedByErrors || isBusy || noWritableAssets
+                        }
                         onClick={() => {
                           dispatch({ type: "confirmAppend" });
                         }}
