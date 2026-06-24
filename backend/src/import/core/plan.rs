@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
-use crate::domain::{self, LedgerTransaction, TransactionKind};
+use crate::domain::{self, LedgerTransaction, ProposedTransaction, TransactionKind};
 use crate::import::core::outcome::{InstrumentKey, MappedRow, PreparedImport, RowNote, RowOutcome};
 
 const RECONCILIATION_FLOOR_SEK: Decimal = dec!(300);
@@ -38,11 +38,15 @@ impl ExistingInstrument {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ImportPlan {
     pub counts: PlanCounts,
     pub new_instruments: Vec<InstrumentKey>,
     pub assets: Vec<AssetGroup>,
+    pub already_imported_assets: Vec<AssetGroup>,
+    /// Mapped rows that are NOT already imported. Used by commit_source to write
+    /// only genuinely new rows even on append, so the UI and backend agree.
+    pub new_mapped_rows: Vec<MappedRow>,
     pub warnings: Vec<RowNote>,
     pub errors: Vec<RowNote>,
 }
@@ -69,6 +73,10 @@ pub struct AssetGroup {
     pub sells: usize,
     pub splits: usize,
     pub dividends: usize,
+    pub already_imported_buys: usize,
+    pub already_imported_sells: usize,
+    pub already_imported_splits: usize,
+    pub already_imported_dividends: usize,
     pub default_selected: bool,
     pub skipped_reason: Option<String>,
     pub warnings: Vec<RowNote>,
@@ -76,11 +84,59 @@ pub struct AssetGroup {
     pub is_new_instrument: bool,
 }
 
+/// Stable identity tuple used to detect rows already present in the DB.
+/// Quantity is in its signed ledger form: Buy > 0, Sell < 0, Split = signed delta,
+/// Dividend = raw share count (mirrors the writer, which stores proposed.quantity for dividends).
+///
+/// The fingerprint intentionally omits FX rate, brokerage, note, source value, and currency.
+/// This is fuzzy-duplicate detection: same date/kind/qty/price rows are treated as already
+/// imported even if ancillary fields differ. The tradeoff is that a genuine correction
+/// (e.g. corrected FX rate on an existing row) would be suppressed. This is an acceptable
+/// default; exact identity matching can be added later if needed.
+type TxFingerprint = (
+    chrono::NaiveDate,
+    &'static str,
+    i64,
+    Option<Decimal>,
+    Option<Decimal>,
+);
+
+fn ledger_fingerprint(tx: &LedgerTransaction) -> TxFingerprint {
+    (
+        tx.trade_date,
+        tx.kind.as_db_str(),
+        tx.quantity,
+        tx.price,
+        tx.dividend_per_share,
+    )
+}
+
+fn proposed_fingerprint(proposed: &ProposedTransaction) -> TxFingerprint {
+    // Mirror the writer's quantity convention: Buy/Dividend/Split store positive quantity;
+    // Sell stores negated quantity. Dividend uses proposed.quantity (eligible share count),
+    // which is what the writer stores — NOT 0.
+    let signed = match proposed.kind {
+        TransactionKind::Sell => -proposed.quantity,
+        _ => proposed.quantity,
+    };
+    (
+        proposed.trade_date,
+        proposed.kind.as_db_str(),
+        signed,
+        proposed.price,
+        proposed.dividend_per_share,
+    )
+}
+
 pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
     let mut warnings: Vec<RowNote> = Vec::new();
     let mut errors: Vec<RowNote> = Vec::new();
     let mut new_instruments: Vec<InstrumentKey> = Vec::new();
     let mut mapped_rows: Vec<MappedRow> = Vec::new();
+    // all_mapped_rows is populated from every Mapped outcome before the already-imported
+    // check, so duplicate_row_warnings sees the full set even when one of a pair is
+    // already imported.
+    let mut all_mapped_rows: Vec<MappedRow> = Vec::new();
 
     let mut asset_order: Vec<String> = Vec::new();
     let mut assets: BTreeMap<String, AssetGroup> = BTreeMap::new();
@@ -88,9 +144,71 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
     let mut seeded: BTreeSet<String> = BTreeSet::new();
     let mut skipped = 0usize;
 
+    // Build per-instrument fingerprint bags from the existing DB ledger.
+    // Each entry is a multiset: fingerprint → remaining count available to match.
+    let mut fingerprint_bags: BTreeMap<i64, BTreeMap<TxFingerprint, usize>> = ctx
+        .existing_ledgers
+        .iter()
+        .map(|(&id, txs)| {
+            let mut bag: BTreeMap<TxFingerprint, usize> = BTreeMap::new();
+            for tx in txs {
+                *bag.entry(ledger_fingerprint(tx)).or_insert(0) += 1;
+            }
+            (id, bag)
+        })
+        .collect();
+
     for (index, outcome) in prepared.outcomes.iter().enumerate() {
         match outcome {
             RowOutcome::Mapped(mapped) => {
+                // Track every mapped row before any filtering, so duplicate_row_warnings
+                // sees the full source set even when one of a pair is already imported.
+                all_mapped_rows.push(mapped.clone());
+
+                // Detect rows already present in the DB by fingerprint match.
+                let existing_id = ctx
+                    .existing_instruments
+                    .iter()
+                    .find(|e| e.matches(&mapped.instrument))
+                    .map(|e| e.id);
+
+                let already_imported = if let Some(id) = existing_id {
+                    if let Some(bag) = fingerprint_bags.get_mut(&id) {
+                        let fp = proposed_fingerprint(&mapped.proposed);
+                        let count = bag.entry(fp).or_insert(0);
+                        if *count > 0 {
+                            *count -= 1;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if already_imported {
+                    // Track the row so the asset group is created with correct name/currency,
+                    // but do not add it to the ledger or to mapped_rows for error checking.
+                    let key = mapped.instrument.asset_key();
+                    let group = asset_group_mut(
+                        &mut assets,
+                        &mut asset_order,
+                        &key,
+                        Some(&mapped.instrument.name),
+                        Some(&mapped.instrument.currency),
+                    );
+                    match mapped.proposed.kind {
+                        TransactionKind::Buy => group.already_imported_buys += 1,
+                        TransactionKind::Sell => group.already_imported_sells += 1,
+                        TransactionKind::Split => group.already_imported_splits += 1,
+                        TransactionKind::Dividend => group.already_imported_dividends += 1,
+                    }
+                    continue;
+                }
+
                 mapped_rows.push(mapped.clone());
                 process_mapped(
                     index,
@@ -142,7 +260,9 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
         }
     }
 
-    duplicate_row_warnings(&mapped_rows, &mut warnings);
+    // Use all_mapped_rows so that duplicate warnings fire even when one of the
+    // duplicate pair was already imported (and thus absent from mapped_rows).
+    duplicate_row_warnings(&all_mapped_rows, &mut warnings);
     ledger_errors(&mut ledgers, ctx, prepared, &mut errors);
     attach_asset_notes(&mut assets, &warnings, &errors, &mapped_rows);
 
@@ -167,15 +287,37 @@ pub fn build_plan(prepared: &PreparedImport, ctx: &PlanContext) -> ImportPlan {
         errors: errors.len(),
     };
 
-    let assets = asset_order
+    // Separate assets: those with zero new rows (all rows already imported) go
+    // to already_imported_assets; mixed and fully-new assets stay in assets.
+    let mut already_imported_assets: Vec<AssetGroup> = Vec::new();
+    let assets: Vec<AssetGroup> = asset_order
         .into_iter()
-        .filter_map(|key| assets.remove(&key))
+        .filter_map(|key| {
+            let group = assets.remove(&key)?;
+            let has_new = group.buys + group.sells + group.splits + group.dividends > 0
+                || group.skipped_reason.is_some()
+                || !group.warnings.is_empty()
+                || !group.errors.is_empty();
+            let has_already_imported = group.already_imported_buys
+                + group.already_imported_sells
+                + group.already_imported_splits
+                + group.already_imported_dividends
+                > 0;
+            if !has_new && has_already_imported {
+                already_imported_assets.push(group);
+                None
+            } else {
+                Some(group)
+            }
+        })
         .collect();
 
     ImportPlan {
         counts,
         new_instruments,
         assets,
+        already_imported_assets,
+        new_mapped_rows: mapped_rows,
         warnings,
         errors,
     }
@@ -241,6 +383,10 @@ fn asset_group_mut<'a>(
             sells: 0,
             splits: 0,
             dividends: 0,
+            already_imported_buys: 0,
+            already_imported_sells: 0,
+            already_imported_splits: 0,
+            already_imported_dividends: 0,
             default_selected: true,
             skipped_reason: None,
             warnings: Vec::new(),
@@ -520,6 +666,12 @@ mod tests {
     use rust_decimal_macros::dec;
     use std::collections::BTreeMap;
 
+    const BUY_ONLY: &str = concat!(
+        "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
+        "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
+        "NASDAQ,MSFT,Microsoft,Buy,12/06/2026,10,\"12,50\",USD,\"0,00\",\"9,60\",SEK,\"0,100000\",\"1259,60\",All Trades,\n",
+    );
+
     const FRESH: &str = concat!(
         "P - All Trades Report between 2025-06-12 and 2026-06-12\n",
         "Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n",
@@ -646,6 +798,130 @@ mod tests {
             !plan.warnings.iter().any(|w| w.code == "duplicate_row"),
             "distinct fills must not be flagged as duplicates"
         );
+    }
+
+    #[test]
+    fn already_imported_buy_moves_to_already_imported_assets() {
+        // Existing ledger has a buy for MSFT (qty 10, price 12.50)
+        let existing_tx = LedgerTransaction {
+            id: 1,
+            trade_date: NaiveDate::from_ymd_opt(2026, 6, 12).unwrap(),
+            kind: TransactionKind::Buy,
+            quantity: 10,
+            price: Some(dec!(12.50)),
+            dividend_per_share: None,
+            fx_rate_to_base: Some(dec!(0.1)),
+            brokerage_base: dec!(9.60),
+        };
+        let mut existing_ledgers = BTreeMap::new();
+        existing_ledgers.insert(1, vec![existing_tx]);
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 1,
+                exchange: "NASDAQ".into(),
+                symbol: "MSFT".into(),
+                currency: "USD".into(),
+                isin: None,
+            }],
+            existing_ledgers,
+            max_existing_id: 1,
+        };
+        // CSV contains only that same buy (BUY_ONLY, not FRESH which also has a sell)
+        let plan = plan_for(BUY_ONLY, ctx);
+        // The buy row is already imported — so no new assets
+        assert_eq!(plan.assets.len(), 0, "no new assets expected");
+        assert_eq!(plan.already_imported_assets.len(), 1);
+        let group = &plan.already_imported_assets[0];
+        assert_eq!(group.already_imported_buys, 1);
+        assert_eq!(group.buys, 0);
+        assert_eq!(plan.counts.errors, 0);
+    }
+
+    #[test]
+    fn mixed_asset_has_already_imported_counts_and_no_position_error() {
+        // Existing ledger: buy of 10 MSFT at 12.50
+        let existing_tx = LedgerTransaction {
+            id: 1,
+            trade_date: NaiveDate::from_ymd_opt(2026, 6, 12).unwrap(),
+            kind: TransactionKind::Buy,
+            quantity: 10,
+            price: Some(dec!(12.50)),
+            dividend_per_share: None,
+            fx_rate_to_base: Some(dec!(0.1)),
+            brokerage_base: dec!(9.60),
+        };
+        let mut existing_ledgers = BTreeMap::new();
+        existing_ledgers.insert(1, vec![existing_tx]);
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 1,
+                exchange: "NASDAQ".into(),
+                symbol: "MSFT".into(),
+                currency: "USD".into(),
+                isin: None,
+            }],
+            existing_ledgers,
+            max_existing_id: 1,
+        };
+        // FRESH contains: buy 10 @ 12.50, sell 4 @ 12.60 — buy is already imported,
+        // sell is new but valid because the existing ledger covers the position.
+        let plan = plan_for(FRESH, ctx);
+        assert_eq!(
+            plan.already_imported_assets.len(),
+            0,
+            "mixed asset stays in main list"
+        );
+        assert_eq!(plan.assets.len(), 1);
+        let group = &plan.assets[0];
+        assert_eq!(
+            group.already_imported_buys, 1,
+            "buy counted as already imported"
+        );
+        assert_eq!(group.sells, 1, "sell is new");
+        assert_eq!(
+            plan.counts.errors, 0,
+            "no position error: existing ledger covers the sell"
+        );
+    }
+
+    #[test]
+    fn two_identical_existing_entries_matched_independently() {
+        // Two identical buys in the existing ledger (legitimately same-day same-price fills)
+        let tx = LedgerTransaction {
+            id: 1,
+            trade_date: NaiveDate::from_ymd_opt(2026, 6, 12).unwrap(),
+            kind: TransactionKind::Buy,
+            quantity: 10,
+            price: Some(dec!(12.50)),
+            dividend_per_share: None,
+            fx_rate_to_base: Some(dec!(0.1)),
+            brokerage_base: dec!(9.60),
+        };
+        let tx2 = LedgerTransaction {
+            id: 2,
+            ..tx.clone()
+        };
+        let mut existing_ledgers = BTreeMap::new();
+        existing_ledgers.insert(1, vec![tx, tx2]);
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 1,
+                exchange: "NASDAQ".into(),
+                symbol: "MSFT".into(),
+                currency: "USD".into(),
+                isin: None,
+            }],
+            existing_ledgers,
+            max_existing_id: 2,
+        };
+        // FRESH has: buy 10 @ 12.50, sell 4 @ 12.60. The buy matches one existing entry.
+        // The second existing buy + the sell: position = 10 + 10 - 4 = 16 → no error.
+        let plan = plan_for(FRESH, ctx);
+        assert_eq!(plan.already_imported_assets.len(), 0);
+        let group = &plan.assets[0];
+        assert_eq!(group.already_imported_buys, 1);
+        assert_eq!(group.sells, 1);
+        assert_eq!(plan.counts.errors, 0);
     }
 
     #[test]
