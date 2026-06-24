@@ -765,7 +765,7 @@ function totalReturnLabel(
 ): { label: string; title?: string; note?: string } {
   if (percentageMethod === "money_weighted") {
     return {
-      label: "Total return (money-weighted)",
+      label: "Total return including closed positions (money-weighted)",
       title: "Cumulative period return, including dividend income",
     };
   }

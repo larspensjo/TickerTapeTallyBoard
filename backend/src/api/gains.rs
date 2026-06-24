@@ -658,7 +658,8 @@ fn open_gain_row(
     let realized_cost = base_amount_availability(&realized.cost_basis_base);
     let realized_price = base_amount_availability(&realized.price_effect_base);
     let realized_fx = base_amount_availability(&realized.fx_effect_base);
-    let total_gain = add(&valued_holding.unrealized_gain_base, &realized_gain);
+    let total_gain_ex_income = add(&valued_holding.unrealized_gain_base, &realized_gain);
+    let total_gain = add(&total_gain_ex_income, income_base);
     let total_cost = add(&valued_holding.cost_basis_base, &realized_cost);
     let total_price_effect = add(&valued_holding.price_effect_base, &realized_price);
     let total_fx_effect = add(&valued_holding.fx_effect_base, &realized_fx);
@@ -780,8 +781,24 @@ fn closed_gain_row(
             &cost_basis_base,
         ),
         income_base: serialize_availability(income_base, |v| money_string(*v)),
-        total_return_base: serialize_availability(&gain_base, |v| money_string(*v)),
-        total_return_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
+        total_return_base: {
+            let tr = match (&gain_base, income_base) {
+                (Availability::Available(g), Availability::Available(i)) => {
+                    Availability::Available(g + i)
+                }
+                _ => gain_base.clone(),
+            };
+            serialize_availability(&tr, |v| money_string(*v))
+        },
+        total_return_percent: {
+            let tr = match (&gain_base, income_base) {
+                (Availability::Available(g), Availability::Available(i)) => {
+                    Availability::Available(g + i)
+                }
+                _ => gain_base.clone(),
+            };
+            current_position_percent(&tr, &cost_basis_base)
+        },
         price_effect_base: serialize_base_amount(&realized.price_effect_base),
         fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
         latest_price: None,
@@ -951,9 +968,14 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let row = &body["rows"][0];
         assert_eq!(row["quantity"], 6);
-        // Current-position contract: row total-return percent == unrealized percent.
-        assert_eq!(row["total_return_percent"], row["unrealized_gain_percent"]);
-        assert_eq!(row["total_return_base"], row["unrealized_gain_base"]);
+        // total_return includes unrealized + realized + income (no income here).
+        // unrealized(6 shares @120 fx11 vs @100 fx10) = 7920-6000 = 1920
+        // realized(4 shares @150 fx10 vs @100 fx10) = 6000-4000 = 2000
+        // total_cost = 6000+4000 = 10000; percent = 3920/10000 = 39.20
+        assert_available(&row["total_return_base"], "3920.00");
+        assert_available(&row["total_return_percent"], "39.20");
+        // unrealized percent uses remaining-shares cost only (1920/6000 = 32.00).
+        assert_available(&row["unrealized_gain_percent"], "32.00");
     }
 
     #[tokio::test]
@@ -1102,9 +1124,10 @@ mod tests {
         assert_eq!(open_row["quantity"], 6);
         assert_available_status(&open_row["performance_denominator_base"]);
         assert_available(&open_row["unrealized_gain_base"], "1908.00");
-        assert_available(&open_row["capital_gain_base"], "1308.00");
-        assert_available(&open_row["currency_gain_base"], "600.00");
-        assert_available(&open_row["total_return_base"], "1908.00");
+        // Breakdown columns include realized gains (unrealized price 1308 + realized price 867 = 2175).
+        assert_available(&open_row["capital_gain_base"], "2175.00");
+        assert_available(&open_row["currency_gain_base"], "1000.00");
+        assert_available(&open_row["total_return_base"], "3175.00");
     }
 
     #[tokio::test]
@@ -1295,7 +1318,7 @@ mod tests {
             "POST",
             "/api/transactions",
             json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-01-01",
-                   "quantity":100,"price":"10.00","currency":BASE_CURRENCY}),
+                   "quantity":100,"price":"10.00","currency":BASE_CURRENCY,"fx_rate_to_base":"1"}),
         )
         .await;
         send(
@@ -1303,19 +1326,19 @@ mod tests {
             "POST",
             "/api/transactions",
             json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
-                   "quantity":100,"price":"0.50","currency":BASE_CURRENCY}),
+                   "quantity":100,"dividend_per_share":"0.50","currency":BASE_CURRENCY}),
         )
         .await;
         seed_sek_prices(&state, instrument_id, "ERICB").await;
 
-        // income = 100 * 0.50 * 1 = 50 SEK
+        // income = 100 * 0.50 = 50 SEK; unrealized = 100*12 - 100*10 = 200 SEK
         let (status, body) = send(&state, "GET", "/api/gains?end_date=2026-06-30", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         let row = &body["rows"][0];
-        assert_eq!(row["income_base"]["status"], "available");
-        assert_eq!(row["income_base"]["value"], "50.00");
-        assert_eq!(body["totals"]["income_base"]["status"], "available");
-        assert_eq!(body["totals"]["income_base"]["value"], "50.00");
+        assert_available(&row["income_base"], "50.00");
+        assert_available(&body["totals"]["income_base"], "50.00");
+        // total_return_base must include income so row column sums match the header total.
+        assert_available(&row["total_return_base"], "250.00");
     }
 
     async fn seed_june_fixture(state: &AppState) -> i64 {
