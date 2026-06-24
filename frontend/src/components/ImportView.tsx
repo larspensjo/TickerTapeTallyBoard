@@ -520,55 +520,15 @@ export function ImportView() {
                               <td>{asset.currency}</td>
                               <td className="number">
                                 {formatGroupedNumber(asset.buys)}
-                                {asset.already_imported_buys > 0 && (
-                                  <span className="muted">
-                                    {" "}
-                                    (+
-                                    {formatGroupedNumber(
-                                      asset.already_imported_buys,
-                                    )}
-                                    )
-                                  </span>
-                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.sells)}
-                                {asset.already_imported_sells > 0 && (
-                                  <span className="muted">
-                                    {" "}
-                                    (+
-                                    {formatGroupedNumber(
-                                      asset.already_imported_sells,
-                                    )}
-                                    )
-                                  </span>
-                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.splits)}
-                                {asset.already_imported_splits > 0 && (
-                                  <span className="muted">
-                                    {" "}
-                                    (+
-                                    {formatGroupedNumber(
-                                      asset.already_imported_splits,
-                                    )}
-                                    )
-                                  </span>
-                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.dividends)}
-                                {asset.already_imported_dividends > 0 && (
-                                  <span className="muted">
-                                    {" "}
-                                    (+
-                                    {formatGroupedNumber(
-                                      asset.already_imported_dividends,
-                                    )}
-                                    )
-                                  </span>
-                                )}
                               </td>
                             </tr>
                           );
