@@ -350,7 +350,20 @@ async fn avanza_commit_replace(
         })
         .collect();
 
-    let batch_id = refresh_batch(state, "AVANZA", replace_batch_id, &hash, &mapped).await?;
+    // Instruments the user deselected, or where every row is already imported:
+    // their old batch rows must be preserved (not deleted) and their ledgers
+    // must not be re-validated.
+    let excluded_instrument_ids = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+
+    let batch_id = refresh_batch(
+        state,
+        "AVANZA",
+        replace_batch_id,
+        &hash,
+        &mapped,
+        &excluded_instrument_ids,
+    )
+    .await?;
 
     let mut warnings: Vec<RowNoteDto> = unknown
         .into_iter()
@@ -584,6 +597,44 @@ fn new_instrument_dto(key: &InstrumentKey) -> NewInstrumentDto {
     }
 }
 
+fn compute_excluded_instrument_ids(
+    ctx: &PlanContext,
+    exclude: &BTreeSet<String>,
+    plan: &ImportPlan,
+) -> BTreeSet<i64> {
+    ctx.existing_instruments
+        .iter()
+        .filter(|e| {
+            let key = e.asset_key();
+            // Explicitly deselected by the user
+            if exclude.contains(&key) {
+                return true;
+            }
+            // Fully already-imported: every row fingerprint-matched the DB
+            if plan
+                .already_imported_assets
+                .iter()
+                .any(|a| a.asset_key == key)
+            {
+                return true;
+            }
+            // Mixed: has new rows AND already-imported rows. The already-imported rows in
+            // `mapped` consume their old counterparts via canonical matching, but old rows
+            // that are NOT in the new CSV (e.g. an old buy that funded an already-imported
+            // sell) would otherwise be deleted, invalidating the ledger.
+            plan.assets.iter().any(|a| {
+                a.asset_key == key
+                    && (a.already_imported_buys
+                        + a.already_imported_sells
+                        + a.already_imported_splits
+                        + a.already_imported_dividends)
+                        > 0
+            })
+        })
+        .map(|e| e.id)
+        .collect()
+}
+
 fn row_note_dto(note: &RowNote) -> RowNoteDto {
     RowNoteDto {
         row: note.row,
@@ -594,13 +645,14 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_counts, AssetGroup, ImportPlan};
+    use super::{compute_excluded_instrument_ids, effective_counts, AssetGroup, ImportPlan};
     use crate::domain::{ProposedTransaction, TransactionKind};
     use crate::import::core::outcome::InstrumentKey;
     use crate::import::core::outcome::MappedRow;
-    use crate::import::core::plan::PlanCounts;
+    use crate::import::core::plan::{ExistingInstrument, PlanContext, PlanCounts};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn dummy_instrument() -> InstrumentKey {
         InstrumentKey {
@@ -676,5 +728,139 @@ mod tests {
         let counts_with_dividend = effective_counts(&plan, &mapped);
         assert_eq!(counts_with_dividend.rows, 1);
         assert_eq!(counts_with_dividend.dividends, 1);
+    }
+
+    #[test]
+    fn already_imported_assets_are_added_to_excluded_instrument_ids() {
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 42,
+                exchange: "AVANZA".into(),
+                symbol: "US0231351067".into(),
+                currency: "USD".into(),
+                isin: Some("US0231351067".into()),
+            }],
+            existing_ledgers: BTreeMap::new(),
+            max_existing_id: 0,
+        };
+        let exclude: BTreeSet<String> = BTreeSet::new();
+        let plan = ImportPlan {
+            counts: PlanCounts::default(),
+            new_instruments: Vec::new(),
+            assets: Vec::new(),
+            already_imported_assets: vec![AssetGroup {
+                asset_key: "US0231351067".into(),
+                name: "Some Stock".into(),
+                currency: "USD".into(),
+                buys: 0,
+                sells: 0,
+                splits: 0,
+                dividends: 0,
+                already_imported_buys: 0,
+                already_imported_sells: 1,
+                already_imported_splits: 0,
+                already_imported_dividends: 0,
+                default_selected: true,
+                skipped_reason: None,
+                warnings: Vec::new(),
+                errors: Vec::new(),
+                is_new_instrument: false,
+            }],
+            new_mapped_rows: Vec::new(),
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        assert!(
+            excluded.contains(&42),
+            "instrument in already_imported_assets must be excluded to protect its old batch rows"
+        );
+    }
+
+    #[test]
+    fn mixed_asset_with_already_imported_rows_is_added_to_excluded_instrument_ids() {
+        // Rocket Lab scenario: old batch has buy_old + sell; new CSV shows 1 new buy + same
+        // sell (already-imported). The already-imported sell consumes the old sell via
+        // canonical matching. buy_old has no match and would be deleted, making the sell
+        // invalid. Protection must extend to mixed assets that have already-imported row counts.
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 11,
+                exchange: "AVANZA".into(),
+                symbol: "US7731211089".into(),
+                currency: "USD".into(),
+                isin: Some("US7731211089".into()),
+            }],
+            existing_ledgers: BTreeMap::new(),
+            max_existing_id: 0,
+        };
+        let exclude: BTreeSet<String> = BTreeSet::new();
+        // Mixed asset: 1 new buy, 1 already-imported sell (still in the new CSV)
+        let plan = ImportPlan {
+            counts: PlanCounts::default(),
+            new_instruments: Vec::new(),
+            assets: vec![AssetGroup {
+                asset_key: "US7731211089".into(),
+                name: "Rocket Lab".into(),
+                currency: "USD".into(),
+                buys: 1,
+                sells: 0,
+                splits: 0,
+                dividends: 0,
+                already_imported_buys: 0,
+                already_imported_sells: 1,
+                already_imported_splits: 0,
+                already_imported_dividends: 0,
+                default_selected: true,
+                skipped_reason: None,
+                warnings: Vec::new(),
+                errors: Vec::new(),
+                is_new_instrument: false,
+            }],
+            already_imported_assets: Vec::new(),
+            new_mapped_rows: Vec::new(),
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        assert!(
+            excluded.contains(&11),
+            "mixed asset with already-imported rows must be excluded to protect old batch rows \
+             that the already-imported sell depends on"
+        );
+    }
+
+    #[test]
+    fn explicitly_excluded_asset_is_also_in_excluded_instrument_ids() {
+        let ctx = PlanContext {
+            existing_instruments: vec![ExistingInstrument {
+                id: 7,
+                exchange: "AVANZA".into(),
+                symbol: "SE0000108656".into(),
+                currency: "SEK".into(),
+                isin: Some("SE0000108656".into()),
+            }],
+            existing_ledgers: BTreeMap::new(),
+            max_existing_id: 0,
+        };
+        let mut exclude: BTreeSet<String> = BTreeSet::new();
+        exclude.insert("SE0000108656".into());
+        let plan = ImportPlan {
+            counts: PlanCounts::default(),
+            new_instruments: Vec::new(),
+            assets: Vec::new(),
+            already_imported_assets: Vec::new(),
+            new_mapped_rows: Vec::new(),
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        assert!(
+            excluded.contains(&7),
+            "explicitly excluded asset must remain in excluded_instrument_ids"
+        );
     }
 }

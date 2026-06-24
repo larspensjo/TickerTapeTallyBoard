@@ -323,12 +323,16 @@ pub async fn write_batch(
 /// The `expected_batch_id` must be the latest live AVANZA batch; if a newer
 /// AVANZA batch appeared between preview and commit, the call returns a
 /// `replace_candidate_changed` conflict rather than refreshing the wrong batch.
+/// Asset groups the user deselected are excluded from `mapped` but still
+/// exist in the old batch. Pass their instrument IDs here so `refresh_batch`
+/// leaves those rows untouched instead of deleting them.
 pub async fn refresh_batch(
     state: &AppState,
     source: &str,
     expected_batch_id: i64,
     hash: &str,
     mapped: &[MappedRow],
+    excluded_instrument_ids: &BTreeSet<i64>,
 ) -> Result<i64, ApiError> {
     // Pre-check: verify expected_batch_id is still the latest live batch for this source.
     let latest = import_batches::find_latest_by_source(&state.pool, source).await?;
@@ -459,8 +463,22 @@ pub async fn refresh_batch(
         }
     }
 
-    // Delete old rows that have no match in the new import
-    let ids_to_delete: Vec<i64> = old_by_canonical.values().flatten().copied().collect();
+    // Build the set of row IDs belonging to excluded instruments; these must
+    // be preserved even when they have no match in the new mapped rows.
+    let excluded_row_ids: BTreeSet<i64> = old_rows
+        .iter()
+        .filter(|r| excluded_instrument_ids.contains(&r.instrument_id))
+        .map(|r| r.id)
+        .collect();
+
+    // Delete old rows that have no match in the new import, except for rows
+    // belonging to excluded instruments (user deselected them; leave as-is).
+    let ids_to_delete: Vec<i64> = old_by_canonical
+        .values()
+        .flatten()
+        .copied()
+        .filter(|id| !excluded_row_ids.contains(id))
+        .collect();
     for id in ids_to_delete {
         transactions::delete_by_id_in_tx(&mut tx, id).await?;
     }
@@ -499,11 +517,14 @@ pub async fn refresh_batch(
     // Update batch metadata in place (hash and timestamp)
     import_batches::update_metadata_in_tx(&mut tx, expected_batch_id, &now_iso8601(), hash).await?;
 
-    // Re-derive ledgers for all affected instruments (union of old and new)
+    // Re-derive ledgers for all affected instruments (union of old and new),
+    // excluding instruments the user deselected — their rows were preserved
+    // untouched, so their ledger state is unchanged and needs no validation.
     let new_instrument_ids: BTreeSet<i64> = id_by_asset_key.values().copied().collect();
     let all_affected: BTreeSet<i64> = old_instrument_ids
         .union(&new_instrument_ids)
         .copied()
+        .filter(|id| !excluded_instrument_ids.contains(id))
         .collect();
 
     for &instrument_id in &all_affected {

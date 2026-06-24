@@ -36,6 +36,17 @@ impl ExistingInstrument {
             }
         }
     }
+
+    pub fn asset_key(&self) -> String {
+        match &self.isin {
+            Some(isin) => isin.clone(),
+            None => format!(
+                "{}:{}",
+                self.exchange.to_lowercase(),
+                self.symbol.to_lowercase()
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

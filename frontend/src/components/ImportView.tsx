@@ -738,7 +738,7 @@ export function ImportView() {
                           void onCommit(false, true);
                         }}
                       >
-                        Refresh Avanza import
+                        Update Avanza import
                       </button>
                     </>
                   )
