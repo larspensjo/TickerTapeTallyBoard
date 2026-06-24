@@ -383,7 +383,7 @@ async fn avanza_commit_replace(
 
     Ok(Json(ImportResult {
         batch_id,
-        counts: effective_counts(&plan, &mapped),
+        counts: effective_counts(&plan, &plan.new_mapped_rows),
         warnings,
     }))
 }
