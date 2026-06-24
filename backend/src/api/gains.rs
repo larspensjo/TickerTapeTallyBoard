@@ -651,6 +651,17 @@ fn open_gain_row(
     performance_start_date: Option<NaiveDate>,
     income_base: &Availability<Decimal>,
 ) -> Result<GainRow, ApiError> {
+    let add = |a: &Availability<Decimal>, b: &Availability<Decimal>| {
+        combine_availability(a, b, |x, y| x + y)
+    };
+    let realized_gain = base_amount_availability(&realized.gain_base);
+    let realized_cost = base_amount_availability(&realized.cost_basis_base);
+    let realized_price = base_amount_availability(&realized.price_effect_base);
+    let realized_fx = base_amount_availability(&realized.fx_effect_base);
+    let total_gain = add(&valued_holding.unrealized_gain_base, &realized_gain);
+    let total_cost = add(&valued_holding.cost_basis_base, &realized_cost);
+    let total_price_effect = add(&valued_holding.price_effect_base, &realized_price);
+    let total_fx_effect = add(&valued_holding.fx_effect_base, &realized_fx);
     Ok(GainRow {
         instrument: InstrumentResponse::from_row(instrument)?,
         quantity: valued_holding.quantity,
@@ -663,34 +674,15 @@ fn open_gain_row(
             &valued_holding.cost_basis_base,
             |v| money_string(*v),
         ),
-        total_return_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
-            money_string(*v)
-        }),
-        total_return_percent: current_position_percent(
-            &valued_holding.unrealized_gain_base,
-            &valued_holding.cost_basis_base,
-        ),
-        capital_gain_base: serialize_availability(&valued_holding.price_effect_base, |v| {
-            money_string(*v)
-        }),
-        capital_gain_percent: current_position_percent(
-            &valued_holding.price_effect_base,
-            &valued_holding.cost_basis_base,
-        ),
-        currency_gain_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
-            money_string(*v)
-        }),
-        currency_gain_percent: current_position_percent(
-            &valued_holding.fx_effect_base,
-            &valued_holding.cost_basis_base,
-        ),
+        total_return_base: serialize_availability(&total_gain, |v| money_string(*v)),
+        total_return_percent: current_position_percent(&total_gain, &total_cost),
+        capital_gain_base: serialize_availability(&total_price_effect, |v| money_string(*v)),
+        capital_gain_percent: current_position_percent(&total_price_effect, &total_cost),
+        currency_gain_base: serialize_availability(&total_fx_effect, |v| money_string(*v)),
+        currency_gain_percent: current_position_percent(&total_fx_effect, &total_cost),
         income_base: serialize_availability(income_base, |v| money_string(*v)),
-        price_effect_base: serialize_availability(&valued_holding.price_effect_base, |v| {
-            money_string(*v)
-        }),
-        fx_effect_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
-            money_string(*v)
-        }),
+        price_effect_base: serialize_availability(&total_price_effect, |v| money_string(*v)),
+        fx_effect_base: serialize_availability(&total_fx_effect, |v| money_string(*v)),
         latest_price: valued_holding
             .latest_price
             .as_ref()
@@ -819,6 +811,26 @@ fn closed_gain_row(
         reasons: reasons.iter().map(serialize_valuation_reason).collect(),
         position_status: GainPositionStatus::Closed,
     })
+}
+
+fn combine_availability<T, U, V, F>(
+    a: &Availability<T>,
+    b: &Availability<U>,
+    f: F,
+) -> Availability<V>
+where
+    F: Fn(&T, &U) -> V,
+{
+    match (a, b) {
+        (Availability::Available(x), Availability::Available(y)) => {
+            Availability::Available(f(x, y))
+        }
+        _ => {
+            let mut reasons = a.reasons();
+            reasons.extend(b.reasons());
+            Availability::Unavailable { reasons }
+        }
+    }
 }
 
 fn serialize_base_amount(value: &BaseAmount) -> AvailabilityResponse {
