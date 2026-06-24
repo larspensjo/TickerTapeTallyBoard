@@ -28,7 +28,7 @@ project has agreed to do going forward.
 ## YYYY-MM-DD - <decision title>
 Decision: <the rule, in present tense>
 Context: <why this was decided now>
-Consequences: <what this constrains or implies going forward>
+Consequences: <what this constrains or implies going forward at a high level without referencing code>
 ```
 
 ## 2026-06-12: Phase 0 Planning Decisions
@@ -333,3 +333,7 @@ Decision: The dashboard portfolio value chart includes a dashed, muted net-inves
 Context: Phase 6 implementation of the invested-capital reference line for portfolio performance visualization.
 Consequences: The portfolio value-history endpoint includes `invested_base` on each point. The chart legend displays both lines. The visual design uses a dashed line to distinguish reference from primary value. Subsequent phases may add per-instrument invested-capital lines or additional reference metrics.
 
+## 2026-06-24 - Import Delta Preview: Already-Imported Row Detection
+Decision: The import preview detects rows already in the database using a per-row fingerprint of `(trade_date, kind, signed_quantity, price, dividend_per_share)`. Matched rows are excluded from ledger validation and counted separately as "already imported". Assets where all rows are already imported move to a separate `already_imported_assets` list in the preview response; mixed assets stay in `assets` and expose both new and already-imported counts per transaction type. The UI presents fully-already-imported assets in a collapsed section and labels mixed-asset counts as `N (+M already imported)`.
+Context: Avanza full-history exports go back to account inception; a partial/incremental re-import overlapping prior batches produced false `sell_exceeds_position` errors because the planner double-counted transactions already in the existing ledger. The user's goal is to see only the delta (new rows) on the import page. Fingerprint matching uses exact equality on all five fields, which is safe because the user can review unexpected transactions in the result.
+Consequences: Fingerprint matching is fuzzy — it ignores FX rate, brokerage, note, and source value — so a re-imported row with a corrected fee or FX rate is suppressed as already imported. Detection only fires for existing instruments; new instruments always show all rows as new. Two legitimately identical transactions for the same instrument are matched independently (multiset semantics), so partial-fill pairs remain distinct. Append commit must respect the same filtering so the preview and the write operation stay consistent; otherwise the UI would suppress rows it then silently inserts.
