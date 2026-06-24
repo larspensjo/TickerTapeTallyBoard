@@ -238,6 +238,9 @@ function computeDomain(rows: WaterfallRow[]): {
 
 function openWaterfall(gain: GainsRow): WaterfallView {
   const costBasis = gain.cost_basis_base;
+  const priceEffect =
+    gain.unrealized_price_effect_base ?? gain.price_effect_base;
+  const fxEffect = gain.unrealized_fx_effect_base ?? gain.fx_effect_base;
   const rows: WaterfallRow[] = [];
   let running = toNumber(costBasis) ?? 0;
 
@@ -246,18 +249,11 @@ function openWaterfall(gain: GainsRow): WaterfallView {
     rows,
     "price",
     "Price effect",
-    gain.price_effect_base,
+    priceEffect,
     costBasis,
     running,
   );
-  running = pushEffect(
-    rows,
-    "fx",
-    "FX effect",
-    gain.fx_effect_base,
-    costBasis,
-    running,
-  );
+  running = pushEffect(rows, "fx", "FX effect", fxEffect, costBasis, running);
   rows.push(
     levelRow(
       "market-value",

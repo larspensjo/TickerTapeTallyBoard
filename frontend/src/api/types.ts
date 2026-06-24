@@ -152,6 +152,8 @@ export interface GainsRow {
   market_value_base: MoneyValue;
   proceeds_native: MoneyValue;
   proceeds_base: MoneyValue;
+  unrealized_price_effect_base?: MoneyValue;
+  unrealized_fx_effect_base?: MoneyValue;
   unrealized_gain_base: MoneyValue;
   unrealized_gain_percent: PercentValue;
   realized_gain_base: MoneyValue;

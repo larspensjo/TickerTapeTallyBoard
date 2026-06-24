@@ -37,6 +37,8 @@ function openGain(overrides: Partial<GainsRow> = {}): GainsRow {
     market_value_base: money("328547.67"),
     proceeds_native: missing(),
     proceeds_base: missing(),
+    unrealized_price_effect_base: money("53546.54"),
+    unrealized_fx_effect_base: money("9418.19"),
     unrealized_gain_base: money("62964.73"),
     unrealized_gain_percent: money("23.71"),
     realized_gain_base: money("0.00"),
@@ -75,7 +77,7 @@ describe("waterfallView (open)", () => {
 
   it("colors steps by sign and computes percent against cost basis", () => {
     const view = waterfallView(
-      openGain({ price_effect_base: money("-1000.00") }),
+      openGain({ unrealized_price_effect_base: money("-1000.00") }),
     );
     const price = view.rows.find((r) => r.key === "price");
     expect(price?.direction).toBe("down");
@@ -97,6 +99,37 @@ describe("waterfallView (open)", () => {
     );
     const total = view.rows.find((r) => r.key === "total-return");
     expect(total?.value).toEqual({ status: "available", value: "63164.73" });
+  });
+
+  it("uses held price and FX effects so realized gain is added exactly once", () => {
+    const view = waterfallView(
+      openGain({
+        cost_basis_base: money("203028.32"),
+        market_value_base: money("221246.20"),
+        price_effect_base: money("170372.62"),
+        fx_effect_base: money("13645.25"),
+        unrealized_price_effect_base: money("4572.63"),
+        unrealized_fx_effect_base: money("13645.25"),
+        unrealized_gain_base: money("18217.88"),
+        realized_gain_base: money("165799.99"),
+        realized_cost_basis_base: money("280491.70"),
+        total_return_base: money("184017.87"),
+      }),
+    );
+
+    const price = view.rows.find((r) => r.key === "price");
+    const fx = view.rows.find((r) => r.key === "fx");
+    const realized = view.rows.find((r) => r.key === "realized");
+    const total = view.rows.find((r) => r.key === "total-return");
+
+    expect(price?.value).toEqual({ status: "available", value: "4572.63" });
+    expect(fx?.value).toEqual({ status: "available", value: "13645.25" });
+    expect(realized?.value).toEqual({
+      status: "available",
+      value: "165799.99",
+    });
+    expect(total?.value).toEqual({ status: "available", value: "184017.87" });
+    expect(total?.percent).toEqual({ status: "available", value: "38.06" });
   });
 
   it("uses population-matched denominators for a partial sell (review finding #3)", () => {
@@ -176,7 +209,7 @@ describe("waterfallView (open)", () => {
 
   it("renders an unavailable effect with no bar and an unavailable percent", () => {
     const view = waterfallView(
-      openGain({ fx_effect_base: missing("missing_fx") }),
+      openGain({ unrealized_fx_effect_base: missing("missing_fx") }),
     );
     const fx = view.rows.find((r) => r.key === "fx");
     expect(fx?.span).toBeNull();

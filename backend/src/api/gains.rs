@@ -120,6 +120,8 @@ pub struct GainRow {
     pub market_value_base: AvailabilityResponse,
     pub proceeds_native: AvailabilityResponse,
     pub proceeds_base: AvailabilityResponse,
+    pub unrealized_price_effect_base: AvailabilityResponse,
+    pub unrealized_fx_effect_base: AvailabilityResponse,
     pub unrealized_gain_base: AvailabilityResponse,
     pub unrealized_gain_percent: AvailabilityResponse,
     pub realized_gain_base: AvailabilityResponse,
@@ -709,6 +711,13 @@ fn open_gain_row(
         proceeds_base: AvailabilityResponse::Unavailable {
             reasons: Vec::new(),
         },
+        unrealized_price_effect_base: serialize_availability(
+            &valued_holding.price_effect_base,
+            |v| money_string(*v),
+        ),
+        unrealized_fx_effect_base: serialize_availability(&valued_holding.fx_effect_base, |v| {
+            money_string(*v)
+        }),
         unrealized_gain_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
             money_string(*v)
         }),
@@ -815,6 +824,8 @@ fn closed_gain_row(
             value: money_string(realized.proceeds_native),
         },
         proceeds_base: serialize_base_amount(&realized.proceeds_base),
+        unrealized_price_effect_base: serialize_base_amount(&realized.price_effect_base),
+        unrealized_fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
         unrealized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
         unrealized_gain_percent: serialize_availability(&gain_percent, |v| format!("{:.2}", v)),
         realized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),
@@ -1029,6 +1040,8 @@ mod tests {
         assert_available(&row["market_value_base"], "0.00");
         assert_available(&row["proceeds_native"], "1200.00");
         assert_available(&row["proceeds_base"], "13195.00");
+        assert_available(&row["unrealized_price_effect_base"], "2175.00");
+        assert_available(&row["unrealized_fx_effect_base"], "1000.00");
         assert_available(&row["unrealized_gain_base"], "3175.00");
         assert_available(&row["unrealized_gain_percent"], "31.68");
         assert_available(&row["price_effect_base"], "2175.00");
@@ -1127,6 +1140,8 @@ mod tests {
         // Breakdown columns include realized gains (unrealized price 1308 + realized price 867 = 2175).
         assert_available(&open_row["capital_gain_base"], "2175.00");
         assert_available(&open_row["currency_gain_base"], "1000.00");
+        assert_available(&open_row["unrealized_price_effect_base"], "1308.00");
+        assert_available(&open_row["unrealized_fx_effect_base"], "600.00");
         assert_available(&open_row["total_return_base"], "3175.00");
     }
 
