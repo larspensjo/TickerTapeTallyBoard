@@ -237,6 +237,7 @@ export function ImportView() {
   const navigate = useNavigate();
   const [state, dispatch] = useReducer(importReducer, INITIAL_STATE);
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
+  const [showAlreadyImported, setShowAlreadyImported] = useState(false);
   const previewImport = usePreviewImport();
   const commitImport = useCommitImport();
   const rollbackImport = useRollbackImport();
@@ -335,6 +336,10 @@ export function ImportView() {
     state.source === "avanza" && preview?.replace_candidate_batch_id != null;
   const isDuplicate = preview?.duplicate_of_batch_id != null && !isRefreshMode;
   const commitBlockedByErrors = hasBlockingErrors(preview, state.selected);
+  const noWritableAssets =
+    preview !== null &&
+    preview.assets.length === 0 &&
+    preview.already_imported_assets.length > 0;
   const isBusy =
     state.phase === "previewing" ||
     state.phase === "committing" ||
@@ -515,15 +520,55 @@ export function ImportView() {
                               <td>{asset.currency}</td>
                               <td className="number">
                                 {formatGroupedNumber(asset.buys)}
+                                {asset.already_imported_buys > 0 && (
+                                  <span className="muted">
+                                    {" "}
+                                    (+
+                                    {formatGroupedNumber(
+                                      asset.already_imported_buys,
+                                    )}
+                                    )
+                                  </span>
+                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.sells)}
+                                {asset.already_imported_sells > 0 && (
+                                  <span className="muted">
+                                    {" "}
+                                    (+
+                                    {formatGroupedNumber(
+                                      asset.already_imported_sells,
+                                    )}
+                                    )
+                                  </span>
+                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.splits)}
+                                {asset.already_imported_splits > 0 && (
+                                  <span className="muted">
+                                    {" "}
+                                    (+
+                                    {formatGroupedNumber(
+                                      asset.already_imported_splits,
+                                    )}
+                                    )
+                                  </span>
+                                )}
                               </td>
                               <td className="number">
                                 {formatGroupedNumber(asset.dividends)}
+                                {asset.already_imported_dividends > 0 && (
+                                  <span className="muted">
+                                    {" "}
+                                    (+
+                                    {formatGroupedNumber(
+                                      asset.already_imported_dividends,
+                                    )}
+                                    )
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -531,6 +576,84 @@ export function ImportView() {
                       </tbody>
                     </table>
                   </div>
+                </>
+              ) : null}
+
+              {preview.already_imported_assets.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setShowAlreadyImported((v) => !v)}
+                  >
+                    {showAlreadyImported ? "Hide" : "Show"} already imported (
+                    {preview.already_imported_assets.length} asset
+                    {preview.already_imported_assets.length === 1 ? "" : "s"})
+                  </button>
+                  {showAlreadyImported ? (
+                    <div className="table-wrap asset-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th className="checkbox-head">
+                              <span className="sr-only">Select</span>
+                            </th>
+                            <th>Asset</th>
+                            <th>Currency</th>
+                            <th>Buys</th>
+                            <th>Sells</th>
+                            <th>Splits</th>
+                            <th>Dividends</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {preview.already_imported_assets.map((asset) => (
+                            <tr key={asset.asset_key}>
+                              <td className="checkbox-cell">
+                                <input
+                                  type="checkbox"
+                                  className="asset-check"
+                                  checked={false}
+                                  disabled
+                                  aria-label={`Include ${asset.name}`}
+                                  onChange={() => undefined}
+                                />
+                              </td>
+                              <td>
+                                <div className="asset-name-cell">
+                                  <strong>{asset.name}</strong>
+                                  <div className="asset-meta-line">
+                                    <span>{asset.asset_key}</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{asset.currency}</td>
+                              <td className="number">
+                                {formatGroupedNumber(
+                                  asset.already_imported_buys,
+                                )}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(
+                                  asset.already_imported_sells,
+                                )}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(
+                                  asset.already_imported_splits,
+                                )}
+                              </td>
+                              <td className="number">
+                                {formatGroupedNumber(
+                                  asset.already_imported_dividends,
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
 
@@ -670,7 +793,14 @@ export function ImportView() {
                   <button
                     type="button"
                     className="button primary"
-                    disabled={commitBlockedByErrors || isBusy}
+                    disabled={
+                      commitBlockedByErrors || isBusy || noWritableAssets
+                    }
+                    title={
+                      noWritableAssets
+                        ? "All rows are already imported — nothing to commit"
+                        : undefined
+                    }
                     onClick={() => {
                       void onCommit(isDuplicate);
                     }}

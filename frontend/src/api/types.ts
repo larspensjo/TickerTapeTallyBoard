@@ -305,6 +305,10 @@ export interface ImportAssetGroup {
   sells: number;
   splits: number;
   dividends: number;
+  already_imported_buys: number;
+  already_imported_sells: number;
+  already_imported_splits: number;
+  already_imported_dividends: number;
   default_selected: boolean;
   skipped_reason: string | null;
   warnings: ImportRowNote[];
@@ -316,6 +320,7 @@ export interface ImportPreview {
   metadata: { title: string; date_from: string; date_to: string } | null;
   counts: ImportCounts;
   assets: ImportAssetGroup[];
+  already_imported_assets: ImportAssetGroup[];
   new_instruments: ImportNewInstrument[];
   warnings: ImportRowNote[];
   errors: ImportRowNote[];
