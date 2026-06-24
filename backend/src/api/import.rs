@@ -31,6 +31,7 @@ pub struct ImportPreview {
     pub metadata: Option<PreviewMetadata>,
     pub counts: PreviewCounts,
     pub assets: Vec<AssetGroupDto>,
+    pub already_imported_assets: Vec<AssetGroupDto>,
     pub new_instruments: Vec<NewInstrumentDto>,
     pub warnings: Vec<RowNoteDto>,
     pub errors: Vec<RowNoteDto>,
@@ -71,6 +72,10 @@ pub struct AssetGroupDto {
     pub sells: usize,
     pub splits: usize,
     pub dividends: usize,
+    pub already_imported_buys: usize,
+    pub already_imported_sells: usize,
+    pub already_imported_splits: usize,
+    pub already_imported_dividends: usize,
     pub default_selected: bool,
     pub skipped_reason: Option<String>,
     pub warnings: Vec<RowNoteDto>,
@@ -227,6 +232,11 @@ async fn preview_source(
         }),
         counts: counts_dto(&plan),
         assets: plan.assets.iter().map(asset_group_dto).collect(),
+        already_imported_assets: plan
+            .already_imported_assets
+            .iter()
+            .map(asset_group_dto)
+            .collect(),
         new_instruments: plan
             .new_instruments
             .iter()
@@ -284,6 +294,11 @@ async fn avanza_preview_inner(
         }),
         counts: counts_dto(&plan),
         assets: plan.assets.iter().map(asset_group_dto).collect(),
+        already_imported_assets: plan
+            .already_imported_assets
+            .iter()
+            .map(asset_group_dto)
+            .collect(),
         new_instruments: plan
             .new_instruments
             .iter()
@@ -360,6 +375,9 @@ async fn avanza_commit_replace(
     }))
 }
 
+// Invariant: already-imported rows (fingerprint-matched by build_plan) are
+// excluded from new_mapped_rows and therefore never written to write_batch.
+// A CSV that is fully already-imported produces an empty write_batch call.
 async fn commit_source(
     state: &AppState,
     bytes: &[u8],
@@ -394,15 +412,9 @@ async fn commit_source(
         }
     }
 
-    let mapped: Vec<MappedRow> = effective
-        .outcomes
-        .iter()
-        .filter_map(|outcome| match outcome {
-            RowOutcome::Mapped(mapped) => Some(mapped.clone()),
-            _ => None,
-        })
-        .collect();
-    let batch_id = write_batch(state, source, &hash, &mapped).await?;
+    // Use the already-filtered list from the plan so already-imported
+    // rows are not written again on append.
+    let batch_id = write_batch(state, source, &hash, &plan.new_mapped_rows).await?;
 
     let warnings = unknown
         .into_iter()
@@ -415,7 +427,7 @@ async fn commit_source(
 
     Ok(Json(ImportResult {
         batch_id,
-        counts: effective_counts(&plan, &mapped),
+        counts: effective_counts(&plan, &plan.new_mapped_rows),
         warnings,
     }))
 }
@@ -428,6 +440,7 @@ fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) ->
             ..Default::default()
         },
         assets: Vec::new(),
+        already_imported_assets: Vec::new(),
         new_instruments: Vec::new(),
         warnings: Vec::new(),
         errors: vec![RowNoteDto {
@@ -542,6 +555,10 @@ fn asset_group_dto(group: &AssetGroup) -> AssetGroupDto {
         sells: group.sells,
         splits: group.splits,
         dividends: group.dividends,
+        already_imported_buys: group.already_imported_buys,
+        already_imported_sells: group.already_imported_sells,
+        already_imported_splits: group.already_imported_splits,
+        already_imported_dividends: group.already_imported_dividends,
         default_selected: group.default_selected,
         skipped_reason: group.skipped_reason.clone(),
         warnings: group.warnings.iter().map(row_note_dto).collect(),
