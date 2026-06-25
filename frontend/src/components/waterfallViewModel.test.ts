@@ -233,6 +233,94 @@ describe("waterfallView (open)", () => {
       reasons: expect.arrayContaining(["missing_price", "missing_fx"]),
     });
   });
+
+  it("stacked segments: profitable case anchors gray at cost basis then chains effect spans right", () => {
+    // Default openGain: costBasis=265582.94, price=53546.54, fx=9418.19, realized=0, income=placeholder
+    const view = waterfallView(openGain());
+    const total = view.rows.find((r) => r.key === "total-return");
+    const segs = total?.stackedSegments;
+    expect(segs).toBeDefined();
+
+    // Gray base = [0, costBasis]
+    expect(segs?.[0]).toEqual({
+      key: "stacked-base",
+      direction: null,
+      span: { from: 0, to: 265582.94 },
+    });
+    // Price and FX segments match their own row spans
+    const priceRow = view.rows.find((r) => r.key === "price");
+    const fxRow = view.rows.find((r) => r.key === "fx");
+    expect(segs?.[1]).toEqual({
+      key: "stacked-price",
+      direction: priceRow?.direction,
+      span: priceRow?.span,
+    });
+    expect(segs?.[2]).toEqual({
+      key: "stacked-fx",
+      direction: fxRow?.direction,
+      span: fxRow?.span,
+    });
+    // Realized (zero) has a span so it is included; income placeholder has no span so it is skipped
+    const realizedRow = view.rows.find((r) => r.key === "realized");
+    expect(segs?.[3]).toEqual({
+      key: "stacked-realized",
+      direction: realizedRow?.direction,
+      span: realizedRow?.span,
+    });
+    expect(segs).toHaveLength(4);
+  });
+
+  it("stacked segments: loss case anchors gray at surviving value, effect spans overlay loss zone", () => {
+    const view = waterfallView(
+      openGain({
+        unrealized_price_effect_base: money("-50000.00"),
+        unrealized_fx_effect_base: money("5000.00"),
+        unrealized_gain_base: money("-45000.00"),
+        market_value_base: money("220582.94"),
+      }),
+    );
+    const total = view.rows.find((r) => r.key === "total-return");
+    const segs = total?.stackedSegments;
+    expect(segs).toBeDefined();
+
+    // Gray base = [0, costBasis + totalReturn] = [0, 265582.94 - 45000] = [0, 220582.94]
+    expect(segs?.[0]).toEqual({
+      key: "stacked-base",
+      direction: null,
+      span: { from: 0, to: 220582.94 },
+    });
+    // Price is a loss — direction "down", span reaches below surviving value
+    expect(segs?.[1]).toMatchObject({
+      key: "stacked-price",
+      direction: "down",
+    });
+    // FX is a gain — direction "up"
+    expect(segs?.[2]).toMatchObject({ key: "stacked-fx", direction: "up" });
+  });
+
+  it("stacked segments: income effect row is included when income is tracked", () => {
+    const view = waterfallView(openGain({ income_base: money("250.00") }));
+    const total = view.rows.find((r) => r.key === "total-return");
+    const segs = total?.stackedSegments;
+    const incomeRow = view.rows.find((r) => r.key === "income");
+    const incomeSeg = segs?.find((s) => s.key === "stacked-income");
+    expect(incomeSeg).toEqual({
+      key: "stacked-income",
+      direction: incomeRow?.direction,
+      span: incomeRow?.span,
+    });
+  });
+
+  it("stacked segments: absent when total return value is unavailable", () => {
+    const view = waterfallView(
+      openGain({
+        unrealized_gain_base: missing("missing_price"),
+        realized_gain_base: missing("missing_fx"),
+      }),
+    );
+    const total = view.rows.find((r) => r.key === "total-return");
+    expect(total?.stackedSegments).toBeUndefined();
+  });
 });
 
 describe("waterfallView (closed)", () => {

@@ -1,5 +1,9 @@
 import { SummaryAvailabilityValue } from "./valuationDisplay";
-import type { WaterfallRow, WaterfallView } from "./waterfallViewModel";
+import type {
+  StackedSegment,
+  WaterfallRow,
+  WaterfallView,
+} from "./waterfallViewModel";
 
 function barGeometry(
   span: { from: number; to: number },
@@ -21,6 +25,13 @@ function barClass(row: WaterfallRow): string {
   if (row.kind === "total") return "wf-bar total";
   if (row.direction === "up") return "wf-bar up";
   if (row.direction === "down") return "wf-bar down";
+  return "wf-bar flat";
+}
+
+function segmentClass(seg: StackedSegment): string {
+  if (seg.direction === null) return "wf-bar base";
+  if (seg.direction === "up") return "wf-bar up";
+  if (seg.direction === "down") return "wf-bar down";
   return "wf-bar flat";
 }
 
@@ -50,6 +61,34 @@ function Track({
         className={barClass(row)}
         style={{ left: `${left}%`, width: `${width}%` }}
       />
+    </div>
+  );
+}
+
+function StackedTrack({
+  row,
+  minValue,
+  maxValue,
+}: {
+  row: WaterfallRow;
+  minValue: number;
+  maxValue: number;
+}) {
+  if (!row.stackedSegments) {
+    return <Track row={row} minValue={minValue} maxValue={maxValue} />;
+  }
+  return (
+    <div className="wf-track">
+      {row.stackedSegments.map((seg) => {
+        const { left, width } = barGeometry(seg.span, minValue, maxValue);
+        return (
+          <div
+            key={seg.key}
+            className={segmentClass(seg)}
+            style={{ left: `${left}%`, width: `${width}%` }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -103,11 +142,19 @@ export function GainsWaterfall({ view }: { view: WaterfallView }) {
             className={`wf-row kind-${row.kind}${row.kind === "placeholder" ? " is-muted" : ""}`}
           >
             <span className="wf-label">{row.label}</span>
-            <Track
-              row={row}
-              minValue={view.minValue}
-              maxValue={view.maxValue}
-            />
+            {row.kind === "total" ? (
+              <StackedTrack
+                row={row}
+                minValue={view.minValue}
+                maxValue={view.maxValue}
+              />
+            ) : (
+              <Track
+                row={row}
+                minValue={view.minValue}
+                maxValue={view.maxValue}
+              />
+            )}
             <span className="wf-value">
               <ValueCell row={row} />
             </span>

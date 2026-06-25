@@ -17,7 +17,7 @@
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.
 - Reducers must stay pure and unit-testable.
-- Keep view-derivation logic in pure selectors/view-models (e.g. `assetViewModel`, `dashboardSelectors`), not inline in components; components consume state and render. This is the `state -> render` analogue of pure reducers.
+- Keep view-derivation logic in pure selectors/view-models, not inline in components; components consume state and render. This is the `state -> render` analogue of pure reducers.
 - Keep entry points (`main.rs`, `mod.rs` and `lib.rs`) files as thin wrappers only.
 - Keep shared constants and behavior DRY; prefer one source of truth over duplicated definitions.
 - Name runtime modules after stable behavior or domain concepts, not temporary plan phases or milestones.

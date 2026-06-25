@@ -8,6 +8,13 @@ export type WaterfallKind =
   | "placeholder";
 export type WaterfallDirection = "up" | "down" | "flat";
 
+export interface StackedSegment {
+  key: string;
+  /** null = gray base (cost basis anchor or surviving value) */
+  direction: WaterfallDirection | null;
+  span: { from: number; to: number };
+}
+
 export interface WaterfallRow {
   key: string;
   label: string;
@@ -19,6 +26,8 @@ export interface WaterfallRow {
   percent: PercentValue | null;
   /** Display-only bar geometry in base-currency units; null when there is no bar. */
   span: { from: number; to: number } | null;
+  /** Stacked segment breakdown for total rows; absent on all other kinds. */
+  stackedSegments?: StackedSegment[];
 }
 
 export interface WaterfallView {
@@ -198,6 +207,7 @@ function totalRow(
   value: MoneyValue,
   denominator: MoneyValue,
   baseline: MoneyValue,
+  stackedSegments?: StackedSegment[],
 ): WaterfallRow {
   const amount = toNumber(value);
   const base = toNumber(baseline);
@@ -211,7 +221,41 @@ function totalRow(
     direction: amount === null ? null : directionOf(amount),
     percent: displayPercent(value, denominator),
     span,
+    stackedSegments,
   };
+}
+
+// Builds stacked segments for the total return track:
+//   - Profitable (totalReturn >= 0): gray = [0, costBasis], then effect spans stack right.
+//   - Loss (totalReturn < 0): gray = [0, costBasis + totalReturn] (surviving value),
+//     then effect spans overlay the loss zone.
+// Effect rows with no span (unavailable or placeholder) are skipped.
+function buildStackedSegments(
+  rows: WaterfallRow[],
+  costBasis: MoneyValue,
+  totalReturn: MoneyValue,
+  effectKeys: string[],
+): StackedSegment[] | undefined {
+  const totalReturnNum = toNumber(totalReturn);
+  const costBasisNum = toNumber(costBasis);
+  if (totalReturnNum === null || costBasisNum === null) return undefined;
+
+  const grayTo =
+    totalReturnNum >= 0 ? costBasisNum : costBasisNum + totalReturnNum;
+  const segments: StackedSegment[] = [
+    { key: "stacked-base", direction: null, span: { from: 0, to: grayTo } },
+  ];
+  for (const key of effectKeys) {
+    const row = rows.find((r) => r.key === key);
+    if (row?.span) {
+      segments.push({
+        key: `stacked-${key}`,
+        direction: row.direction,
+        span: row.span,
+      });
+    }
+  }
+  return segments;
 }
 
 // Normalized geometry domain. Tracks both a minimum and a maximum so a span that crosses
@@ -280,7 +324,21 @@ function openWaterfall(gain: GainsRow): WaterfallView {
   // Total-return % is vs total capital deployed = held + sold cost basis; the delta bar
   // still floats from the held cost basis baseline.
   const totalCostBasis = displaySum(costBasis, gain.realized_cost_basis_base);
-  rows.push(totalRow("Total return", totalReturn, totalCostBasis, costBasis));
+  const stackedSegments = buildStackedSegments(rows, costBasis, totalReturn, [
+    "price",
+    "fx",
+    "realized",
+    "income",
+  ]);
+  rows.push(
+    totalRow(
+      "Total return",
+      totalReturn,
+      totalCostBasis,
+      costBasis,
+      stackedSegments,
+    ),
+  );
 
   const { minValue, maxValue } = computeDomain(rows);
   return { mode: "open", currency: CURRENCY, rows, minValue, maxValue };
@@ -316,7 +374,20 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
   );
   // Closed: cost_basis_base already represents the full sold cost basis, so it serves as
   // both the denominator and the baseline (do not re-add realized_cost_basis_base).
-  rows.push(totalRow("Total return", totalReturn, costBasis, costBasis));
+  const stackedSegments = buildStackedSegments(rows, costBasis, totalReturn, [
+    "price",
+    "fx",
+    "income",
+  ]);
+  rows.push(
+    totalRow(
+      "Total return",
+      totalReturn,
+      costBasis,
+      costBasis,
+      stackedSegments,
+    ),
+  );
 
   const { minValue, maxValue } = computeDomain(rows);
   return { mode: "closed", currency: CURRENCY, rows, minValue, maxValue };
