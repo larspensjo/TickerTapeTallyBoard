@@ -129,6 +129,103 @@ cost basis exactly). Percentages only; absolute amounts omitted.
   actual Sharesight portfolio-level figure, since no method was confirmed by reverse-engineering
   alone.
 
+## Candidate: Capital-and-Time Weighted Geometric Mean
+
+### Motivation
+
+Standard TWR chains sub-period returns with equal contribution per sub-period:
+`Π(1 + r_i) − 1`. A tiny residual position held for years links equally with a
+large position held for months. The capital-and-time weighted variant weights each
+sub-period by both the capital at risk and the duration, so large long-running
+positions dominate and zero-capital gaps are excluded automatically.
+
+### Formula
+
+Split history at every buy or sell. For each segment `i`:
+
+- `MV_i` = market value at the **start** of segment `i` (quantity × price × fx_rate_to_base)
+- `t_i` = segment duration in days
+- `r_i` = sub-period return (see below)
+- `w_i` = `(MV_i × t_i) / Σ(MV_j × t_j)` — normalized weights, sum to 1
+
+```
+result = Π(1 + r_i)^w_i − 1
+```
+
+Equivalently in log-space: `exp(Σ w_i × ln(1 + r_i)) − 1`.
+
+A zero-capital segment has `MV_i = 0`, so `w_i = 0` and its factor is `(1 + r_i)^0 = 1`
+— it contributes nothing without any special-casing.
+
+### Capital measure: market value, not cost basis
+
+The weight uses **market value at segment start**, not cost basis. The key reason:
+after a partial sell following a large price increase, the remaining position has far
+more at risk than the original purchase cost reflects. Market value captures the
+opportunity cost; cost basis does not.
+
+Cost basis is constant within a segment, so both measures converge for tiny
+sub-segments (where price barely moves). The choice only matters at transaction
+boundaries where a sell leaves a position whose value differs substantially from its
+original cost.
+
+### Computing the sub-period return
+
+The return `r_i` must hold quantity constant during the segment. Since quantity
+cancels, it simplifies to a pure price-and-FX ratio:
+
+```
+r_i = (price_next / exchange_rate_next) / (price_this / exchange_rate_this) − 1
+```
+
+where `exchange_rate` is the Sharesight CSV convention (instrument currency per SEK),
+so `price / exchange_rate` is the per-share value in SEK.
+
+**Do not** compute `r_i` as `(MV_next_row − MV_this_row) / MV_this_row` using
+consecutive rows directly: consecutive rows have different quantities after buy/sell
+events, so the MV difference mixes quantity changes with price changes and produces
+wrong results (including spurious negative returns in rising-price segments).
+
+### What the result means
+
+The result is the **weighted geometric average of sub-period growth factors**,
+not the total cumulative return. For two equal-weight segments each returning 39%,
+standard TWR gives `1.39² − 1 = 93%`; this formula gives 39%.
+
+It answers: "what is the single characteristic return that represents all segments,
+weighted by capital × time exposure?" This is useful for comparing investment quality
+across periods with very different capital levels, but it does not tell you how much
+total wealth was created.
+
+Total cumulative return cannot be recovered from the weighted geometric mean alone
+without the individual segment returns and weights — at that point it is simpler
+to compute TWR directly.
+
+### Validation on a real holding (Micron Technology Inc.)
+
+Applied to 12 transaction segments spanning 283 days (2025-09-16 to 2026-06-26),
+with mixed buys and sells and a cumulative holding of 43 shares at end:
+
+- Total weight sum (MV × days): 68,215,444 SEK·days
+- Largest single weight: segment with 80-day hold and high market value (~32%)
+- Sum of weighted log gains: 0.331
+- Product of gain factors `Π(1 + r_i)`: 7.23
+- Characteristic segment return (approach B): **~39%** (`exp(0.331) − 1`)
+- Standard TWR (approach A): **~623%** (`7.23 − 1`)
+
+The result illustrates that a heavily churned position with large late-period sells
+produces a stable, moderate characteristic return under this method — in contrast to
+the >100% figures from single-shot Modified Dietz on comparable holdings.
+
+### Drawbacks
+
+- The result is unfamiliar: not total return, not annualized return.
+- Adding capital to a winning position reduces the result (the new capital starts
+  at a high market value and earns returns from that higher base, pulling the
+  weighted average down).
+- Cannot be directly compared against Sharesight or other standard benchmarks.
+- Requires per-transaction market values and FX rates at each transaction date.
+
 ## Open questions for implementation
 
 - Which methodology for the portfolio total (money-weighted / simple / time-weighted)?
