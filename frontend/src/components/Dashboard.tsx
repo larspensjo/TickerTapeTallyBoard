@@ -25,6 +25,8 @@ export function Dashboard() {
   );
 }
 
+type ChartView = "value" | "gain";
+
 function DashboardValueChart({
   query,
 }: {
@@ -36,6 +38,7 @@ function DashboardValueChart({
     () => (history ?? []).filter((point) => point.incomplete).length,
     [history],
   );
+  const [view, setView] = useState<ChartView>("value");
 
   if (query.isPending) {
     return (
@@ -70,26 +73,57 @@ function DashboardValueChart({
     );
   }
 
+  const isGain = view === "gain";
+
   return (
     <section className="panel chart-panel" aria-label="Portfolio value">
       <div className="chart-meta">
-        <h2>Portfolio value (SEK)</h2>
-        {incompleteDays > 0 ? (
-          <span className="status-chip warning compact">
-            {incompleteDays} days had missing inputs
-          </span>
-        ) : null}
+        <div className="chart-meta-title">
+          <h2>{isGain ? "Portfolio gain (SEK)" : "Portfolio value (SEK)"}</h2>
+          {incompleteDays > 0 ? (
+            <span className="status-chip warning compact">
+              {incompleteDays} days had missing inputs
+            </span>
+          ) : null}
+        </div>
+        <fieldset className="segmented-control">
+          <legend className="sr-only">Chart view</legend>
+          {(["value", "gain"] as ChartView[]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={view === v ? "active" : undefined}
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+            >
+              {v[0].toUpperCase() + v.slice(1)}
+            </button>
+          ))}
+        </fieldset>
       </div>
       <div className="chart-legend" aria-hidden="true">
-        <span className="chart-legend-item value">Value</span>
-        <span className="chart-legend-item invested">Invested capital</span>
+        {isGain ? (
+          <span className="chart-legend-item gain">Gain</span>
+        ) : (
+          <>
+            <span className="chart-legend-item value">Value</span>
+            <span className="chart-legend-item invested">Invested capital</span>
+          </>
+        )}
       </div>
       <TimeSeriesChart
-        data={series.value}
-        referenceData={series.invested}
-        ariaLabel="Portfolio value over time in SEK, with net invested capital reference line"
+        data={isGain ? series.gain : series.value}
+        referenceData={isGain ? undefined : series.invested}
+        ariaLabel={
+          isGain
+            ? "Portfolio gain over time in SEK"
+            : "Portfolio value over time in SEK, with net invested capital reference line"
+        }
         visibleStart={query.data?.start_date ?? undefined}
         height={280}
+        lineColor={isGain ? "#16c784" : undefined}
+        topColor={isGain ? "rgba(22, 199, 132, 0.30)" : undefined}
+        bottomColor={isGain ? "rgba(22, 199, 132, 0.02)" : undefined}
       />
     </section>
   );

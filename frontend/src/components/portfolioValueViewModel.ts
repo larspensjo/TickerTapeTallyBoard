@@ -4,6 +4,7 @@ import type { TimeSeriesPoint } from "./TimeSeriesChart";
 export interface PortfolioValueSeries {
   value: TimeSeriesPoint[];
   invested: TimeSeriesPoint[];
+  gain: TimeSeriesPoint[];
 }
 
 /**
@@ -17,6 +18,7 @@ export function portfolioValueSeries(
 ): PortfolioValueSeries {
   const value: TimeSeriesPoint[] = [];
   const invested: TimeSeriesPoint[] = [];
+  const investedByDate = new Map<string, number>();
 
   for (const point of points) {
     const valueAmount = Number(point.value_base);
@@ -28,9 +30,18 @@ export function portfolioValueSeries(
       const investedValue = Number(point.invested_base);
       if (Number.isFinite(investedValue)) {
         invested.push({ time: point.date, value: investedValue });
+        investedByDate.set(point.date, investedValue);
       }
     }
   }
 
-  return { value, invested };
+  const gain: TimeSeriesPoint[] = [];
+  for (const v of value) {
+    const inv = investedByDate.get(v.time);
+    if (inv !== undefined) {
+      gain.push({ time: v.time, value: v.value - inv });
+    }
+  }
+
+  return { value, invested, gain };
 }

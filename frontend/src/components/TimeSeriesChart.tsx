@@ -144,6 +144,9 @@ export function TimeSeriesChart({
   markers = [],
   referenceData,
   height = 240,
+  lineColor = "#4f9cff",
+  topColor = "rgba(79, 156, 255, 0.30)",
+  bottomColor = "rgba(79, 156, 255, 0.02)",
 }: {
   data: TimeSeriesPoint[];
   ariaLabel: string;
@@ -151,6 +154,9 @@ export function TimeSeriesChart({
   markers?: ChartTradeMarker[];
   referenceData?: TimeSeriesPoint[];
   height?: number;
+  lineColor?: string;
+  topColor?: string;
+  bottomColor?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -197,9 +203,9 @@ export function TimeSeriesChart({
     });
 
     const series = chart.addAreaSeries({
-      lineColor: "#4f9cff",
-      topColor: "rgba(79, 156, 255, 0.30)",
-      bottomColor: "rgba(79, 156, 255, 0.02)",
+      lineColor,
+      topColor,
+      bottomColor,
       lineWidth: 2,
       priceLineVisible: false,
       autoscaleInfoProvider: zeroBaselineAutoscale,
@@ -237,7 +243,7 @@ export function TimeSeriesChart({
       referenceSeriesRef.current = null;
       setTooltip(null);
     };
-  }, [height]);
+  }, [height, lineColor, topColor, bottomColor]);
 
   useEffect(() => {
     const end = data.at(-1)?.time;

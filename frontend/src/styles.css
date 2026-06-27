@@ -1403,6 +1403,14 @@ th.number-head .sort-button {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+  justify-content: space-between;
+}
+
+.chart-meta-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .chart-legend {
@@ -1434,6 +1442,10 @@ th.number-head .sort-button {
 .chart-legend-item.invested::before {
   border-top-style: dashed;
   border-top-color: #e0b15e;
+}
+
+.chart-legend-item.gain::before {
+  border-top-color: #16c784;
 }
 
 .asset-two-col {
