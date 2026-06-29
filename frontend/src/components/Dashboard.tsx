@@ -1,24 +1,49 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
-import type { GainsRow } from "../api/types";
+import type { DateRange, GainsRow } from "../api/types";
+import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import {
   type AllocationDimension,
   allocationBreakdown,
   type MoverRow,
   topMovers,
 } from "./dashboardSelectors";
-import { portfolioValueSeries } from "./portfolioValueViewModel";
+import {
+  filterValueHistoryPoints,
+  portfolioValueSeries,
+} from "./portfolioValueViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { formatGroupedNumber } from "./valuationDisplay";
 
-export function Dashboard() {
-  const gainsQuery = useGains();
+export interface DashboardProps {
+  dateRange: DateRange;
+  selectedDatePreset: DatePreset;
+  onDatePresetChange: (datePreset: DatePreset) => void;
+  onDateRangeChange: (dateRange: DateRange) => void;
+}
+
+export function Dashboard({
+  dateRange,
+  selectedDatePreset,
+  onDatePresetChange,
+  onDateRangeChange,
+}: DashboardProps) {
+  const gainsQuery = useGains({
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate ?? undefined,
+  });
   const valueHistory = usePortfolioValueHistory();
 
   return (
     <section className="dashboard" aria-label="Portfolio dashboard">
-      <DashboardValueChart query={valueHistory} />
+      <DashboardValueChart
+        query={valueHistory}
+        dateRange={dateRange}
+        selectedDatePreset={selectedDatePreset}
+        onDatePresetChange={onDatePresetChange}
+        onDateRangeChange={onDateRangeChange}
+      />
       <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
       <AllocationPanel rows={gainsQuery.data?.rows ?? []} />
     </section>
@@ -29,14 +54,29 @@ type ChartView = "value" | "gain";
 
 function DashboardValueChart({
   query,
+  dateRange,
+  selectedDatePreset,
+  onDatePresetChange,
+  onDateRangeChange,
 }: {
   query: ReturnType<typeof usePortfolioValueHistory>;
+  dateRange: DateRange;
+  selectedDatePreset: DatePreset;
+  onDatePresetChange: (datePreset: DatePreset) => void;
+  onDateRangeChange: (dateRange: DateRange) => void;
 }) {
   const history = query.data?.points;
-  const series = useMemo(() => portfolioValueSeries(history ?? []), [history]);
+  const filteredHistory = useMemo(
+    () => filterValueHistoryPoints(history ?? [], dateRange),
+    [history, dateRange],
+  );
+  const series = useMemo(
+    () => portfolioValueSeries(filteredHistory),
+    [filteredHistory],
+  );
   const incompleteDays = useMemo(
-    () => (history ?? []).filter((point) => point.incomplete).length,
-    [history],
+    () => filteredHistory.filter((point) => point.incomplete).length,
+    [filteredHistory],
   );
   const [view, setView] = useState<ChartView>("value");
 
@@ -63,17 +103,50 @@ function DashboardValueChart({
     );
   }
 
+  const isGain = view === "gain";
+  const chartControls = (
+    <div className="chart-controls">
+      <DateRangeSelector
+        dateRange={dateRange}
+        selectedDatePreset={selectedDatePreset}
+        onDatePresetChange={onDatePresetChange}
+        onDateRangeChange={onDateRangeChange}
+        ariaLabel="Dashboard date range"
+      />
+      <fieldset className="segmented-control">
+        <legend className="sr-only">Chart view</legend>
+        {(["value", "gain"] as ChartView[]).map((v) => (
+          <button
+            key={v}
+            type="button"
+            className={view === v ? "active" : undefined}
+            aria-pressed={view === v}
+            onClick={() => setView(v)}
+          >
+            {v[0].toUpperCase() + v.slice(1)}
+          </button>
+        ))}
+      </fieldset>
+    </div>
+  );
+
   if (series.value.length === 0) {
     return (
-      <section className="chart-band muted" aria-label="Portfolio value">
-        <span className="chart-band-label">
-          No portfolio history yet — add a Buy and refresh prices
-        </span>
+      <section className="panel chart-panel" aria-label="Portfolio value">
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>{isGain ? "Portfolio gain (SEK)" : "Portfolio value (SEK)"}</h2>
+          </div>
+          {chartControls}
+        </div>
+        <div className="chart-band muted">
+          <span className="chart-band-label">
+            No portfolio history in this interval
+          </span>
+        </div>
       </section>
     );
   }
-
-  const isGain = view === "gain";
 
   return (
     <section className="panel chart-panel" aria-label="Portfolio value">
@@ -86,20 +159,7 @@ function DashboardValueChart({
             </span>
           ) : null}
         </div>
-        <fieldset className="segmented-control">
-          <legend className="sr-only">Chart view</legend>
-          {(["value", "gain"] as ChartView[]).map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={view === v ? "active" : undefined}
-              aria-pressed={view === v}
-              onClick={() => setView(v)}
-            >
-              {v[0].toUpperCase() + v.slice(1)}
-            </button>
-          ))}
-        </fieldset>
+        {chartControls}
       </div>
       <div className="chart-legend" aria-hidden="true">
         {isGain ? (
@@ -119,7 +179,9 @@ function DashboardValueChart({
             ? "Portfolio gain over time in SEK"
             : "Portfolio value over time in SEK, with net invested capital reference line"
         }
-        visibleStart={query.data?.start_date ?? undefined}
+        visibleStart={
+          dateRange.startDate ?? query.data?.start_date ?? undefined
+        }
         height={280}
         lineColor={isGain ? "#16c784" : undefined}
         topColor={isGain ? "rgba(22, 199, 132, 0.30)" : undefined}

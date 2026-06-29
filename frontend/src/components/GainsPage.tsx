@@ -2,20 +2,24 @@ import { useReducer, useState } from "react";
 import { type ReturnMethod, useGains } from "../api/queries";
 import type { DateRange } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
-import { type DatePreset, GainsTable, loadReturnMethod } from "./GainsTable";
+import type { DatePreset } from "./DateRangeSelector";
+import { GainsTable, loadReturnMethod } from "./GainsTable";
 
 export interface GainsPageState {
   includeClosedPositions: boolean;
-  datePreset: DatePreset;
-  dateRange: DateRange;
   returnMethod: ReturnMethod;
 }
 
 export type GainsPageAction =
   | { type: "closedPositionsToggled"; includeClosedPositions: boolean }
-  | { type: "datePresetChanged"; datePreset: DatePreset }
-  | { type: "dateRangeChanged"; dateRange: DateRange }
   | { type: "returnMethodChanged"; returnMethod: ReturnMethod };
+
+export interface GainsPageProps {
+  dateRange: DateRange;
+  selectedDatePreset: DatePreset;
+  onDatePresetChange: (datePreset: DatePreset) => void;
+  onDateRangeChange: (dateRange: DateRange) => void;
+}
 
 export function gainsPageReducer(
   state: GainsPageState,
@@ -27,28 +31,27 @@ export function gainsPageReducer(
         ...state,
         includeClosedPositions: action.includeClosedPositions,
       };
-    case "datePresetChanged":
-      return { ...state, datePreset: action.datePreset };
-    case "dateRangeChanged":
-      return { ...state, dateRange: action.dateRange };
     case "returnMethodChanged":
       return { ...state, returnMethod: action.returnMethod };
   }
 }
 
-export function GainsPage() {
+export function GainsPage({
+  dateRange,
+  selectedDatePreset,
+  onDatePresetChange,
+  onDateRangeChange,
+}: GainsPageProps) {
   const [filter, setFilter] = useState("");
   const [state, dispatch] = useReducer(gainsPageReducer, {
     includeClosedPositions: false,
-    datePreset: "all",
-    dateRange: { startDate: null, endDate: null },
     returnMethod: loadReturnMethod(),
   });
 
   const gainsQuery = useGains({
     includeClosedPositions: state.includeClosedPositions,
-    startDate: state.dateRange.startDate,
-    endDate: state.dateRange.endDate ?? undefined,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate ?? undefined,
     method: state.returnMethod,
   });
 
@@ -81,14 +84,10 @@ export function GainsPage() {
                 includeClosedPositions,
               })
             }
-            dateRange={state.dateRange}
-            selectedDatePreset={state.datePreset}
-            onDatePresetChange={(datePreset) =>
-              dispatch({ type: "datePresetChanged", datePreset })
-            }
-            onDateRangeChange={(dateRange) =>
-              dispatch({ type: "dateRangeChanged", dateRange })
-            }
+            dateRange={dateRange}
+            selectedDatePreset={selectedDatePreset}
+            onDatePresetChange={onDatePresetChange}
+            onDateRangeChange={onDateRangeChange}
             displayPercentKind={gainsQuery.data?.display_percent_kind}
             returnMethod={state.returnMethod}
             onReturnMethodChange={(returnMethod) =>

@@ -1,7 +1,12 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useReducer } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
+import {
+  dateRangeSelectionReducer,
+  loadDateRangeSelection,
+  saveDateRangeSelection,
+} from "./components/DateRangeSelector";
 
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((module) => ({
@@ -44,6 +49,25 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 export function App() {
+  const [dateRangeSelection, dispatchDateRangeSelection] = useReducer(
+    dateRangeSelectionReducer,
+    undefined,
+    loadDateRangeSelection,
+  );
+
+  useEffect(() => {
+    saveDateRangeSelection(dateRangeSelection);
+  }, [dateRangeSelection]);
+
+  const dateRangeProps = {
+    dateRange: dateRangeSelection.dateRange,
+    selectedDatePreset: dateRangeSelection.datePreset,
+    onDatePresetChange: (datePreset: typeof dateRangeSelection.datePreset) =>
+      dispatchDateRangeSelection({ type: "datePresetChanged", datePreset }),
+    onDateRangeChange: (dateRange: typeof dateRangeSelection.dateRange) =>
+      dispatchDateRangeSelection({ type: "dateRangeChanged", dateRange }),
+  };
+
   return (
     <div className="app-shell">
       <header className="app-bar">
@@ -75,9 +99,12 @@ export function App() {
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route element={<PortfolioLayout />}>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Dashboard {...dateRangeProps} />} />
               <Route path="/holdings" element={<HoldingsPage />} />
-              <Route path="/gains" element={<GainsPage />} />
+              <Route
+                path="/gains"
+                element={<GainsPage {...dateRangeProps} />}
+              />
               <Route path="/transactions" element={<TransactionsPage />} />
             </Route>
             <Route

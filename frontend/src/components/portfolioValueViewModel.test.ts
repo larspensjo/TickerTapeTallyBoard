@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ValueHistoryPoint } from "../api/types";
-import { portfolioValueSeries } from "./portfolioValueViewModel";
+import {
+  filterValueHistoryPoints,
+  portfolioValueSeries,
+} from "./portfolioValueViewModel";
 
 function point(
   date: string,
@@ -42,5 +45,36 @@ describe("portfolioValueSeries", () => {
 
     expect(value).toHaveLength(2);
     expect(invested).toEqual([{ time: "2026-01-05", value: 900 }]);
+  });
+});
+
+describe("filterValueHistoryPoints", () => {
+  it("keeps points inside the inclusive date range", () => {
+    const points = [
+      point("2026-01-01", "1000.00", "1000.00"),
+      point("2026-02-01", "1100.00", "1000.00"),
+      point("2026-03-01", "1200.00", "1000.00"),
+    ];
+
+    expect(
+      filterValueHistoryPoints(points, {
+        startDate: "2026-02-01",
+        endDate: "2026-02-28",
+      }).map((filteredPoint) => filteredPoint.date),
+    ).toEqual(["2026-02-01"]);
+  });
+
+  it("treats null boundaries as open-ended", () => {
+    const points = [
+      point("2026-01-01", "1000.00", "1000.00"),
+      point("2026-02-01", "1100.00", "1000.00"),
+    ];
+
+    expect(
+      filterValueHistoryPoints(points, {
+        startDate: null,
+        endDate: "2026-01-31",
+      }).map((filteredPoint) => filteredPoint.date),
+    ).toEqual(["2026-01-01"]);
   });
 });

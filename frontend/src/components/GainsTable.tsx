@@ -16,6 +16,7 @@ import type {
   GainsTotals,
   ReturnMethod,
 } from "../api/types";
+import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import { InstrumentCell } from "./InstrumentCell";
 import {
   AvailabilityValueCell,
@@ -37,56 +38,6 @@ export function loadReturnMethod(): ReturnMethod {
 
 function saveReturnMethod(m: ReturnMethod) {
   localStorage.setItem(RETURN_METHOD_KEY, m);
-}
-
-export type DatePreset = "today" | "7d" | "12m" | "ytd" | "all" | "custom";
-
-const PRESETS: DatePreset[] = ["today", "7d", "12m", "ytd", "all", "custom"];
-
-const PRESET_LABELS: Record<DatePreset, string> = {
-  today: "Today",
-  "7d": "7D",
-  "12m": "12M",
-  ytd: "YTD",
-  all: "All",
-  custom: "Custom",
-};
-
-function localDateString(d: Date): string {
-  return d.toLocaleDateString("sv-SE");
-}
-
-function presetToRange(
-  preset: DatePreset,
-  customStart: string,
-  customEnd: string,
-): DateRange {
-  const today = new Date();
-  const fmt = localDateString;
-
-  switch (preset) {
-    case "today":
-      return { startDate: fmt(today), endDate: fmt(today) };
-    case "7d": {
-      const start = new Date(today);
-      start.setDate(start.getDate() - 7);
-      return { startDate: fmt(start), endDate: fmt(today) };
-    }
-    case "12m": {
-      const start = new Date(today);
-      start.setFullYear(start.getFullYear() - 1);
-      return { startDate: fmt(start), endDate: fmt(today) };
-    }
-    case "ytd":
-      return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
-    case "all":
-      return { startDate: null, endDate: fmt(today) };
-    case "custom":
-      return {
-        startDate: customStart || null,
-        endDate: customEnd || fmt(today),
-      };
-  }
 }
 
 interface RowView {
@@ -494,8 +445,6 @@ export function GainsTable({
   const [sorting, setSorting] = useState<SortingState>([
     { id: "total_return_base", desc: true },
   ]);
-  const [customStart, setCustomStart] = useState(dateRange.startDate ?? "");
-  const [customEnd, setCustomEnd] = useState(dateRange.endDate ?? "");
 
   const tableRows = useMemo<RowView[]>(
     () =>
@@ -582,52 +531,13 @@ export function GainsTable({
         />
       ) : null}
       <div className="table-toolbar">
-        <div className="date-range-presets">
-          {PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={`preset-btn${
-                selectedDatePreset === p ? " active" : ""
-              }`}
-              aria-pressed={selectedDatePreset === p}
-              onClick={() => {
-                onDatePresetChange(p);
-                if (p !== "custom") {
-                  onDateRangeChange(presetToRange(p, customStart, customEnd));
-                }
-              }}
-            >
-              {PRESET_LABELS[p]}
-            </button>
-          ))}
-          {selectedDatePreset === "custom" && (
-            <>
-              <input
-                className="date-range-input"
-                type="date"
-                value={customStart}
-                onChange={(e) => {
-                  setCustomStart(e.target.value);
-                  onDateRangeChange(
-                    presetToRange("custom", e.target.value, customEnd),
-                  );
-                }}
-              />
-              <input
-                className="date-range-input"
-                type="date"
-                value={customEnd}
-                onChange={(e) => {
-                  setCustomEnd(e.target.value);
-                  onDateRangeChange(
-                    presetToRange("custom", customStart, e.target.value),
-                  );
-                }}
-              />
-            </>
-          )}
-        </div>
+        <DateRangeSelector
+          dateRange={dateRange}
+          selectedDatePreset={selectedDatePreset}
+          onDatePresetChange={onDatePresetChange}
+          onDateRangeChange={onDateRangeChange}
+          ariaLabel="Gains date range"
+        />
         <input
           className="filter-input"
           type="search"

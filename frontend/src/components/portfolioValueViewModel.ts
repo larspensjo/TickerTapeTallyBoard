@@ -1,10 +1,21 @@
-import type { ValueHistoryPoint } from "../api/types";
+import type { DateRange, ValueHistoryPoint } from "../api/types";
 import type { TimeSeriesPoint } from "./TimeSeriesChart";
 
 export interface PortfolioValueSeries {
   value: TimeSeriesPoint[];
   invested: TimeSeriesPoint[];
   gain: TimeSeriesPoint[];
+}
+
+export function filterValueHistoryPoints(
+  points: ValueHistoryPoint[],
+  range: DateRange,
+): ValueHistoryPoint[] {
+  return points.filter((point) => {
+    if (range.startDate && point.date < range.startDate) return false;
+    if (range.endDate && point.date > range.endDate) return false;
+    return true;
+  });
 }
 
 /**
