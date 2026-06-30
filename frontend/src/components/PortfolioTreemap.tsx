@@ -70,42 +70,38 @@ export function PortfolioTreemap({ rows }: { rows: GainsRow[] }) {
   );
 
   return (
-    <div
-      ref={containerRef}
-      className="treemap-container"
-      role="img"
-      aria-label="Portfolio holdings treemap"
-    >
+    <div ref={containerRef} className="treemap-container">
       {tiles.length === 0 ? (
         <p className="treemap-empty">No valued open holdings to display.</p>
       ) : (
-        leaves.map((leaf) => {
-          const tile = leaf.data as TreemapTile;
-          const w = leaf.x1 - leaf.x0;
-          const h = leaf.y1 - leaf.y0;
-          const isSmall = w < 64 || h < 44;
-          const label = `${tile.symbol}.${tile.exchange}: ${formatPct(tile.totalReturnPercent)}`;
-          return (
-            <div
-              key={`${tile.symbol}.${tile.exchange}`}
-              className={`treemap-tile${tileModifier(tile.totalReturnPercent)}${isSmall ? " treemap-tile--small" : ""}`}
-              style={{ left: leaf.x0, top: leaf.y0, width: w, height: h }}
-              title={label}
-              role="img"
-              aria-label={label}
-            >
-              <span className="treemap-tile-label">
-                {tile.symbol}.{tile.exchange}
-              </span>
-              <span
-                className="treemap-tile-pct"
-                style={{ color: tileColor(tile.totalReturnPercent) }}
+        <ul className="treemap-list" aria-label="Portfolio holdings treemap">
+          {leaves.map((leaf) => {
+            const tile = leaf.data as TreemapTile;
+            const w = leaf.x1 - leaf.x0;
+            const h = leaf.y1 - leaf.y0;
+            const isSmall = w < 64 || h < 44;
+            const label = `${tile.symbol}.${tile.exchange}: ${formatPct(tile.totalReturnPercent)}`;
+            return (
+              <li
+                key={`${tile.symbol}.${tile.exchange}`}
+                className={`treemap-tile${tileModifier(tile.totalReturnPercent)}${isSmall ? " treemap-tile--small" : ""}`}
+                style={{ left: leaf.x0, top: leaf.y0, width: w, height: h }}
+                title={label}
+                aria-label={label}
               >
-                {formatPct(tile.totalReturnPercent)}
-              </span>
-            </div>
-          );
-        })
+                <span className="treemap-tile-label">
+                  {tile.symbol}.{tile.exchange}
+                </span>
+                <span
+                  className="treemap-tile-pct"
+                  style={{ color: tileColor(tile.totalReturnPercent) }}
+                >
+                  {formatPct(tile.totalReturnPercent)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

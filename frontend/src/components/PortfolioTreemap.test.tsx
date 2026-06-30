@@ -156,6 +156,12 @@ describe("PortfolioTreemap", () => {
       expect(googTile).not.toBeNull();
       expect(msftTile?.getAttribute("aria-label")).toBe("MSFT.NYSE: +5.00%");
       expect(googTile?.getAttribute("aria-label")).toBe("GOOG.NYSE: +5.00%");
+      // Tiles are native <li> elements (implicit role="listitem"), not
+      // role="img", since a nested role="img" would prune these aria-labels
+      // from the accessibility tree under the container's own list role.
+      const listItems = screen.getAllByRole("listitem");
+      expect(listItems).toContain(msftTile);
+      expect(listItems).toContain(googTile);
       expect(msftTile?.classList.contains("treemap-tile")).toBe(true);
       expect(msftTile?.classList.contains("treemap-tile--up")).toBe(true);
       expect(msftTile?.textContent).toContain("MSFT.NYSE");

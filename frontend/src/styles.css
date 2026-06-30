@@ -1871,6 +1871,14 @@ th.number-head .sort-button {
   font-size: 0.875rem;
 }
 
+.treemap-list {
+  position: relative;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .treemap-tile {
   position: absolute;
   display: flex;
