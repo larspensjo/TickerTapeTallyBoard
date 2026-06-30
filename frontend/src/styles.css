@@ -1853,3 +1853,60 @@ th.number-head .sort-button {
     font-size: 12px;
   }
 }
+
+/* ── Treemap ─────────────────────────────────────────────────────────────── */
+
+.treemap-container {
+  position: relative;
+  height: 280px;
+  overflow: hidden;
+}
+
+.treemap-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.treemap-tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  overflow: hidden;
+  background: var(--surface-2);
+  border-left: 3px solid var(--hairline);
+  border-radius: var(--radius-xs);
+}
+
+.treemap-tile--up {
+  border-left-color: var(--up);
+}
+
+.treemap-tile--down {
+  border-left-color: var(--down);
+}
+
+.treemap-tile--small .treemap-tile-label,
+.treemap-tile--small .treemap-tile-pct {
+  display: none;
+}
+
+.treemap-tile-label {
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treemap-tile-pct {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
