@@ -1,16 +1,3 @@
-Now I have enough context to produce the updated plan. Let me analyze each review finding:
-
-- **Metric inconsistency (High)**: Confirmed. Dashboard `useGains` uses no `method` param; `totals.total_return_percent` would be XIRR while tile colors are simple per-position returns (2026-06-21 decision). Fix: remove the "All Holdings" chip entirely.
-- **Semantic fills (High)**: Confirmed. Design spec explicitly reserves `--up-soft`/`--down-soft` for "movers/alerts, never ordinary cells." Fix: use neutral `--surface-2` tiles + semantic-colored left border.
-- **Missing empty state (High)**: Confirmed. `AllocationPanel` and others handle empty states explicitly; `PortfolioTreemap` must too.
-- **Accessibility (Medium)**: Confirmed. `title` is hover-only. Fix: add `aria-label` to each tile. Full touch interaction deferred.
-- **treemapViewModel placement (Medium)**: Partially valid. Plan keeps it as a separate file — `dashboardSelectors.ts` already covers two orthogonal concerns (movers + allocation). Adding a third is fine but the treemap model is larger and has its own test file; a dedicated module is cleaner. Documented in Notes.
-- **Rename DashboardValueChart (Medium)**: Confirmed. Becomes misleading immediately. Fix: rename to `DashboardChartPanel`.
-- **Component test (Medium)**: Confirmed. Pattern already exists in `TimeSeriesChart.test.tsx`. Add a jsdom test covering empty state and tile rendering.
-- **HEIGHT dual source (Low)**: Confirmed. Fix: measure height from `ResizeObserver` alongside width; CSS `height: 280px` becomes single source of truth.
-- **Version bump / DecisionLog**: Valid. New user-visible feature + new dependency warrants both. Add as Task 6.
-
-```markdown
 # Treemap View Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -866,5 +853,4 @@ npm run check
 npm run fmt
 git add docs/DecisionLog.md frontend/package.json
 git commit -m "chore: bump frontend version and log treemap design decisions"
-```
 ```
