@@ -9,6 +9,7 @@ import {
   type MoverRow,
   topMovers,
 } from "./dashboardSelectors";
+import { PortfolioTreemap } from "./PortfolioTreemap";
 import {
   filterValueHistoryPoints,
   portfolioValueSeries,
@@ -37,8 +38,9 @@ export function Dashboard({
 
   return (
     <section className="dashboard" aria-label="Portfolio dashboard">
-      <DashboardValueChart
+      <DashboardChartPanel
         query={valueHistory}
+        gainsQuery={gainsQuery}
         dateRange={dateRange}
         selectedDatePreset={selectedDatePreset}
         onDatePresetChange={onDatePresetChange}
@@ -50,16 +52,18 @@ export function Dashboard({
   );
 }
 
-type ChartView = "value" | "gain";
+type ChartView = "value" | "gain" | "treemap";
 
-function DashboardValueChart({
+function DashboardChartPanel({
   query,
+  gainsQuery,
   dateRange,
   selectedDatePreset,
   onDatePresetChange,
   onDateRangeChange,
 }: {
   query: ReturnType<typeof usePortfolioValueHistory>;
+  gainsQuery: ReturnType<typeof useGains>;
   dateRange: DateRange;
   selectedDatePreset: DatePreset;
   onDatePresetChange: (datePreset: DatePreset) => void;
@@ -79,6 +83,64 @@ function DashboardValueChart({
     [filteredHistory],
   );
   const [view, setView] = useState<ChartView>("value");
+
+  const isGain = view === "gain";
+  const chartControls = (
+    <div className="chart-controls">
+      <DateRangeSelector
+        dateRange={dateRange}
+        selectedDatePreset={selectedDatePreset}
+        onDatePresetChange={onDatePresetChange}
+        onDateRangeChange={onDateRangeChange}
+        ariaLabel="Dashboard date range"
+      />
+      <fieldset className="segmented-control">
+        <legend className="sr-only">Chart view</legend>
+        {(["value", "gain", "treemap"] as ChartView[]).map((v) => (
+          <button
+            key={v}
+            type="button"
+            className={view === v ? "active" : undefined}
+            aria-pressed={view === v}
+            onClick={() => setView(v)}
+          >
+            {v[0].toUpperCase() + v.slice(1)}
+          </button>
+        ))}
+      </fieldset>
+    </div>
+  );
+
+  if (view === "treemap") {
+    return (
+      <section className="panel chart-panel" aria-label="Portfolio value">
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>Portfolio map</h2>
+          </div>
+          {chartControls}
+        </div>
+        {gainsQuery.isPending ? (
+          <div className="chart-band">
+            <div className="skeleton-bar" />
+          </div>
+        ) : gainsQuery.isError ? (
+          <div className="chart-band error">
+            <p className="down">Could not load holdings data.</p>
+            <button
+              type="button"
+              className="button outline"
+              onClick={() => void gainsQuery.refetch()}
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <PortfolioTreemap rows={gainsQuery.data?.rows ?? []} />
+        )}
+      </section>
+    );
+  }
 
   if (query.isPending) {
     return (
@@ -102,33 +164,6 @@ function DashboardValueChart({
       </section>
     );
   }
-
-  const isGain = view === "gain";
-  const chartControls = (
-    <div className="chart-controls">
-      <DateRangeSelector
-        dateRange={dateRange}
-        selectedDatePreset={selectedDatePreset}
-        onDatePresetChange={onDatePresetChange}
-        onDateRangeChange={onDateRangeChange}
-        ariaLabel="Dashboard date range"
-      />
-      <fieldset className="segmented-control">
-        <legend className="sr-only">Chart view</legend>
-        {(["value", "gain"] as ChartView[]).map((v) => (
-          <button
-            key={v}
-            type="button"
-            className={view === v ? "active" : undefined}
-            aria-pressed={view === v}
-            onClick={() => setView(v)}
-          >
-            {v[0].toUpperCase() + v.slice(1)}
-          </button>
-        ))}
-      </fieldset>
-    </div>
-  );
 
   if (series.value.length === 0) {
     return (
