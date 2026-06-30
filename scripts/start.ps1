@@ -4,6 +4,7 @@ param(
     [switch]$SkipBuild,
     [switch]$BuildOnly,
     [int]$FrontendPort = 5173,
+    [switch]$NoBrowser,
     [switch]$ProductionDb,
     [string]$LocalDatabaseUrl,
     [string]$ProductionDatabaseUrl
@@ -361,6 +362,12 @@ try {
     Wait-Url "http://127.0.0.1:$ResolvedFrontendPort/"
     Write-Host "Application is running." -ForegroundColor Green
     Write-Host ""
+
+    if (-not $NoBrowser) {
+        $FrontendUrl = "http://127.0.0.1:$ResolvedFrontendPort/"
+        Write-Host "Opening $FrontendUrl in the default browser..." -ForegroundColor Cyan
+        Start-Process $FrontendUrl
+    }
 
     while ($true) {
         if ($backendProcess.HasExited) {
