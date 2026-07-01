@@ -22,8 +22,10 @@ What we kept from the Coinbase system:
 
 - **One accent** ("brand voltage") — Coinbase Blue `#0052ff`, used scarcely.
 - **Mono on every number** — all tabular figures in a monospace face.
-- **Semantic up/down as color, not fills** — green/red are text colors (one
-  reserved exception: soft-tinted chips, below).
+- **Semantic up/down as color, not fills** — green/red are text colors (two
+  reserved exceptions: soft-tinted chips, below, and the Dashboard treemap,
+  whose whole point is a per-tile heatmap — its tiles use the same `--up-soft`/
+  `--down-soft` fills).
 - **Depth by layering, not shadows** — panels float on the canvas via a surface
   step + 1px hairline; drop shadows are reserved for overlays only.
 - **Pill/rounded geometry** — pill CTAs, rounded panels, circular glyphs.
@@ -78,8 +80,8 @@ this is an *in-product* dashboard):
 |---|---|---|
 | `--up` | `#16c784` | Price/P&L up. Text color. |
 | `--down` | `#ff4d4f` | Price/P&L down. Text color. |
-| `--up-soft` | `rgba(22,199,132,0.13)` | Reserved tint — "top mover" chip background. |
-| `--down-soft` | `rgba(255,77,79,0.13)` | Reserved tint — "laggard" chip background. |
+| `--up-soft` | `rgba(22,199,132,0.13)` | Reserved tint — "top mover" chip background, Dashboard treemap up-tile fill. |
+| `--down-soft` | `rgba(255,77,79,0.13)` | Reserved tint — "laggard" chip background, Dashboard treemap down-tile fill. |
 | `--warning` | `#f4b000` | Stale price, import warnings. Text/chip. |
 | `--warning-soft` | `rgba(244,176,0,0.14)` | Warning chip background. |
 

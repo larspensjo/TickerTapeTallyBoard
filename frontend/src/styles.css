@@ -1887,16 +1887,15 @@ th.number-head .sort-button {
   padding: var(--space-2);
   overflow: hidden;
   background: var(--surface-2);
-  border-left: 3px solid var(--hairline);
   border-radius: var(--radius-xs);
 }
 
 .treemap-tile--up {
-  border-left-color: var(--up);
+  background: var(--up-soft);
 }
 
 .treemap-tile--down {
-  border-left-color: var(--down);
+  background: var(--down-soft);
 }
 
 .treemap-tile-label {
