@@ -7,6 +7,7 @@ import {
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GainsRow } from "../api/types";
 import { type TreemapTile, treemapViewModel } from "./treemapViewModel";
+import { formatGroupedNumber } from "./valuationDisplay";
 
 // d3-hierarchy datum: the root holds children; each leaf IS a TreemapTile.
 type RootDatum = { children: TreemapTile[] };
@@ -80,7 +81,8 @@ export function PortfolioTreemap({ rows }: { rows: GainsRow[] }) {
             const w = leaf.x1 - leaf.x0;
             const h = leaf.y1 - leaf.y0;
             const isSmall = w < 64 || h < 44;
-            const label = `${tile.symbol}.${tile.exchange}: ${formatPct(tile.totalReturnPercent)}`;
+            const value = `SEK ${formatGroupedNumber(tile.marketValueBase.toFixed(2))}`;
+            const label = `${tile.symbol}.${tile.exchange}: ${value}, ${formatPct(tile.totalReturnPercent)}`;
             return (
               <li
                 key={`${tile.symbol}.${tile.exchange}`}

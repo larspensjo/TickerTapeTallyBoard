@@ -144,23 +144,39 @@ function DashboardChartPanel({
 
   if (query.isPending) {
     return (
-      <section className="chart-band" aria-label="Portfolio value">
-        <div className="skeleton-bar" />
+      <section className="panel chart-panel" aria-label="Portfolio value">
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>{isGain ? "Portfolio gain (SEK)" : "Portfolio value (SEK)"}</h2>
+          </div>
+          {chartControls}
+        </div>
+        <div className="chart-band">
+          <div className="skeleton-bar" />
+        </div>
       </section>
     );
   }
 
   if (query.isError) {
     return (
-      <section className="chart-band error" aria-label="Portfolio value">
-        <p className="down">Could not load portfolio value.</p>
-        <button
-          type="button"
-          className="button outline"
-          onClick={() => void query.refetch()}
-        >
-          Retry
-        </button>
+      <section className="panel chart-panel" aria-label="Portfolio value">
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>{isGain ? "Portfolio gain (SEK)" : "Portfolio value (SEK)"}</h2>
+          </div>
+          {chartControls}
+        </div>
+        <div className="chart-band error">
+          <p className="down">Could not load portfolio value.</p>
+          <button
+            type="button"
+            className="button outline"
+            onClick={() => void query.refetch()}
+          >
+            Retry
+          </button>
+        </div>
       </section>
     );
   }

@@ -154,8 +154,12 @@ describe("PortfolioTreemap", () => {
       const googTile = container.querySelector('[aria-label*="GOOG"]');
       expect(msftTile).not.toBeNull();
       expect(googTile).not.toBeNull();
-      expect(msftTile?.getAttribute("aria-label")).toBe("MSFT.NYSE: +5.00%");
-      expect(googTile?.getAttribute("aria-label")).toBe("GOOG.NYSE: +5.00%");
+      expect(msftTile?.getAttribute("aria-label")).toBe(
+        "MSFT.NYSE: SEK 5,000.00, +5.00%",
+      );
+      expect(googTile?.getAttribute("aria-label")).toBe(
+        "GOOG.NYSE: SEK 3,000.00, +5.00%",
+      );
       // Tiles are native <li> elements (implicit role="listitem"), not
       // role="img", since a nested role="img" would prune these aria-labels
       // from the accessibility tree under the container's own list role.
