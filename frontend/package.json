@@ -1,6 +1,6 @@
 {
   "name": "ticker-tape-tally-board-frontend",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,27 +13,27 @@
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-table": "^8.21.3",
     "d3-hierarchy": "^3.1.2",
-    "lightweight-charts": "^4.2.0",
-    "lucide-react": "^1.20.0",
+    "lightweight-charts": "^5.2.0",
+    "lucide-react": "^1.22.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.18.0"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/d3-hierarchy": "^3.1.7",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.0.1",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
+    "vite": "^8.1.2",
     "vitest": "^4.1.9"
   }
 }

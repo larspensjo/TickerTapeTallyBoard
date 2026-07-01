@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 
 const chartMocks = vi.hoisted(() => {
+  const LineSeries = { seriesType: "Line" };
+  const AreaSeries = { seriesType: "Area" };
   const setData = vi.fn();
   const setMarkers = vi.fn();
   const setVisibleRange = vi.fn();
@@ -13,12 +15,17 @@ const chartMocks = vi.hoisted(() => {
   const remove = vi.fn();
   const subscribeCrosshairMove = vi.fn();
   const timeScale = vi.fn(() => ({ setVisibleRange, fitContent }));
-  const addAreaSeries = vi.fn(() => ({ setData, setMarkers }));
   const setReferenceData = vi.fn();
-  const addLineSeries = vi.fn(() => ({ setData: setReferenceData }));
+  const areaSeries = { setData };
+  const lineSeries = { setData: setReferenceData };
+  const addAreaSeries = vi.fn((_options?: unknown) => areaSeries);
+  const addLineSeries = vi.fn((_options?: unknown) => lineSeries);
+  const addSeries = vi.fn((definition: unknown, options: unknown) =>
+    definition === AreaSeries ? addAreaSeries(options) : addLineSeries(options),
+  );
+  const createSeriesMarkers = vi.fn(() => ({ setMarkers }));
   const createChart = vi.fn(() => ({
-    addAreaSeries,
-    addLineSeries,
+    addSeries,
     applyOptions,
     remove,
     subscribeCrosshairMove,
@@ -26,10 +33,14 @@ const chartMocks = vi.hoisted(() => {
   }));
 
   return {
+    AreaSeries,
+    LineSeries,
     addAreaSeries,
     addLineSeries,
+    addSeries,
     applyOptions,
     createChart,
+    createSeriesMarkers,
     fitContent,
     remove,
     setData,
@@ -56,7 +67,10 @@ vi.mock("lightweight-charts", () => ({
     LargeDashed: 3,
     SparseDotted: 4,
   },
+  AreaSeries: chartMocks.AreaSeries,
+  LineSeries: chartMocks.LineSeries,
   createChart: chartMocks.createChart,
+  createSeriesMarkers: chartMocks.createSeriesMarkers,
 }));
 
 class TestResizeObserver {

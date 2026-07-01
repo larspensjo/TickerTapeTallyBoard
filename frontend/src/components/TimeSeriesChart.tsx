@@ -1,9 +1,13 @@
 import {
   type AreaData,
+  AreaSeries,
   type AutoscaleInfoProvider,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  LineSeries,
   LineStyle,
   type SeriesMarker,
   TickMarkType,
@@ -120,7 +124,7 @@ function calendarSpineData(
 
 const zeroBaselineAutoscale: AutoscaleInfoProvider = (baseImplementation) => {
   const autoscale = baseImplementation();
-  if (autoscale === null) return null;
+  if (autoscale === null || autoscale.priceRange === null) return autoscale;
 
   return {
     ...autoscale,
@@ -161,6 +165,7 @@ export function TimeSeriesChart({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const referenceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
@@ -193,7 +198,7 @@ export function TimeSeriesChart({
       handleScale: false,
       handleScroll: false,
     });
-    const referenceSeries = chart.addLineSeries({
+    const referenceSeries = chart.addSeries(LineSeries, {
       color: "#e0b15e",
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
@@ -202,7 +207,7 @@ export function TimeSeriesChart({
       crosshairMarkerVisible: false,
     });
 
-    const series = chart.addAreaSeries({
+    const series = chart.addSeries(AreaSeries, {
       lineColor,
       topColor,
       bottomColor,
@@ -213,6 +218,7 @@ export function TimeSeriesChart({
 
     chartRef.current = chart;
     seriesRef.current = series;
+    seriesMarkersRef.current = createSeriesMarkers(series);
     referenceSeriesRef.current = referenceSeries;
 
     const resize = () => chart.applyOptions({ width: container.clientWidth });
@@ -240,6 +246,7 @@ export function TimeSeriesChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      seriesMarkersRef.current = null;
       referenceSeriesRef.current = null;
       setTooltip(null);
     };
@@ -273,8 +280,8 @@ export function TimeSeriesChart({
   }, [data, visibleStart, referenceData]);
 
   useEffect(() => {
-    const series = seriesRef.current;
-    if (!series) return;
+    const seriesMarkersApi = seriesMarkersRef.current;
+    if (!seriesMarkersApi) return;
 
     const seriesMarkers: SeriesMarker<Time>[] = markers
       .slice()
@@ -296,7 +303,7 @@ export function TimeSeriesChart({
         color: markerColors[marker.side],
       }));
 
-    series.setMarkers(seriesMarkers);
+    seriesMarkersApi.setMarkers(seriesMarkers);
     setTooltip(null);
   }, [markers]);
 
