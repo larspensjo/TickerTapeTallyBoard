@@ -3,6 +3,7 @@ import type { GainsRow } from "../api/types";
 export interface TreemapTile {
   symbol: string;
   exchange: string;
+  name: string;
   marketValueBase: number;
   totalReturnPercent: number | null;
 }
@@ -27,6 +28,7 @@ export function treemapViewModel(rows: GainsRow[]): TreemapTile[] {
     tiles.push({
       symbol: row.instrument.symbol,
       exchange: row.instrument.exchange,
+      name: row.instrument.name,
       marketValueBase,
       totalReturnPercent,
     });

@@ -82,7 +82,9 @@ export function PortfolioTreemap({ rows }: { rows: GainsRow[] }) {
             const h = leaf.y1 - leaf.y0;
             const isSmall = w < 64 || h < 44;
             const value = `SEK ${formatGroupedNumber(tile.marketValueBase.toFixed(2))}`;
-            const label = `${tile.symbol}.${tile.exchange}: ${value}, ${formatPct(tile.totalReturnPercent)}`;
+            const displayName =
+              tile.name.trim() || `${tile.symbol}.${tile.exchange}`;
+            const label = `${displayName}: ${value}, ${formatPct(tile.totalReturnPercent)}`;
             return (
               <li
                 key={`${tile.symbol}.${tile.exchange}`}
@@ -91,9 +93,7 @@ export function PortfolioTreemap({ rows }: { rows: GainsRow[] }) {
                 title={label}
                 aria-label={label}
               >
-                <span className="treemap-tile-label">
-                  {tile.symbol}.{tile.exchange}
-                </span>
+                <span className="treemap-tile-label">{displayName}</span>
                 <span
                   className="treemap-tile-pct"
                   style={{ color: tileColor(tile.totalReturnPercent) }}

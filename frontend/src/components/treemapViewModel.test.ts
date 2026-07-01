@@ -128,14 +128,14 @@ describe("treemapViewModel", () => {
     expect(tile.totalReturnPercent).toBeNull();
   });
 
-  it("uses symbol and exchange from the instrument", () => {
+  it("uses symbol, exchange, and name from the instrument", () => {
     const [tile] = treemapViewModel([
       row(
         {
           id: 1,
           symbol: "MSFT",
           exchange: "NYSE",
-          name: "Microsoft",
+          name: "Microsoft Corporation",
           type: "Stock",
           currency: "USD",
         },
@@ -144,6 +144,7 @@ describe("treemapViewModel", () => {
     ]);
     expect(tile.symbol).toBe("MSFT");
     expect(tile.exchange).toBe("NYSE");
+    expect(tile.name).toBe("Microsoft Corporation");
   });
 
   it("returns empty array for empty input", () => {

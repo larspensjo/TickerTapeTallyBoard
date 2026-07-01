@@ -10,21 +10,21 @@ class TestResizeObserver {
   disconnect = vi.fn();
 }
 
-function inst(symbol: string, exchange = "NYSE"): Instrument {
+function inst(symbol: string, exchange = "NYSE", name = symbol): Instrument {
   return {
     id: 1,
     symbol,
     exchange,
-    name: symbol,
+    name,
     type: "Stock",
     currency: "USD",
   };
 }
 
-function openRow(symbol: string, value: string): GainsRow {
+function openRow(symbol: string, value: string, name = symbol): GainsRow {
   const money = { status: "available", value: "0.00" } as const;
   return {
-    instrument: inst(symbol),
+    instrument: inst(symbol, "NYSE", name),
     quantity: 10,
     cost_basis_native: "1000",
     cost_basis_base: money,
@@ -142,7 +142,10 @@ describe("PortfolioTreemap", () => {
     try {
       const { container } = render(
         <PortfolioTreemap
-          rows={[openRow("MSFT", "5000.00"), openRow("GOOG", "3000.00")]}
+          rows={[
+            openRow("MSFT", "5000.00", "Microsoft Corporation"),
+            openRow("GOOG", "3000.00", "Alphabet Inc."),
+          ]}
         />,
       );
 
@@ -150,15 +153,17 @@ describe("PortfolioTreemap", () => {
         screen.queryByText("No valued open holdings to display."),
       ).toBeNull();
 
-      const msftTile = container.querySelector('[aria-label*="MSFT"]');
-      const googTile = container.querySelector('[aria-label*="GOOG"]');
+      const msftTile = container.querySelector(
+        '[aria-label*="Microsoft Corporation"]',
+      );
+      const googTile = container.querySelector('[aria-label*="Alphabet Inc."]');
       expect(msftTile).not.toBeNull();
       expect(googTile).not.toBeNull();
       expect(msftTile?.getAttribute("aria-label")).toBe(
-        "MSFT.NYSE: SEK 5,000.00, +5.00%",
+        "Microsoft Corporation: SEK 5,000.00, +5.00%",
       );
       expect(googTile?.getAttribute("aria-label")).toBe(
-        "GOOG.NYSE: SEK 3,000.00, +5.00%",
+        "Alphabet Inc.: SEK 3,000.00, +5.00%",
       );
       // Tiles are native <li> elements (implicit role="listitem"), not
       // role="img", since a nested role="img" would prune these aria-labels
@@ -168,8 +173,20 @@ describe("PortfolioTreemap", () => {
       expect(listItems).toContain(googTile);
       expect(msftTile?.classList.contains("treemap-tile")).toBe(true);
       expect(msftTile?.classList.contains("treemap-tile--up")).toBe(true);
-      expect(msftTile?.textContent).toContain("MSFT.NYSE");
+      expect(msftTile?.textContent).toContain("Microsoft Corporation");
       expect(msftTile?.textContent).toContain("+5.00%");
+
+      cleanup();
+
+      // When the instrument has no name, fall back to symbol.exchange.
+      const { container: fallbackContainer } = render(
+        <PortfolioTreemap rows={[openRow("AAPL", "5000.00", "")]} />,
+      );
+      const aaplTile = fallbackContainer.querySelector('[aria-label*="AAPL"]');
+      expect(aaplTile?.getAttribute("aria-label")).toBe(
+        "AAPL.NYSE: SEK 5,000.00, +5.00%",
+      );
+      expect(aaplTile?.textContent).toContain("AAPL.NYSE");
     } finally {
       if (widthDescriptor) {
         Object.defineProperty(
