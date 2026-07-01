@@ -113,7 +113,7 @@ function DashboardChartPanel({
 
   if (view === "treemap") {
     return (
-      <section className="panel chart-panel" aria-label="Portfolio value">
+      <section className="panel chart-panel" aria-label="Portfolio map">
         <div className="chart-meta">
           <div className="chart-meta-title">
             <h2>Portfolio map</h2>

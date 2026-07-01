@@ -1899,11 +1899,6 @@ th.number-head .sort-button {
   border-left-color: var(--down);
 }
 
-.treemap-tile--small .treemap-tile-label,
-.treemap-tile--small .treemap-tile-pct {
-  display: none;
-}
-
 .treemap-tile-label {
   overflow: hidden;
   font-size: 0.75rem;
@@ -1917,4 +1912,9 @@ th.number-head .sort-button {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   font-weight: 500;
+}
+
+.treemap-tile--small .treemap-tile-label,
+.treemap-tile--small .treemap-tile-pct {
+  display: none;
 }

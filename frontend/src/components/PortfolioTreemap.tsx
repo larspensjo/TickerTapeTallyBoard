@@ -4,7 +4,7 @@ import {
   treemap,
   treemapSquarify,
 } from "d3-hierarchy";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GainsRow } from "../api/types";
 import { type TreemapTile, treemapViewModel } from "./treemapViewModel";
 
@@ -52,7 +52,7 @@ export function PortfolioTreemap({ rows }: { rows: GainsRow[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     setSize({ width: el.clientWidth, height: el.clientHeight });
