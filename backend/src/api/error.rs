@@ -56,6 +56,14 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, code, message)
     }
 
+    pub fn demo_read_only() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "demo_read_only",
+            "Demo mode is read-only.",
+        )
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
     }

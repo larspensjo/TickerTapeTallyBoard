@@ -128,6 +128,7 @@ pub async fn sharesight_preview(
     State(state): State<AppState>,
     bytes: Bytes,
 ) -> Result<Json<ImportPreview>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
     preview_source(&state, &bytes, parse_sharesight).await
 }
 
@@ -136,6 +137,7 @@ pub async fn sharesight_commit(
     Query(params): Query<CommitParams>,
     bytes: Bytes,
 ) -> Result<Json<ImportResult>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
     commit_source(&state, &bytes, "SHARESIGHT", &params, parse_sharesight).await
 }
 
@@ -143,6 +145,7 @@ pub async fn avanza_preview(
     State(state): State<AppState>,
     bytes: Bytes,
 ) -> Result<Json<ImportPreview>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
     avanza_preview_inner(&state, &bytes).await
 }
 
@@ -151,6 +154,7 @@ pub async fn avanza_commit(
     Query(params): Query<CommitParams>,
     bytes: Bytes,
 ) -> Result<Json<ImportResult>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
     let is_replace = params.mode.as_deref() == Some("replace");
     if is_replace {
         let replace_batch_id = params.replace_batch_id.ok_or_else(|| {
@@ -169,6 +173,8 @@ pub async fn rollback(
     State(state): State<AppState>,
     Path(batch_id): Path<i64>,
 ) -> Result<Json<RollbackResult>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     if import_batches::find(&state.pool, batch_id).await?.is_none() {
         return Err(ApiError::not_found("import batch", batch_id));
     }

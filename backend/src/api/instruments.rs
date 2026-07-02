@@ -86,6 +86,8 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateInstrument>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     let new = NewInstrument {
         symbol: body.symbol.trim().to_owned(),
         exchange: body.exchange.trim().to_owned(),

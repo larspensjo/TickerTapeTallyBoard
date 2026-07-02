@@ -27,6 +27,13 @@ use crate::state::AppState;
 
 pub use error::ApiError;
 
+pub fn reject_demo_mutation(state: &AppState) -> Result<(), ApiError> {
+    if state.demo_mode {
+        return Err(ApiError::demo_read_only());
+    }
+    Ok(())
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(root::handler))
@@ -108,6 +115,7 @@ mod tests {
         body::{to_bytes, Body},
         http::{header, Request, StatusCode},
     };
+    use serde_json::{json, Value};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -117,6 +125,63 @@ mod tests {
     use tower::ServiceExt;
 
     static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[tokio::test]
+    async fn demo_mode_rejects_mutating_routes() {
+        let state = crate::state::AppState::for_tests()
+            .await
+            .with_demo_mode(true);
+
+        for (method, uri, body) in [
+            (
+                "POST",
+                "/api/transactions",
+                json!({"instrument_id":1,"type":"Buy","trade_date":"2026-06-12","quantity":1,"price":"10","currency":"SEK"}),
+            ),
+            (
+                "PUT",
+                "/api/transactions/1",
+                json!({"instrument_id":1,"type":"Buy","trade_date":"2026-06-12","quantity":1,"price":"10","currency":"SEK"}),
+            ),
+            ("DELETE", "/api/transactions/1", Value::Null),
+            (
+                "POST",
+                "/api/instruments",
+                json!({"symbol":"TEST","exchange":"STO","name":"Test","type":"Stock","currency":"SEK"}),
+            ),
+            (
+                "PUT",
+                "/api/instruments/1/provider-symbols/YAHOO",
+                json!({"provider_symbol":"TEST.ST","currency":"SEK","enabled":true}),
+            ),
+            ("POST", "/api/import/sharesight/preview", json!({})),
+            ("POST", "/api/import/avanza/preview", json!({})),
+            ("POST", "/api/import/sharesight/commit", json!({})),
+            ("POST", "/api/import/avanza/commit", json!({})),
+            ("POST", "/api/import/rollback/1", Value::Null),
+            ("POST", "/api/import/sharesight/rollback/1", Value::Null),
+            ("POST", "/api/prices/refresh", json!({"mode":"latest"})),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request should build");
+
+            let response = router(state.clone())
+                .oneshot(request)
+                .await
+                .expect("request should complete");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body should be readable");
+            let body: Value = serde_json::from_slice(&body).expect("body should be JSON");
+            assert_eq!(body["error"]["code"], "demo_read_only", "{method} {uri}");
+        }
+    }
 
     #[tokio::test]
     async fn static_router_serves_frontend_index_for_root() {

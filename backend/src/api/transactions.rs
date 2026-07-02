@@ -173,6 +173,8 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<TransactionInput>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     let proposed = body.proposed()?;
     let signed_quantity = domain::validate(&proposed)?;
 
@@ -207,6 +209,8 @@ pub async fn replace(
     Path(id): Path<i64>,
     Json(body): Json<TransactionInput>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     let proposed = body.proposed()?;
     let signed_quantity = domain::validate(&proposed)?;
 
@@ -244,6 +248,8 @@ pub async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     let existing = transactions::find(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("transaction", id))?;

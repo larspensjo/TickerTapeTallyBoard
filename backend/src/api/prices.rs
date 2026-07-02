@@ -13,6 +13,8 @@ pub async fn refresh(
     State(state): State<AppState>,
     Json(body): Json<RefreshPricesRequest>,
 ) -> Result<Json<RefreshPricesResponse>, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     let trigger = match body.mode {
         RefreshMode::Latest => RefreshTrigger::Manual,
         RefreshMode::Backfill => RefreshTrigger::Backfill,
@@ -197,5 +199,30 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "invalid_date_range");
+    }
+
+    #[tokio::test]
+    async fn refresh_endpoint_in_demo_mode_rejects_before_provider_call() {
+        let pool = db::memory_pool().await.expect("memory pool");
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        let state = AppState::with_market_data(
+            pool,
+            MarketDataService::with_providers(price_provider.clone(), fx_provider.clone()),
+        )
+        .with_demo_mode(true);
+
+        let (status, body) = send(
+            &state,
+            "POST",
+            "/api/prices/refresh",
+            json!({"mode":"latest"}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "demo_read_only");
+        assert!(price_provider.calls().is_empty());
+        assert!(fx_provider.calls().is_empty());
     }
 }

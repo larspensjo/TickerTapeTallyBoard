@@ -56,6 +56,8 @@ pub async fn update(
     Path((instrument_id, provider)): Path<(i64, String)>,
     Json(body): Json<UpdateProviderSymbolRequest>,
 ) -> Result<(StatusCode, Json<ProviderSymbolResponse>), ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
     if instruments::find(&state.pool, instrument_id)
         .await?
         .is_none()
