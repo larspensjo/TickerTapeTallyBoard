@@ -9,7 +9,8 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> 
     let state = AppState::new(
         pool,
         Arc::new(crate::market_data::MarketDataService::live()),
-    );
+    )
+    .with_demo_mode(config.demo_mode);
     let _ = spawn_launch_refresh(&config, state.clone());
     let router = if config.static_assets_dir().is_dir() {
         crate::engine_info!(

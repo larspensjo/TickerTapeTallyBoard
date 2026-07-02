@@ -9,11 +9,21 @@ use crate::market_data::MarketDataService;
 pub struct AppState {
     pub pool: SqlitePool,
     pub market_data: Arc<MarketDataService>,
+    pub demo_mode: bool,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool, market_data: Arc<MarketDataService>) -> Self {
-        Self { pool, market_data }
+        Self {
+            pool,
+            market_data,
+            demo_mode: false,
+        }
+    }
+
+    pub fn with_demo_mode(mut self, demo_mode: bool) -> Self {
+        self.demo_mode = demo_mode;
+        self
     }
 
     pub fn with_market_data(pool: SqlitePool, market_data: MarketDataService) -> Self {
