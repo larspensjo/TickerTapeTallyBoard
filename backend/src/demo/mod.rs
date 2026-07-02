@@ -1,7 +1,9 @@
 use chrono::{Datelike, Duration, NaiveDate};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use sqlx::sqlite::SqlitePool;
 
+use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
 use crate::domain::TransactionKind;
 
 pub const BASE_CURRENCY: &str = "SEK";
@@ -78,6 +80,108 @@ pub fn dataset(today: NaiveDate) -> DemoData {
         prices,
         fx_rates,
     }
+}
+
+pub async fn seed(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    seed_for_date(pool, chrono::Local::now().date_naive()).await
+}
+
+async fn seed_for_date(
+    pool: &SqlitePool,
+    today: NaiveDate,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let data = dataset(today);
+    let fetched_at = crate::import::now_iso8601();
+    let mut instrument_ids = Vec::with_capacity(data.instruments.len());
+
+    for instrument in &data.instruments {
+        let (row, _) = instruments::upsert(
+            pool,
+            &instruments::NewInstrument {
+                symbol: instrument.symbol.to_owned(),
+                exchange: instrument.exchange.to_owned(),
+                name: instrument.name.to_owned(),
+                kind: instrument.kind.to_owned(),
+                currency: instrument.currency.to_owned(),
+                isin: instrument.isin.map(str::to_owned),
+            },
+        )
+        .await?;
+        instrument_ids.push(row.id);
+
+        provider_symbols::upsert(
+            pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: row.id,
+                provider: PRICE_PROVIDER.to_owned(),
+                provider_symbol: instrument.provider_symbol.to_owned(),
+                currency: Some(instrument.currency.to_owned()),
+                enabled: true,
+                created_at: fetched_at.clone(),
+                updated_at: fetched_at.clone(),
+            },
+        )
+        .await?;
+    }
+
+    for transaction in &data.transactions {
+        transactions::insert(
+            pool,
+            &transactions::NewTransaction {
+                instrument_id: instrument_ids[transaction.instrument_index],
+                kind: transaction.kind,
+                trade_date: transaction.trade_date,
+                quantity: transaction.quantity,
+                price: transaction.price,
+                dividend_per_share: transaction.dividend_per_share,
+                currency: transaction.currency.map(str::to_owned),
+                fx_rate_to_base: transaction.fx_rate_to_base,
+                brokerage: transaction.brokerage,
+                note: transaction.note.map(str::to_owned),
+            },
+        )
+        .await?;
+    }
+
+    for price in &data.prices {
+        prices::upsert(
+            pool,
+            &prices::NewPrice {
+                instrument_id: instrument_ids[price.instrument_index],
+                provider: price.provider.to_owned(),
+                provider_symbol: price.provider_symbol.to_owned(),
+                date: price.date,
+                close: price.close,
+                currency: price.currency.to_owned(),
+                fetched_at: fetched_at.clone(),
+            },
+        )
+        .await?;
+    }
+
+    for fx_rate in &data.fx_rates {
+        fx_rates::upsert(
+            pool,
+            &fx_rates::NewFxRate {
+                base: fx_rate.base.to_owned(),
+                quote: fx_rate.quote.to_owned(),
+                date: fx_rate.date,
+                rate: fx_rate.rate,
+                provider: fx_rate.provider.to_owned(),
+                fetched_at: fetched_at.clone(),
+            },
+        )
+        .await?;
+    }
+
+    for instrument_id in instrument_ids {
+        let ledger = transactions::ledger_for_instrument(pool, instrument_id).await?;
+        crate::domain::derive_position_performance(&ledger).map_err(|error| {
+            format!("demo ledger for instrument {instrument_id} failed validation: {error:?}")
+        })?;
+    }
+
+    Ok(())
 }
 
 fn instruments() -> Vec<DemoInstrument> {
@@ -425,5 +529,59 @@ mod tests {
 
     fn fixed_dataset() -> DemoData {
         dataset(NaiveDate::from_ymd_opt(2026, 7, 2).expect("date"))
+    }
+
+    #[tokio::test]
+    async fn seed_writes_readable_ledgers_and_market_data() {
+        let pool = crate::db::testing::memory_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
+
+        seed_for_date(&pool, today).await.expect("seed should succeed");
+
+        let instruments = crate::db::instruments::list(&pool)
+            .await
+            .expect("instruments should list");
+        assert_eq!(instruments.len(), 6);
+
+        for instrument in &instruments {
+            let ledger = crate::db::transactions::ledger_for_instrument(&pool, instrument.id)
+                .await
+                .expect("ledger should load");
+            assert!(ledger.len() >= 2);
+            crate::domain::derive_position_performance(&ledger).expect("ledger should derive");
+
+            let latest_price = crate::db::prices::find_latest_on_or_before(
+                &pool,
+                instrument.id,
+                PRICE_PROVIDER,
+                today,
+            )
+            .await
+            .expect("price lookup should succeed");
+            assert!(latest_price.is_some());
+
+            let provider_symbol = crate::db::provider_symbols::find_by_instrument_provider(
+                &pool,
+                instrument.id,
+                PRICE_PROVIDER,
+            )
+            .await
+            .expect("provider symbol lookup should succeed")
+            .expect("provider symbol should exist");
+            assert!(provider_symbol.enabled);
+        }
+
+        for currency in ["USD", "EUR"] {
+            let latest_fx = crate::db::fx_rates::find_latest_on_or_before(
+                &pool,
+                currency,
+                BASE_CURRENCY,
+                FX_PROVIDER,
+                today,
+            )
+            .await
+            .expect("fx lookup should succeed");
+            assert!(latest_fx.is_some());
+        }
     }
 }
