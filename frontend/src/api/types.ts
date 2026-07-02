@@ -231,6 +231,13 @@ export interface PriceStatusResponse {
   instruments: PriceStatusInstrument[];
 }
 
+export interface HealthResponse {
+  status: string;
+  version: string;
+  demo: boolean;
+  build: { package: string; profile: string };
+}
+
 export type RefreshMode = "latest" | "backfill";
 export type RefreshTrigger = "manual" | "backfill" | "launch";
 export type RefreshRunStatus = "running" | "succeeded" | "partial" | "failed";

@@ -1,23 +1,7 @@
-import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import packageJson from "../../package.json";
+import { useHealth } from "../api/queries";
 
-interface HealthResponse {
-  status: string;
-  version: string;
-  build: { package: string; profile: string };
-}
-
-async function fetchHealth(): Promise<HealthResponse> {
-  const response = await fetch("/api/health");
-
-  if (!response.ok) {
-    throw new Error(`Health request failed: ${response.status}`);
-  }
-
-  return (await response.json()) as HealthResponse;
-}
-
-function apiStatusLabel(query: UseQueryResult<HealthResponse, Error>) {
+function apiStatusLabel(query: ReturnType<typeof useHealth>) {
   if (query.isPending) {
     return "API checking";
   }
@@ -30,15 +14,13 @@ function apiStatusLabel(query: UseQueryResult<HealthResponse, Error>) {
 }
 
 export function AppFooter() {
-  const healthQuery = useQuery({
-    queryKey: ["health"],
-    queryFn: fetchHealth,
-  });
+  const healthQuery = useHealth();
 
   return (
     <footer className="app-footer">
       <span>UI {packageJson.version}</span>
       <span>{apiStatusLabel(healthQuery)}</span>
+      {healthQuery.data?.demo ? <span>DEMO</span> : null}
       <span>Manual entry</span>
       <span>SEK base</span>
     </footer>

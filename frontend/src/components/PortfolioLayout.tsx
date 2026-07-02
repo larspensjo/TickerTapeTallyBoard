@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import {
   useGains,
+  useHealth,
   useInstruments,
   usePriceStatus,
   useRefreshPrices,
@@ -13,37 +14,41 @@ import { PortfolioSummary } from "./PortfolioSummary";
 export function PortfolioLayout() {
   const [formOpen, setFormOpen] = useState(false);
   const gainsQuery = useGains();
+  const healthQuery = useHealth();
   const instrumentsQuery = useInstruments();
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const pricesRefreshing =
     refreshPrices.isPending || priceStatusQuery.data?.refreshing === true;
+  const canMutate = healthQuery.data?.demo !== true;
 
   return (
     <div className="portfolio-layout">
-      <div className="portfolio-actions">
-        <button
-          className="button primary"
-          type="button"
-          onClick={() => void refreshPrices.mutateAsync({ mode: "latest" })}
-          disabled={pricesRefreshing}
-        >
-          <RefreshCw
-            aria-hidden="true"
-            className={pricesRefreshing ? "spin" : undefined}
-            size={16}
-          />
-          <span>Refresh prices</span>
-        </button>
-        <button
-          className="button secondary"
-          type="button"
-          onClick={() => setFormOpen((open) => !open)}
-        >
-          <Plus aria-hidden="true" size={16} />
-          <span>Add transaction</span>
-        </button>
-      </div>
+      {canMutate ? (
+        <div className="portfolio-actions">
+          <button
+            className="button primary"
+            type="button"
+            onClick={() => void refreshPrices.mutateAsync({ mode: "latest" })}
+            disabled={pricesRefreshing}
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={pricesRefreshing ? "spin" : undefined}
+              size={16}
+            />
+            <span>Refresh prices</span>
+          </button>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => setFormOpen((open) => !open)}
+          >
+            <Plus aria-hidden="true" size={16} />
+            <span>Add transaction</span>
+          </button>
+        </div>
+      ) : null}
 
       <PortfolioSummary
         summary={gainsQuery.data?.summary}
@@ -53,7 +58,7 @@ export function PortfolioLayout() {
         refreshError={refreshPrices.error}
       />
 
-      {formOpen ? (
+      {formOpen && canMutate ? (
         <section className="panel form-panel" aria-label="Add transaction">
           <div className="panel-header">
             <div>

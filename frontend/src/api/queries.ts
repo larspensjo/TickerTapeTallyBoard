@@ -8,6 +8,7 @@ import { apiGet, apiSend, apiSendBytes } from "./client";
 import type {
   DateRange,
   GainsResponse,
+  HealthResponse,
   Holding,
   ImportPreview,
   ImportResult,
@@ -29,6 +30,13 @@ export function useInstruments() {
   return useQuery({
     queryKey: ["instruments"],
     queryFn: () => apiGet<Instrument[]>("/api/instruments"),
+  });
+}
+
+export function useHealth() {
+  return useQuery({
+    queryKey: ["health"],
+    queryFn: () => apiGet<HealthResponse>("/api/health"),
   });
 }
 

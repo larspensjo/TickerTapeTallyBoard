@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useReducer } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { useHealth } from "./api/queries";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
+import { appModeViewModel } from "./components/appModeViewModel";
 import {
   dateRangeSelectionReducer,
   loadDateRangeSelection,
@@ -59,6 +61,9 @@ export function App() {
     saveDateRangeSelection(dateRangeSelection);
   }, [dateRangeSelection]);
 
+  const healthQuery = useHealth();
+  const appMode = appModeViewModel(healthQuery.data?.demo === true);
+
   const dateRangeProps = {
     dateRange: dateRangeSelection.dateRange,
     selectedDatePreset: dateRangeSelection.datePreset,
@@ -75,23 +80,21 @@ export function App() {
           <span className="brand-mark" aria-hidden="true" />
           <span>TickerTapeTallyBoard</span>
         </Link>
+        {appMode.showDemoBadge ? (
+          <span className="demo-badge">DEMO</span>
+        ) : null}
 
         <nav className="app-nav" aria-label="Primary">
-          <NavLink to="/" end className={navClass}>
-            Dashboard
-          </NavLink>
-          <NavLink to="/holdings" className={navClass}>
-            Holdings
-          </NavLink>
-          <NavLink to="/gains" className={navClass}>
-            Gains
-          </NavLink>
-          <NavLink to="/transactions" className={navClass}>
-            Transactions
-          </NavLink>
-          <NavLink to="/import" className={navClass}>
-            Import
-          </NavLink>
+          {appMode.navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={navClass}
+            >
+              {item.label}
+            </NavLink>
+          ))}
         </nav>
       </header>
 
@@ -111,7 +114,12 @@ export function App() {
               path="/board"
               element={<Navigate to="/holdings" replace />}
             />
-            <Route path="/import" element={<ImportView />} />
+            <Route
+              path="/import"
+              element={
+                appMode.canMutate ? <ImportView /> : <Navigate to="/" replace />
+              }
+            />
             <Route path="/asset/:id" element={<AssetView />} />
           </Routes>
         </Suspense>

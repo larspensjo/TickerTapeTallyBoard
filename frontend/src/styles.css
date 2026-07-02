@@ -105,7 +105,7 @@ button {
 
 .app-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
   gap: var(--space-4);
   align-items: center;
   min-height: 56px;
@@ -141,6 +141,18 @@ button {
   height: 9px;
   border-radius: var(--radius-full);
   background: var(--accent);
+}
+
+.demo-badge {
+  justify-self: start;
+  padding: 2px var(--space-2);
+  border: 1px solid rgba(244, 176, 0, 0.36);
+  border-radius: var(--radius-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .app-nav {
