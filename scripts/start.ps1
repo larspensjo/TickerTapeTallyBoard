@@ -5,6 +5,7 @@ param(
     [switch]$BuildOnly,
     [int]$FrontendPort = 5173,
     [switch]$NoBrowser,
+    [switch]$Demo,
     [switch]$ProductionDb,
     [string]$LocalDatabaseUrl,
     [string]$ProductionDatabaseUrl
@@ -246,6 +247,18 @@ function Stop-OrphanVite {
 Assert-Command "cargo"
 Assert-Command "npm"
 
+if ($Demo) {
+    if ($ProductionDb) {
+        throw "-Demo cannot be combined with -ProductionDb."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LocalDatabaseUrl)) {
+        throw "-Demo cannot be combined with -LocalDatabaseUrl."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProductionDatabaseUrl)) {
+        throw "-Demo cannot be combined with -ProductionDatabaseUrl."
+    }
+}
+
 # Kill any leftover Vite dev servers (e.g. orphaned by AI tooling) so the
 # preferred port is always available to this script.
 Stop-OrphanVite -Port $FrontendPort
@@ -298,7 +311,15 @@ if ($BuildOnly) {
     exit 0
 }
 
-$Database = Resolve-DatabaseUrl
+$Database = if ($Demo) {
+    @{
+        Mode = "demo"
+        Url  = $null
+    }
+}
+else {
+    Resolve-DatabaseUrl
+}
 $ResolvedFrontendPort = Resolve-FrontendPort -PreferredPort $FrontendPort
 $BackendPort = Resolve-BackendPort -PreferredPort 8080 -FrontendPort $ResolvedFrontendPort
 
@@ -309,7 +330,12 @@ Write-Host "Frontend: http://127.0.0.1:$ResolvedFrontendPort/"
 if ($ResolvedFrontendPort -ne $FrontendPort) {
     Write-Host "Preferred frontend port $FrontendPort was busy; using $ResolvedFrontendPort instead." -ForegroundColor Yellow
 }
-Write-Host "Database: $($Database.Mode) ($($Database.Url))"
+if ($Demo) {
+    Write-Host "Database: demo (in-memory, seeded)"
+}
+else {
+    Write-Host "Database: $($Database.Mode) ($($Database.Url))"
+}
 Write-Host "Press Ctrl+C to stop both processes."
 Write-Host ""
 
@@ -334,7 +360,15 @@ Remove-Item $BackendStdout, $BackendStderr, $FrontendStdout, $FrontendStderr -Er
 
 $PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
 $PreviousBackendPort = $env:TTTB_PORT
-$env:TTTB_DATABASE_URL = $Database.Url
+$PreviousDemoMode = $env:TTTB_DEMO_MODE
+if ($Demo) {
+    Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue
+    $env:TTTB_DEMO_MODE = "1"
+}
+else {
+    $env:TTTB_DATABASE_URL = $Database.Url
+    Remove-Item Env:\TTTB_DEMO_MODE -ErrorAction SilentlyContinue
+}
 $env:TTTB_PORT = $BackendPort
 
 $backendProcess = $null
@@ -406,5 +440,12 @@ finally {
     }
     else {
         $env:TTTB_PORT = $PreviousBackendPort
+    }
+
+    if ($null -eq $PreviousDemoMode) {
+        Remove-Item Env:\TTTB_DEMO_MODE -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TTTB_DEMO_MODE = $PreviousDemoMode
     }
 }
