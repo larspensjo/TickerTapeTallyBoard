@@ -275,9 +275,7 @@ mod tests {
             ..AppConfig::default()
         };
 
-        let state = build_state(&config)
-            .await
-            .expect("demo state should build");
+        let state = build_state(&config).await.expect("demo state should build");
 
         assert!(state.demo_mode);
         let instruments = db::instruments::list(&state.pool)

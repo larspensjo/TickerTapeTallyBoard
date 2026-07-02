@@ -536,7 +536,9 @@ mod tests {
         let pool = crate::db::testing::memory_pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
 
-        seed_for_date(&pool, today).await.expect("seed should succeed");
+        seed_for_date(&pool, today)
+            .await
+            .expect("seed should succeed");
 
         let instruments = crate::db::instruments::list(&pool)
             .await
