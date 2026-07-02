@@ -12,6 +12,7 @@ const DEFAULT_DATABASE_URL: &str = "sqlite://tttb-ledger.sqlite";
 const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
 const HOST_ENV: &str = "TTTB_HOST";
 const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
+const DEMO_MODE_ENV: &str = "TTTB_DEMO_MODE";
 const MARKET_DATA_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_REFRESH_ENABLED";
 const MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED";
 const PORT_ENV: &str = "TTTB_PORT";
@@ -24,6 +25,7 @@ pub struct AppConfig {
     pub port: u16,
     pub database_url: String,
     pub static_assets_dir: PathBuf,
+    pub demo_mode: bool,
     pub market_data_refresh_enabled: bool,
     pub launch_refresh_enabled: bool,
 }
@@ -47,6 +49,11 @@ impl AppConfig {
         let database_url =
             read_optional(DATABASE_URL_ENV)?.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned());
 
+        let demo_mode = read_optional(DEMO_MODE_ENV)?
+            .map(|value| parse_bool(DEMO_MODE_ENV, &value))
+            .transpose()?
+            .unwrap_or(false);
+
         let market_data_refresh_enabled = read_optional(MARKET_DATA_REFRESH_ENABLED_ENV)?
             .map(|value| parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, &value))
             .transpose()?
@@ -66,6 +73,7 @@ impl AppConfig {
             port,
             database_url,
             static_assets_dir,
+            demo_mode,
             market_data_refresh_enabled,
             launch_refresh_enabled,
         })
@@ -91,6 +99,7 @@ impl Default for AppConfig {
             port: DEFAULT_PORT,
             database_url: DEFAULT_DATABASE_URL.to_owned(),
             static_assets_dir: PathBuf::from(DEFAULT_STATIC_ASSETS_DIR),
+            demo_mode: false,
             market_data_refresh_enabled: true,
             launch_refresh_enabled: true,
         }
@@ -191,6 +200,7 @@ mod tests {
             config.static_assets_dir,
             PathBuf::from(DEFAULT_STATIC_ASSETS_DIR)
         );
+        assert!(!config.demo_mode);
         assert!(config.market_data_refresh_enabled);
         assert!(config.launch_refresh_enabled);
     }
@@ -200,6 +210,7 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, None),
             (MARKET_DATA_REFRESH_ENABLED_ENV, None),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, Some("9090")),
@@ -218,6 +229,7 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, Some("0.0.0.0")),
             (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, None),
             (MARKET_DATA_REFRESH_ENABLED_ENV, None),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
@@ -239,6 +251,7 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, None),
             (MARKET_DATA_REFRESH_ENABLED_ENV, None),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
@@ -256,6 +269,7 @@ mod tests {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, Some("sqlite:///tmp/tttb.sqlite")),
+            (DEMO_MODE_ENV, None),
             (MARKET_DATA_REFRESH_ENABLED_ENV, None),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
             (PORT_ENV, None),
@@ -319,10 +333,49 @@ mod tests {
     }
 
     #[test]
+    fn from_env_uses_demo_mode_flag() {
+        let _guard = TestEnv::new(&[
+            (HOST_ENV, None),
+            (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, Some("yes")),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
+            (PORT_ENV, None),
+            (HOSTING_PORT_ENV, None),
+            (STATIC_ASSETS_DIR_ENV, None),
+        ]);
+
+        let config = AppConfig::from_env().expect("config should load");
+
+        assert!(config.demo_mode);
+    }
+
+    #[test]
+    fn from_env_rejects_invalid_demo_mode_flag() {
+        let _guard = TestEnv::new(&[
+            (HOST_ENV, None),
+            (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, Some("maybe")),
+            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
+            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
+            (PORT_ENV, None),
+            (HOSTING_PORT_ENV, None),
+            (STATIC_ASSETS_DIR_ENV, None),
+        ]);
+
+        let error = AppConfig::from_env().expect_err("invalid demo flag should fail");
+
+        assert_eq!(error.variable, DEMO_MODE_ENV);
+        assert_eq!(error.value, "maybe");
+        assert_eq!(error.message, "must be a boolean value");
+    }
+
+    #[test]
     fn from_env_uses_refresh_flags() {
         let _guard = TestEnv::new(&[
             (HOST_ENV, None),
             (DATABASE_URL_ENV, None),
+            (DEMO_MODE_ENV, None),
             (MARKET_DATA_REFRESH_ENABLED_ENV, Some("false")),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, Some("1")),
             (PORT_ENV, None),
