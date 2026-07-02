@@ -3,28 +3,27 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import {
   useGains,
-  useHealth,
   useInstruments,
   usePriceStatus,
   useRefreshPrices,
 } from "../api/queries";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { PortfolioSummary } from "./PortfolioSummary";
+import { useAppMode } from "./useAppMode";
 
 export function PortfolioLayout() {
   const [formOpen, setFormOpen] = useState(false);
   const gainsQuery = useGains();
-  const healthQuery = useHealth();
+  const appMode = useAppMode();
   const instrumentsQuery = useInstruments();
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const pricesRefreshing =
     refreshPrices.isPending || priceStatusQuery.data?.refreshing === true;
-  const canMutate = healthQuery.data?.demo !== true;
 
   return (
     <div className="portfolio-layout">
-      {canMutate ? (
+      {appMode.canMutate ? (
         <div className="portfolio-actions">
           <button
             className="button primary"
@@ -58,7 +57,7 @@ export function PortfolioLayout() {
         refreshError={refreshPrices.error}
       />
 
-      {formOpen && canMutate ? (
+      {formOpen && appMode.canMutate ? (
         <section className="panel form-panel" aria-label="Add transaction">
           <div className="panel-header">
             <div>

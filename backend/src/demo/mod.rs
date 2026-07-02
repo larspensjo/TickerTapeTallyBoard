@@ -299,8 +299,7 @@ fn transactions(start_date: NaiveDate, instruments: &[DemoInstrument]) -> Vec<De
             let instrument = &instruments[instrument_index];
             specs.into_iter().map(move |spec| {
                 let trade_date = start_date + Duration::days(spec.day_offset);
-                let fx_rate_to_base = (instrument.currency != BASE_CURRENCY)
-                    .then(|| fx_rate_for_currency(instrument.currency, trade_date));
+                let fx_rate_to_base = Some(fx_rate_for_currency(instrument.currency, trade_date));
 
                 DemoTransaction {
                     instrument_index,
@@ -435,7 +434,13 @@ fn dividend(day_offset: i64, dividend_per_share: Decimal) -> TransactionSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use serde_json::Value;
     use std::collections::HashSet;
+    use tower::ServiceExt;
 
     #[test]
     fn dataset_contains_expected_instrument_shape() {
@@ -584,6 +589,94 @@ mod tests {
             .await
             .expect("fx lookup should succeed");
             assert!(latest_fx.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn seeded_data_is_available_through_read_endpoints() {
+        let pool = crate::db::testing::memory_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
+        seed_for_date(&pool, today)
+            .await
+            .expect("seed should succeed");
+        let state = crate::state::AppState::new(
+            pool,
+            std::sync::Arc::new(crate::market_data::MarketDataService::live()),
+        )
+        .with_demo_mode(true);
+
+        let holdings = get_json(&state, "/api/holdings").await;
+        assert_eq!(holdings.as_array().expect("holdings array").len(), 6);
+        assert_no_missing_price_or_fx(&holdings);
+        for holding in holdings.as_array().expect("holdings array") {
+            assert_eq!(holding["base"]["status"], "available");
+            assert_eq!(
+                holding["valuation"]["market_value_base"]["status"],
+                "available"
+            );
+        }
+
+        let gains = get_json(&state, &format!("/api/gains?end_date={today}")).await;
+        assert_eq!(gains["rows"].as_array().expect("gains rows").len(), 6);
+        assert_no_missing_price_or_fx(&gains);
+
+        let value_history = get_json(&state, "/api/portfolio/value-history").await;
+        assert!(!value_history["points"]
+            .as_array()
+            .expect("value-history points")
+            .is_empty());
+        assert_no_missing_price_or_fx(&value_history);
+
+        let instrument_id = holdings[0]["instrument"]["id"]
+            .as_i64()
+            .expect("instrument id");
+        let prices = get_json(&state, &format!("/api/instruments/{instrument_id}/prices")).await;
+        assert!(!prices["points"]
+            .as_array()
+            .expect("price-history points")
+            .is_empty());
+        assert_no_missing_price_or_fx(&prices);
+    }
+
+    async fn get_json(state: &crate::state::AppState, uri: &str) -> Value {
+        let response = crate::api::router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        serde_json::from_slice(&body).expect("body should be JSON")
+    }
+
+    fn assert_no_missing_price_or_fx(value: &Value) {
+        assert_no_missing_price_or_fx_at(value, "$");
+    }
+
+    fn assert_no_missing_price_or_fx_at(value: &Value, path: &str) {
+        match value {
+            Value::String(value) => {
+                assert_ne!(value, "missing_price", "{path}");
+                assert_ne!(value, "missing_fx", "{path}");
+            }
+            Value::Array(values) => {
+                for (index, value) in values.iter().enumerate() {
+                    assert_no_missing_price_or_fx_at(value, &format!("{path}[{index}]"));
+                }
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    assert_no_missing_price_or_fx_at(value, &format!("{path}.{key}"));
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
         }
     }
 }

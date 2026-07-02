@@ -1,21 +1,20 @@
 import { useState } from "react";
 import {
   useDeleteTransaction,
-  useHealth,
   useInstruments,
   useTransactions,
 } from "../api/queries";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { TransactionsTable } from "./TransactionsTable";
+import { useAppMode } from "./useAppMode";
 
 export function TransactionsPage() {
   const [filter, setFilter] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const healthQuery = useHealth();
+  const appMode = useAppMode();
   const instrumentsQuery = useInstruments();
   const transactionsQuery = useTransactions();
   const deleteTransaction = useDeleteTransaction();
-  const canMutate = healthQuery.data?.demo !== true;
 
   async function handleDelete(id: number) {
     setDeleteError(null);
@@ -51,14 +50,16 @@ export function TransactionsPage() {
             instruments={instrumentsQuery.data ?? []}
             filter={filter}
             onFilterChange={setFilter}
-            onDelete={canMutate ? (id) => void handleDelete(id) : undefined}
+            onDelete={
+              appMode.canMutate ? (id) => void handleDelete(id) : undefined
+            }
             deletingId={
               deleteTransaction.isPending
                 ? (deleteTransaction.variables ?? null)
                 : null
             }
             errorMessage={deleteError}
-            showActions={canMutate}
+            showActions={appMode.canMutate}
           />
         </AsyncBoundary>
       </article>

@@ -14,8 +14,10 @@ mod transactions;
 mod valuation;
 
 use axum::{
+    body::Body,
     extract::State,
-    http::StatusCode,
+    http::{Method, Request, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse},
     routing::{get, post, put},
     Router,
@@ -35,21 +37,30 @@ pub fn reject_demo_mutation(state: &AppState) -> Result<(), ApiError> {
 }
 
 pub fn router(state: AppState) -> Router {
+    let api = api_router().route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        demo_read_only_layer,
+    ));
+
     Router::new()
         .route("/", get(root::handler))
-        .nest("/api", api_router())
+        .nest("/api", api)
         .layer(cors::layer())
         .with_state(state)
 }
 
 pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: AppState) -> Router {
     let static_assets_dir = static_assets_dir.as_ref();
+    let api = api_router().route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        demo_read_only_layer,
+    ));
     let static_assets = StaticAssets {
         index_path: Arc::from(static_assets_dir.join("index.html").into_boxed_path()),
     };
 
     Router::new()
-        .nest("/api", api_router())
+        .nest("/api", api)
         .fallback_service(
             ServeDir::new(static_assets_dir).fallback(get(static_index).with_state(static_assets)),
         )
@@ -94,6 +105,22 @@ fn api_router() -> Router<AppState> {
             "/transactions/{id}",
             put(transactions::replace).delete(transactions::remove),
         )
+}
+
+async fn demo_read_only_layer(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<axum::response::Response, ApiError> {
+    if state.demo_mode && is_mutating_method(request.method()) {
+        return Err(ApiError::demo_read_only());
+    }
+
+    Ok(next.run(request).await)
+}
+
+fn is_mutating_method(method: &Method) -> bool {
+    !matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS)
 }
 
 #[derive(Clone)]

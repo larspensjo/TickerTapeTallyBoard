@@ -17,4 +17,12 @@ describe("appModeViewModel", () => {
     expect(model.canMutate).toBe(false);
     expect(model.navItems.map((item) => item.label)).not.toContain("Import");
   });
+
+  it("hides mutation entry points until app mode is known", () => {
+    const model = appModeViewModel(undefined);
+
+    expect(model.showDemoBadge).toBe(false);
+    expect(model.canMutate).toBe(false);
+    expect(model.navItems.map((item) => item.label)).not.toContain("Import");
+  });
 });

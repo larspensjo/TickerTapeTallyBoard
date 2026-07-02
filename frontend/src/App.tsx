@@ -1,14 +1,13 @@
 import { lazy, Suspense, useEffect, useReducer } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
-import { useHealth } from "./api/queries";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
-import { appModeViewModel } from "./components/appModeViewModel";
 import {
   dateRangeSelectionReducer,
   loadDateRangeSelection,
   saveDateRangeSelection,
 } from "./components/DateRangeSelector";
+import { useAppMode } from "./components/useAppMode";
 
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((module) => ({
@@ -61,8 +60,7 @@ export function App() {
     saveDateRangeSelection(dateRangeSelection);
   }, [dateRangeSelection]);
 
-  const healthQuery = useHealth();
-  const appMode = appModeViewModel(healthQuery.data?.demo === true);
+  const appMode = useAppMode();
 
   const dateRangeProps = {
     dateRange: dateRangeSelection.dateRange,

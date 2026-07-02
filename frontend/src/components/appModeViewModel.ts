@@ -4,16 +4,18 @@ export interface AppModeViewModel {
   navItems: { to: string; label: string; end?: boolean }[];
 }
 
-export function appModeViewModel(demo: boolean): AppModeViewModel {
+export function appModeViewModel(demo: boolean | undefined): AppModeViewModel {
+  const canMutate = demo === false;
+
   return {
-    showDemoBadge: demo,
-    canMutate: !demo,
+    showDemoBadge: demo === true,
+    canMutate,
     navItems: [
       { to: "/", label: "Dashboard", end: true },
       { to: "/holdings", label: "Holdings" },
       { to: "/gains", label: "Gains" },
       { to: "/transactions", label: "Transactions" },
-      ...(demo ? [] : [{ to: "/import", label: "Import" }]),
+      ...(canMutate ? [{ to: "/import", label: "Import" }] : []),
     ],
   };
 }
