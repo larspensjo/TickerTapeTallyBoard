@@ -2,15 +2,9 @@ use std::sync::Arc;
 
 use crate::{config::AppConfig, state::AppState};
 
-pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let address = config.socket_addr();
-    let pool = crate::db::connect(config.database_url()).await?;
-    crate::engine_info!("database ready at {}", config.database_url());
-    let state = AppState::new(
-        pool,
-        Arc::new(crate::market_data::MarketDataService::live()),
-    )
-    .with_demo_mode(config.demo_mode);
+    let state = build_state(&config).await?;
     let _ = spawn_launch_refresh(&config, state.clone());
     let router = if config.static_assets_dir().is_dir() {
         crate::engine_info!(
@@ -40,10 +34,37 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+async fn build_state(
+    config: &AppConfig,
+) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = if config.demo_mode {
+        crate::engine_info!("starting in DEMO mode (in-memory, seeded, read-only)");
+        let pool = crate::db::memory_pool().await?;
+        crate::demo::seed(&pool).await?;
+        sqlx::query("PRAGMA query_only = ON").execute(&pool).await?;
+        pool
+    } else {
+        let pool = crate::db::connect(config.database_url()).await?;
+        crate::engine_info!("database ready at {}", config.database_url());
+        pool
+    };
+
+    Ok(AppState::new(
+        pool,
+        Arc::new(crate::market_data::MarketDataService::live()),
+    )
+    .with_demo_mode(config.demo_mode))
+}
+
 fn spawn_launch_refresh(
     config: &AppConfig,
     state: AppState,
 ) -> Option<tokio::task::JoinHandle<()>> {
+    if state.demo_mode {
+        crate::engine_info!("demo mode active; skipping launch refresh");
+        return None;
+    }
+
     if !config.market_data_refresh_enabled {
         crate::engine_info!(
             "market data refresh disabled by configuration; skipping launch refresh"
@@ -231,5 +252,46 @@ mod tests {
         };
 
         assert!(spawn_launch_refresh(&config, state).is_none());
+    }
+
+    #[tokio::test]
+    async fn launch_refresh_is_skipped_in_demo_mode() {
+        let (state, _, _) = seeded_state().await;
+        let state = state.with_demo_mode(true);
+        let config = AppConfig {
+            market_data_refresh_enabled: true,
+            launch_refresh_enabled: true,
+            demo_mode: true,
+            ..AppConfig::default()
+        };
+
+        assert!(spawn_launch_refresh(&config, state).is_none());
+    }
+
+    #[tokio::test]
+    async fn demo_state_is_seeded_and_query_only() {
+        let config = AppConfig {
+            demo_mode: true,
+            ..AppConfig::default()
+        };
+
+        let state = build_state(&config)
+            .await
+            .expect("demo state should build");
+
+        assert!(state.demo_mode);
+        let instruments = db::instruments::list(&state.pool)
+            .await
+            .expect("seeded instruments should list");
+        assert_eq!(instruments.len(), 6);
+
+        let write_result = sqlx::query(
+            "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \
+             VALUES ('FAIL', 'TEST', 'Should Fail', 'STOCK', 'SEK', NULL)",
+        )
+        .execute(&state.pool)
+        .await;
+
+        assert!(write_result.is_err());
     }
 }
