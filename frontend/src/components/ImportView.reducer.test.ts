@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ImportPreview, ImportResult } from "../api/types";
 import {
+  allSelectableSelected,
   INITIAL_STATE,
   importReducer,
   selectedFromPreview,
@@ -209,6 +210,40 @@ describe("importReducer", () => {
     expect(same).toBe(INITIAL_STATE);
   });
 
+  it("selects all selectable assets on setAllAssets(true), leaving locked rows untouched", () => {
+    const ready = importReducer(INITIAL_STATE, {
+      type: "previewReady",
+      preview: makePreview([ASSET_A, ASSET_B, ASSET_SKIP]),
+      fileName: "trades.csv",
+    });
+    const next = importReducer(ready, {
+      type: "setAllAssets",
+      selected: true,
+    });
+    expect(next.selected).toEqual({ AAPL: true, TSLA: true, SKIP: false });
+  });
+
+  it("clears all selectable assets on setAllAssets(false), leaving locked rows untouched", () => {
+    const ready = importReducer(INITIAL_STATE, {
+      type: "previewReady",
+      preview: makePreview([ASSET_A, ASSET_B, ASSET_SKIP]),
+      fileName: "trades.csv",
+    });
+    const next = importReducer(ready, {
+      type: "setAllAssets",
+      selected: false,
+    });
+    expect(next.selected).toEqual({ AAPL: false, TSLA: false, SKIP: false });
+  });
+
+  it("returns state unchanged if setAllAssets is called with no preview", () => {
+    const same = importReducer(INITIAL_STATE, {
+      type: "setAllAssets",
+      selected: true,
+    });
+    expect(same).toBe(INITIAL_STATE);
+  });
+
   it("moves to committing on commitStarted", () => {
     const next = importReducer(INITIAL_STATE, { type: "commitStarted" });
     expect(next.phase).toBe("committing");
@@ -258,5 +293,29 @@ describe("importReducer", () => {
     });
     const reset = importReducer(withPreview, { type: "reset" });
     expect(reset).toEqual(INITIAL_STATE);
+  });
+});
+
+describe("allSelectableSelected", () => {
+  it("is true only when every selectable asset is selected", () => {
+    const preview = makePreview([ASSET_A, ASSET_B, ASSET_SKIP]);
+    expect(
+      allSelectableSelected(preview, { AAPL: true, TSLA: true, SKIP: false }),
+    ).toBe(true);
+    expect(
+      allSelectableSelected(preview, { AAPL: true, TSLA: false, SKIP: false }),
+    ).toBe(false);
+  });
+
+  it("ignores locked assets when deciding", () => {
+    const preview = makePreview([ASSET_A, ASSET_SKIP]);
+    expect(allSelectableSelected(preview, { AAPL: true, SKIP: false })).toBe(
+      true,
+    );
+  });
+
+  it("is false when there are no selectable assets", () => {
+    expect(allSelectableSelected(makePreview([ASSET_SKIP]), {})).toBe(false);
+    expect(allSelectableSelected(makePreview(), {})).toBe(false);
   });
 });

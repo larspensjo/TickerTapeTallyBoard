@@ -47,6 +47,7 @@ export type Action =
   | { type: "confirmAppend" }
   | { type: "cancelAppend" }
   | { type: "toggleAsset"; assetKey: string }
+  | { type: "setAllAssets"; selected: boolean }
   | { type: "commitStarted" }
   | { type: "committed"; result: ImportResult }
   | { type: "failed"; message: string }
@@ -153,6 +154,21 @@ export function importReducer(state: State, action: Action): State {
         },
       };
     }
+    case "setAllAssets": {
+      if (!state.preview) {
+        return state;
+      }
+
+      const selected = { ...state.selected };
+      for (const asset of state.preview.assets) {
+        if (asset.skipped_reason) {
+          continue;
+        }
+        selected[asset.asset_key] = action.selected;
+      }
+
+      return { ...state, selected };
+    }
     case "commitStarted":
       return { ...state, phase: "committing", error: null };
     case "committed":
@@ -206,6 +222,23 @@ function isAssetSelected(
   selected: Record<string, boolean>,
 ) {
   return selected[asset.asset_key] ?? asset.default_selected;
+}
+
+/**
+ * True when every selectable (non-locked) asset in the preview is selected.
+ * Returns false when there are no selectable assets, so the header checkbox
+ * stays unchecked and disabled in that case.
+ */
+export function allSelectableSelected(
+  preview: ImportPreview,
+  selected: Record<string, boolean>,
+): boolean {
+  const selectable = preview.assets.filter((asset) => !asset.skipped_reason);
+  if (selectable.length === 0) {
+    return false;
+  }
+
+  return selectable.every((asset) => isAssetSelected(asset, selected));
 }
 
 function noteFingerprint(note: ImportRowNote): string {
@@ -340,6 +373,10 @@ export function ImportView() {
     preview !== null &&
     preview.assets.length === 0 &&
     preview.already_imported_assets.length > 0;
+  const hasSelectableAssets =
+    preview?.assets.some((asset) => !asset.skipped_reason) ?? false;
+  const allAssetsSelected =
+    preview !== null && allSelectableSelected(preview, state.selected);
   const isBusy =
     state.phase === "previewing" ||
     state.phase === "committing" ||
@@ -453,7 +490,19 @@ export function ImportView() {
                       <thead>
                         <tr>
                           <th className="checkbox-head">
-                            <span className="sr-only">Select</span>
+                            <input
+                              type="checkbox"
+                              className="asset-check"
+                              checked={allAssetsSelected}
+                              disabled={!hasSelectableAssets || isBusy}
+                              aria-label="Select all assets"
+                              onChange={() => {
+                                dispatch({
+                                  type: "setAllAssets",
+                                  selected: !allAssetsSelected,
+                                });
+                              }}
+                            />
                           </th>
                           <th>Asset</th>
                           <th>Currency</th>
