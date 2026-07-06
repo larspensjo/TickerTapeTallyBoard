@@ -4,6 +4,7 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
+  type OnChangeFn,
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
@@ -29,6 +30,16 @@ interface RowView {
 
 const columnHelper = createColumnHelper<RowView>();
 type PortfolioPercentage = AvailabilityValue<string>;
+const HOLDINGS_SORTING_KEY = "holdings.sorting";
+const DEFAULT_SORTING: SortingState = [{ id: "market_value_base", desc: true }];
+const SORTABLE_COLUMN_IDS = new Set([
+  "instrument",
+  "quantity",
+  "average_cost_native",
+  "cost_basis_native",
+  "market_value_base",
+  "portfolio_percentage",
+]);
 
 interface HoldingsSummary {
   marketValueBase: AvailabilityValue<string>;
@@ -51,6 +62,62 @@ function valuationUnavailableReasons(holding: Holding): string[] {
       ? holding.valuation.unrealized_gain_percent.reasons
       : []),
   ];
+}
+
+function storage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultSorting(): SortingState {
+  return DEFAULT_SORTING.map((sort) => ({ ...sort }));
+}
+
+function isSortingState(value: unknown): value is SortingState {
+  if (!Array.isArray(value)) return false;
+
+  const seen = new Set<string>();
+  return value.every((sort) => {
+    if (typeof sort !== "object" || sort === null) return false;
+
+    const candidate = sort as Partial<SortingState[number]>;
+    if (
+      typeof candidate.id !== "string" ||
+      typeof candidate.desc !== "boolean" ||
+      !SORTABLE_COLUMN_IDS.has(candidate.id) ||
+      seen.has(candidate.id)
+    ) {
+      return false;
+    }
+
+    seen.add(candidate.id);
+    return true;
+  });
+}
+
+export function loadHoldingsSorting(): SortingState {
+  const saved = storage()?.getItem(HOLDINGS_SORTING_KEY);
+  if (!saved) return defaultSorting();
+
+  try {
+    const parsed = JSON.parse(saved);
+    return isSortingState(parsed) ? parsed : defaultSorting();
+  } catch {
+    return defaultSorting();
+  }
+}
+
+export function saveHoldingsSorting(sorting: SortingState): void {
+  if (!isSortingState(sorting)) return;
+
+  try {
+    storage()?.setItem(HOLDINGS_SORTING_KEY, JSON.stringify(sorting));
+  } catch {
+    // Ignore storage failures; sorting should still work for the current session.
+  }
 }
 
 function valuationMissingChip(holding: Holding) {
@@ -391,9 +458,14 @@ export function HoldingsTable({
   filter: string;
   onFilterChange: (filter: string) => void;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: "market_value_base", desc: true },
-  ]);
+  const [sorting, setSorting] = useState<SortingState>(loadHoldingsSorting);
+  const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
+    setSorting((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      saveHoldingsSorting(next);
+      return next;
+    });
+  };
   const tableRows = useMemo<RowView[]>(
     () =>
       holdings.map((holding) => ({
@@ -414,7 +486,7 @@ export function HoldingsTable({
     data: tableRows,
     columns,
     state: { sorting, globalFilter: filter },
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

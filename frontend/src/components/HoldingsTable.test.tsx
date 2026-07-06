@@ -1,0 +1,120 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Holding, Instrument } from "../api/types";
+import {
+  HoldingsTable,
+  loadHoldingsSorting,
+  saveHoldingsSorting,
+} from "./HoldingsTable";
+
+const HOLDINGS_SORTING_KEY = "holdings.sorting";
+
+function instrument(id: number, name: string, symbol: string): Instrument {
+  return {
+    id,
+    symbol,
+    exchange: "NYSE",
+    name,
+    type: "Stock",
+    currency: "USD",
+  };
+}
+
+function holding(
+  id: number,
+  name: string,
+  symbol: string,
+  marketValueBase: string,
+): Holding {
+  const money = { status: "available", value: "0.00" } as const;
+  return {
+    instrument: instrument(id, name, symbol),
+    quantity: 1,
+    cost_basis_native: "100.00",
+    average_cost_native: "100.00",
+    base: {
+      status: "available",
+      cost_basis_base: "100.00",
+      average_cost_base: "100.00",
+      fee_component_base: "0.00",
+    },
+    valuation: {
+      market_value_base: { status: "available", value: marketValueBase },
+      unrealized_gain_base: money,
+      unrealized_gain_percent: money,
+      day_change_base: money,
+    },
+  };
+}
+
+function renderHoldingsTable(holdings: Holding[]) {
+  return render(
+    <MemoryRouter>
+      <HoldingsTable
+        holdings={holdings}
+        filter=""
+        onFilterChange={() => undefined}
+      />
+    </MemoryRouter>,
+  );
+}
+
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+
+describe("holdings sorting persistence", () => {
+  it("defaults to market value descending when nothing valid is stored", () => {
+    expect(loadHoldingsSorting()).toEqual([
+      { id: "market_value_base", desc: true },
+    ]);
+
+    localStorage.setItem(
+      HOLDINGS_SORTING_KEY,
+      JSON.stringify([{ id: "removed_column", desc: true }]),
+    );
+
+    expect(loadHoldingsSorting()).toEqual([
+      { id: "market_value_base", desc: true },
+    ]);
+  });
+
+  it("round-trips a valid sorting selection through localStorage", () => {
+    const sorting = [{ id: "instrument", desc: false }];
+
+    saveHoldingsSorting(sorting);
+
+    expect(loadHoldingsSorting()).toEqual(sorting);
+  });
+
+  it("applies saved sorting when the table mounts", () => {
+    saveHoldingsSorting([{ id: "instrument", desc: false }]);
+
+    renderHoldingsTable([
+      holding(1, "Zulu Inc", "ZULU", "300.00"),
+      holding(2, "Alpha Corp", "ALPHA", "100.00"),
+      holding(3, "Metro Ltd", "METRO", "200.00"),
+    ]);
+
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Alpha Corp", "Metro Ltd", "Zulu Inc"],
+    );
+  });
+
+  it("saves sorting when the user changes the table sort", () => {
+    renderHoldingsTable([
+      holding(1, "Zulu Inc", "ZULU", "300.00"),
+      holding(2, "Alpha Corp", "ALPHA", "100.00"),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Instrument" }));
+
+    expect(
+      JSON.parse(localStorage.getItem(HOLDINGS_SORTING_KEY) ?? "null"),
+    ).toEqual([{ id: "instrument", desc: false }]);
+  });
+});
