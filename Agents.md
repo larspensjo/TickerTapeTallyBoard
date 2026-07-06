@@ -10,9 +10,10 @@
 - The UI should follow the visual design in docs\VisualDesign.DarkTheme.md.
 
 ## Planning & Documentation
-- When creating a plan, make it clear how to verify each phase. Point out where external human testing is recommended. Save them to the `docs/plans/` folder unless explicitly told otherwise. Check with the docs\DecisionLog.md.
+- When creating a plan, make it clear how to verify each phase, and point out where external human testing is recommended. Save plans to the `docs/plans/` folder unless explicitly told otherwise. Check with `docs/DecisionLog.md`.
 - When implementing a plan, surface its open questions or ambiguities before silently resolving them.
-- Plans are ephemeral documents, and archived when implemented. Never refer to plans or phases from repository documents.
+- Plans and reviews are ephemeral documents, deleted after external review. Never refer to plan phase numbers from durable repository documents (experiment specs, architecture, the decision log, or code); name the behavior instead.
+- Prefer plans with proper long term solutions, even if more work or refactoring are required.
 
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.

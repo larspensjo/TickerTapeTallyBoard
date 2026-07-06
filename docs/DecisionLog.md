@@ -7,7 +7,7 @@ project has agreed to do going forward.
 ### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
 - Reversals of prior decisions get their own entry referencing the original.
-- Keep entries concise and reference concrete artifacts.
+- Keep entries concise.
 - New entries go to the end of the file.
 
 ### When to add new entries
@@ -372,3 +372,8 @@ Consequences: Demo data is intentionally thrown away on every launch. Frontend s
 Decision: The Holdings table remembers its active sort criteria as a client-side user preference, persisted in `localStorage` under `holdings.sorting`. The default remains market value descending when no valid preference exists.
 Context: Holdings sorting is a view preference rather than portfolio data. Losing it on route changes made navigation away from and back to Holdings reset the user's working table order.
 Consequences: Holdings sort persistence stays frontend-local unless a server-side settings store is introduced later. Stored sort state must be validated against known sortable columns so removed or renamed columns fall back to the default instead of breaking the table.
+
+## 2026-07-06 - Conviction Targets Use Relative Instrument Weights
+Decision: Conviction is user-managed metadata keyed by instrument id. Low, Medium, and High define relative target weights within the eligible target pool; Other means no target. Closing a position or losing valuation eligibility does not implicitly change stored conviction.
+Context: The conviction-target design chose a low-friction allocation signal for holdings and future planning without requiring absolute percentages that must sum to 100%.
+Consequences: Target values are derived from the current eligible pool and can change when one instrument's conviction, position openness, or valuation eligibility changes. UIs must refresh the full pool after conviction edits and make excluded convicted assets explicit.
