@@ -337,14 +337,14 @@ async fn avanza_preview_inner(
     // against that replace candidate; otherwise this first import is an append.
     let closing = match replace_candidate_batch_id {
         Some(batch_id) => {
-            let excluded = compute_excluded_instrument_ids(&ctx, &BTreeSet::new(), &plan);
+            let protected = compute_refresh_protected_instrument_ids(&ctx, &plan);
             closing_convicted(
                 state,
                 &ctx,
                 &plan.new_mapped_rows,
                 GuardMode::Replace {
                     replace_batch_id: batch_id,
-                    excluded_ids: &excluded,
+                    protected_ids: &protected,
                 },
             )
             .await?
@@ -420,10 +420,12 @@ async fn avanza_commit_replace(
         })
         .collect();
 
-    // Instruments the user deselected, or where every row is already imported:
-    // their old batch rows must be preserved (not deleted) and their ledgers
-    // must not be re-validated.
-    let excluded_instrument_ids = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+    // Instruments whose old batch rows must be preserved during refresh.
+    // This is intentionally narrower than the user's explicit exclude set:
+    // explicit exclusion removes old batch rows, while already-imported or
+    // mixed assets are protected because their new-file rows may depend on
+    // unmatched old batch rows.
+    let protected_instrument_ids = compute_refresh_protected_instrument_ids(&ctx, &plan);
 
     let closing = closing_convicted(
         state,
@@ -431,7 +433,7 @@ async fn avanza_commit_replace(
         &plan.new_mapped_rows,
         GuardMode::Replace {
             replace_batch_id,
-            excluded_ids: &excluded_instrument_ids,
+            protected_ids: &protected_instrument_ids,
         },
     )
     .await?;
@@ -443,7 +445,7 @@ async fn avanza_commit_replace(
         replace_batch_id,
         &hash,
         &mapped,
-        &excluded_instrument_ids,
+        &protected_instrument_ids,
         &conviction_to_other_ids,
     )
     .await?;
@@ -502,17 +504,21 @@ async fn commit_source(
     let plan = build_plan(&effective, &ctx);
     reject_on_errors(&plan)?;
 
-    if plan.new_mapped_rows.is_empty() && !plan.already_imported_assets.is_empty() {
+    let duplicate = import_batches::find_by_hash(&state.pool, &hash).await?;
+    if let Some(existing) = &duplicate {
+        if !params.allow_duplicate {
+            return Err(duplicate_conflict(existing.id));
+        }
+    }
+
+    if plan.new_mapped_rows.is_empty()
+        && !plan.already_imported_assets.is_empty()
+        && !(params.allow_duplicate && duplicate.is_some())
+    {
         return Err(ApiError::bad_request(
             "nothing_to_import",
             "All rows are already imported — nothing to write.".to_string(),
         ));
-    }
-
-    if let Some(existing) = import_batches::find_by_hash(&state.pool, &hash).await? {
-        if !params.allow_duplicate {
-            return Err(duplicate_conflict(existing.id));
-        }
     }
 
     let closing = closing_convicted(state, &ctx, &plan.new_mapped_rows, GuardMode::Append).await?;
@@ -691,19 +697,11 @@ fn new_instrument_dto(key: &InstrumentKey) -> NewInstrumentDto {
     }
 }
 
-fn compute_excluded_instrument_ids(
-    ctx: &PlanContext,
-    exclude: &BTreeSet<String>,
-    plan: &ImportPlan,
-) -> BTreeSet<i64> {
+fn compute_refresh_protected_instrument_ids(ctx: &PlanContext, plan: &ImportPlan) -> BTreeSet<i64> {
     ctx.existing_instruments
         .iter()
         .filter(|e| {
             let key = e.asset_key();
-            // Explicitly deselected by the user
-            if exclude.contains(&key) {
-                return true;
-            }
             // Fully already-imported: every row fingerprint-matched the DB
             if plan
                 .already_imported_assets
@@ -741,11 +739,11 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
 enum GuardMode<'a> {
     /// Append: existing ledger plus the import's new rows.
     Append,
-    /// Avanza refresh: for non-excluded instruments the batch's old rows are
-    /// replaced by the import's rows; excluded instruments are left untouched.
+    /// Avanza refresh: for non-protected instruments the batch's old rows are
+    /// replaced by the import's rows; protected instruments are left untouched.
     Replace {
         replace_batch_id: i64,
-        excluded_ids: &'a BTreeSet<i64>,
+        protected_ids: &'a BTreeSet<i64>,
     },
 }
 
@@ -811,7 +809,7 @@ async fn closing_convicted(
 
         let predicted_quantity = match &mode {
             GuardMode::Append => predicted_quantity_append(current_quantity, new_contribution),
-            GuardMode::Replace { excluded_ids, .. } => {
+            GuardMode::Replace { protected_ids, .. } => {
                 let batch_net = batch_net_by_instrument
                     .get(&existing.id)
                     .copied()
@@ -820,7 +818,7 @@ async fn closing_convicted(
                     current_quantity,
                     batch_net,
                     new_contribution,
-                    excluded_ids.contains(&existing.id),
+                    protected_ids.contains(&existing.id),
                 )
             }
         };
@@ -921,14 +919,16 @@ fn resolve_conviction_choices(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_excluded_instrument_ids, effective_counts, AssetGroup, ImportPlan};
+    use super::{
+        compute_refresh_protected_instrument_ids, effective_counts, AssetGroup, ImportPlan,
+    };
     use crate::domain::{ProposedTransaction, TransactionKind};
     use crate::import::core::outcome::InstrumentKey;
     use crate::import::core::outcome::MappedRow;
     use crate::import::core::plan::{ExistingInstrument, PlanContext, PlanCounts};
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     fn dummy_instrument() -> InstrumentKey {
         InstrumentKey {
@@ -1019,7 +1019,6 @@ mod tests {
             existing_ledgers: BTreeMap::new(),
             max_existing_id: 0,
         };
-        let exclude: BTreeSet<String> = BTreeSet::new();
         let plan = ImportPlan {
             counts: PlanCounts::default(),
             new_instruments: Vec::new(),
@@ -1047,7 +1046,7 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        let excluded = compute_refresh_protected_instrument_ids(&ctx, &plan);
         assert!(
             excluded.contains(&42),
             "instrument in already_imported_assets must be excluded to protect its old batch rows"
@@ -1071,7 +1070,6 @@ mod tests {
             existing_ledgers: BTreeMap::new(),
             max_existing_id: 0,
         };
-        let exclude: BTreeSet<String> = BTreeSet::new();
         // Mixed asset: 1 new buy, 1 already-imported sell (still in the new CSV)
         let plan = ImportPlan {
             counts: PlanCounts::default(),
@@ -1100,7 +1098,7 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        let excluded = compute_refresh_protected_instrument_ids(&ctx, &plan);
         assert!(
             excluded.contains(&11),
             "mixed asset with already-imported rows must be excluded to protect old batch rows \
@@ -1109,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    fn explicitly_excluded_asset_is_also_in_excluded_instrument_ids() {
+    fn explicitly_excluded_asset_is_not_refresh_protected() {
         let ctx = PlanContext {
             existing_instruments: vec![ExistingInstrument {
                 id: 7,
@@ -1121,8 +1119,6 @@ mod tests {
             existing_ledgers: BTreeMap::new(),
             max_existing_id: 0,
         };
-        let mut exclude: BTreeSet<String> = BTreeSet::new();
-        exclude.insert("SE0000108656".into());
         let plan = ImportPlan {
             counts: PlanCounts::default(),
             new_instruments: Vec::new(),
@@ -1133,10 +1129,10 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let excluded = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
+        let protected = compute_refresh_protected_instrument_ids(&ctx, &plan);
         assert!(
-            excluded.contains(&7),
-            "explicitly excluded asset must remain in excluded_instrument_ids"
+            !protected.contains(&7),
+            "explicitly excluded assets must be removed by refresh instead of protected"
         );
     }
 }
