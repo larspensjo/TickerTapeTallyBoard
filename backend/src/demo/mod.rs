@@ -29,6 +29,10 @@ pub struct DemoInstrument {
     pub currency: &'static str,
     pub isin: Option<&'static str>,
     pub provider_symbol: &'static str,
+    /// Seeded conviction as the DB string (`OTHER`/`LOW`/`MEDIUM`/`HIGH`).
+    /// Applied after upsert via the conviction repository so target indicators
+    /// are visible in read-only demo mode.
+    pub conviction: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +112,10 @@ async fn seed_for_date(
         )
         .await?;
         instrument_ids.push(row.id);
+
+        // Conviction is applied after upsert via the conviction repository so
+        // it is never carried through NewInstrument / import-shaped creation.
+        instruments::update_conviction(pool, row.id, instrument.conviction).await?;
 
         provider_symbols::upsert(
             pool,
@@ -194,6 +202,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "USD",
             isin: None,
             provider_symbol: "NOVA",
+            conviction: "HIGH",
         },
         DemoInstrument {
             symbol: "HARV",
@@ -203,6 +212,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "USD",
             isin: None,
             provider_symbol: "HARV",
+            conviction: "LOW",
         },
         DemoInstrument {
             symbol: "NORD",
@@ -212,6 +222,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "SEK",
             isin: None,
             provider_symbol: "NORD.ST",
+            conviction: "MEDIUM",
         },
         DemoInstrument {
             symbol: "SKOG",
@@ -221,6 +232,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "SEK",
             isin: None,
             provider_symbol: "SKOG.ST",
+            conviction: "OTHER",
         },
         DemoInstrument {
             symbol: "ALBA",
@@ -230,6 +242,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "EUR",
             isin: None,
             provider_symbol: "ALBA.DE",
+            conviction: "MEDIUM",
         },
         DemoInstrument {
             symbol: "GLBL",
@@ -239,6 +252,7 @@ fn instruments() -> Vec<DemoInstrument> {
             currency: "USD",
             isin: None,
             provider_symbol: "GLBL",
+            conviction: "HIGH",
         },
     ]
 }
@@ -636,6 +650,54 @@ mod tests {
             .expect("price-history points")
             .is_empty());
         assert_no_missing_price_or_fx(&prices);
+    }
+
+    #[tokio::test]
+    async fn seeded_holdings_expose_conviction_and_targets() {
+        let pool = crate::db::testing::memory_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
+        seed_for_date(&pool, today)
+            .await
+            .expect("seed should succeed");
+        let state = crate::state::AppState::new(
+            pool,
+            std::sync::Arc::new(crate::market_data::MarketDataService::live()),
+        )
+        .with_demo_mode(true);
+
+        let holdings = get_json(&state, "/api/holdings").await;
+        let holdings = holdings.as_array().expect("holdings array");
+
+        // Representative non-Other convictions are visible.
+        let convictions: HashSet<&str> = holdings
+            .iter()
+            .map(|h| h["instrument"]["conviction"].as_str().expect("conviction"))
+            .collect();
+        assert!(convictions.contains("High"));
+        assert!(convictions.contains("Medium"));
+        assert!(convictions.contains("Low"));
+        assert!(convictions.contains("Other"));
+
+        // Convicted holdings expose an available, computed target.
+        let computed = holdings.iter().filter(|h| {
+            matches!(
+                h["conviction_target"]["status"].as_str(),
+                Some("below" | "on_target" | "above")
+            ) && h["conviction_target"]["target_value_base"]["status"] == "available"
+        });
+        assert!(
+            computed.count() >= 1,
+            "at least one holding should show a computed target indicator"
+        );
+
+        // At least one convicted holding is visibly off target.
+        let off_target = holdings.iter().any(|h| {
+            matches!(
+                h["conviction_target"]["status"].as_str(),
+                Some("below" | "above")
+            )
+        });
+        assert!(off_target, "demo data should show a below/above target");
     }
 
     async fn get_json(state: &crate::state::AppState, uri: &str) -> Value {

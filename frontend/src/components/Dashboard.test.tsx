@@ -30,6 +30,7 @@ function inst(symbol: string): Instrument {
     name: symbol,
     type: "Stock",
     currency: "USD",
+    conviction: "Other",
   };
 }
 

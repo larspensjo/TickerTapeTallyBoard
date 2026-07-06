@@ -9,6 +9,7 @@ import {
   useRollbackImport,
 } from "../api/queries";
 import type {
+  ConvictionClosePosition,
   ImportAssetGroup,
   ImportCounts,
   ImportPreview,
@@ -17,6 +18,9 @@ import type {
   ImportSource,
 } from "../api/types";
 import { formatGroupedNumber } from "./valuationDisplay";
+
+/** Per-instrument decision when an import would close a convicted position. */
+export type ConvictionChoice = "keep" | "other";
 
 export type Phase =
   | "idle"
@@ -36,6 +40,8 @@ export interface State {
   confirmingAppend: boolean;
   error: string | null;
   selected: Record<string, boolean>;
+  /** Keep/clear choice per closing-convicted asset key. */
+  convictionChoices: Record<string, ConvictionChoice>;
 }
 
 export type Action =
@@ -48,6 +54,7 @@ export type Action =
   | { type: "cancelAppend" }
   | { type: "toggleAsset"; assetKey: string }
   | { type: "setAllAssets"; selected: boolean }
+  | { type: "setConvictionChoice"; assetKey: string; choice: ConvictionChoice }
   | { type: "commitStarted" }
   | { type: "committed"; result: ImportResult }
   | { type: "failed"; message: string }
@@ -63,6 +70,7 @@ export const INITIAL_STATE: State = {
   confirmingAppend: false,
   error: null,
   selected: {},
+  convictionChoices: {},
 };
 
 export function selectedFromPreview(
@@ -90,6 +98,7 @@ export function importReducer(state: State, action: Action): State {
         confirmingDuplicate: false,
         error: null,
         selected: {},
+        convictionChoices: {},
       };
     case "fileSelected":
       return {
@@ -101,6 +110,7 @@ export function importReducer(state: State, action: Action): State {
         confirmingDuplicate: false,
         error: null,
         selected: {},
+        convictionChoices: {},
       };
     case "previewReady":
       return {
@@ -112,6 +122,7 @@ export function importReducer(state: State, action: Action): State {
         confirmingDuplicate: false,
         error: null,
         selected: selectedFromPreview(action.preview),
+        convictionChoices: {},
       };
     case "confirmDuplicate":
       return {
@@ -169,6 +180,14 @@ export function importReducer(state: State, action: Action): State {
 
       return { ...state, selected };
     }
+    case "setConvictionChoice":
+      return {
+        ...state,
+        convictionChoices: {
+          ...state.convictionChoices,
+          [action.assetKey]: action.choice,
+        },
+      };
     case "commitStarted":
       return { ...state, phase: "committing", error: null };
     case "committed":
@@ -181,6 +200,7 @@ export function importReducer(state: State, action: Action): State {
         confirmingAppend: false,
         error: null,
         selected: {},
+        convictionChoices: {},
       };
     case "failed":
       return {
@@ -266,6 +286,64 @@ function hasBlockingErrors(
   return selectedHasErrors || hasGlobalErrors;
 }
 
+/**
+ * The closing convicted positions that still require a keep/clear decision:
+ * preview-listed positions minus any whose asset the user has deselected. A
+ * deselected asset is excluded from the commit, so the backend recomputes the
+ * closing set without it and never blocks on it. The UI must mirror that, or a
+ * deselect could demand a meaningless choice for an asset it will not touch.
+ */
+export function activeConvictionClosePositions(
+  preview: ImportPreview | null,
+  selected: Record<string, boolean>,
+): ConvictionClosePosition[] {
+  if (!preview) {
+    return [];
+  }
+  const deselectedKeys = new Set(
+    preview.assets
+      .filter((asset) => !isAssetSelected(asset, selected))
+      .map((asset) => asset.asset_key),
+  );
+  return preview.conviction_close_positions.filter(
+    (position) => !deselectedKeys.has(position.asset_key),
+  );
+}
+
+/**
+ * True once every active closing position has a keep/clear choice. Empty when
+ * there is nothing to decide, so commit is not blocked.
+ */
+export function allConvictionChoicesMade(
+  positions: ConvictionClosePosition[],
+  choices: Record<string, ConvictionChoice>,
+): boolean {
+  return positions.every(
+    (position) => choices[position.asset_key] !== undefined,
+  );
+}
+
+/**
+ * Split the resolved choices into the asset keys to keep and to clear, limited
+ * to the active closing positions.
+ */
+export function convictionCommitParams(
+  positions: ConvictionClosePosition[],
+  choices: Record<string, ConvictionChoice>,
+): { keep: string[]; toOther: string[] } {
+  const keep: string[] = [];
+  const toOther: string[] = [];
+  for (const position of positions) {
+    const choice = choices[position.asset_key];
+    if (choice === "keep") {
+      keep.push(position.asset_key);
+    } else if (choice === "other") {
+      toOther.push(position.asset_key);
+    }
+  }
+  return { keep, toOther };
+}
+
 export function ImportView() {
   const navigate = useNavigate();
   const [state, dispatch] = useReducer(importReducer, INITIAL_STATE);
@@ -332,12 +410,20 @@ export function ImportView() {
     const replaceBatchId =
       state.preview.replace_candidate_batch_id ?? undefined;
 
+    const { keep: convictionKeep, toOther: convictionToOther } =
+      convictionCommitParams(
+        activeConvictionClosePositions(state.preview, state.selected),
+        state.convictionChoices,
+      );
+
     try {
       const result = await commitImport.mutateAsync({
         source: state.source,
         file: fileBytes.slice(0),
         allowDuplicate,
         exclude,
+        convictionKeep,
+        convictionToOther,
         ...(refresh && replaceBatchId !== undefined
           ? { mode: "replace" as const, replaceBatchId }
           : {}),
@@ -369,6 +455,15 @@ export function ImportView() {
     state.source === "avanza" && preview?.replace_candidate_batch_id != null;
   const isDuplicate = preview?.duplicate_of_batch_id != null && !isRefreshMode;
   const commitBlockedByErrors = hasBlockingErrors(preview, state.selected);
+  const activeClosePositions = activeConvictionClosePositions(
+    preview,
+    state.selected,
+  );
+  const convictionChoicesComplete = allConvictionChoicesMade(
+    activeClosePositions,
+    state.convictionChoices,
+  );
+  const commitBlocked = commitBlockedByErrors || !convictionChoicesComplete;
   const noWritableAssets =
     preview !== null &&
     preview.assets.length === 0 &&
@@ -724,6 +819,17 @@ export function ImportView() {
                 </p>
               ) : null}
 
+              {activeClosePositions.length > 0 ? (
+                <ConvictionCloseSection
+                  positions={activeClosePositions}
+                  choices={state.convictionChoices}
+                  disabled={isBusy}
+                  onChoose={(assetKey, choice) =>
+                    dispatch({ type: "setConvictionChoice", assetKey, choice })
+                  }
+                />
+              ) : null}
+
               <div className="form-actions">
                 <button
                   type="button"
@@ -752,9 +858,7 @@ export function ImportView() {
                       <button
                         type="button"
                         className="button outline danger"
-                        disabled={
-                          commitBlockedByErrors || isBusy || noWritableAssets
-                        }
+                        disabled={commitBlocked || isBusy || noWritableAssets}
                         onClick={() => {
                           void onCommit(
                             preview.duplicate_of_batch_id != null,
@@ -770,9 +874,7 @@ export function ImportView() {
                       <button
                         type="button"
                         className="button secondary"
-                        disabled={
-                          commitBlockedByErrors || isBusy || noWritableAssets
-                        }
+                        disabled={commitBlocked || isBusy || noWritableAssets}
                         onClick={() => {
                           dispatch({ type: "confirmAppend" });
                         }}
@@ -782,7 +884,7 @@ export function ImportView() {
                       <button
                         type="button"
                         className="button primary"
-                        disabled={commitBlockedByErrors || isBusy}
+                        disabled={commitBlocked || isBusy}
                         onClick={() => {
                           void onCommit(false, true);
                         }}
@@ -795,7 +897,7 @@ export function ImportView() {
                   <button
                     type="button"
                     className="button outline danger"
-                    disabled={commitBlockedByErrors || isBusy}
+                    disabled={commitBlocked || isBusy}
                     onClick={() => {
                       dispatch({ type: "confirmDuplicate" });
                     }}
@@ -806,9 +908,7 @@ export function ImportView() {
                   <button
                     type="button"
                     className="button primary"
-                    disabled={
-                      commitBlockedByErrors || isBusy || noWritableAssets
-                    }
+                    disabled={commitBlocked || isBusy || noWritableAssets}
                     title={
                       noWritableAssets
                         ? "All rows are already imported — nothing to commit"
@@ -954,6 +1054,62 @@ function BackfillPanel() {
           </p>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+function ConvictionCloseSection({
+  positions,
+  choices,
+  disabled,
+  onChoose,
+}: {
+  positions: ConvictionClosePosition[];
+  choices: Record<string, ConvictionChoice>;
+  disabled: boolean;
+  onChoose: (assetKey: string, choice: ConvictionChoice) => void;
+}) {
+  return (
+    <section className="conviction-close" aria-label="Conviction decisions">
+      <h3>Closing positions with a conviction</h3>
+      <p className="asset-subtle">
+        This import closes {positions.length} position
+        {positions.length === 1 ? "" : "s"} that still carry a conviction.
+        Choose whether to keep each conviction for future planning or clear it
+        to Other.
+      </p>
+      <ul className="conviction-close-list">
+        {positions.map((position) => (
+          <li className="conviction-close-item" key={position.asset_key}>
+            <div className="conviction-close-label">
+              <strong>{position.symbol}</strong>
+              <span className="status-chip">{position.conviction}</span>
+            </div>
+            <div className="conviction-close-choices">
+              <label>
+                <input
+                  type="radio"
+                  name={`conviction-${position.asset_key}`}
+                  checked={choices[position.asset_key] === "keep"}
+                  disabled={disabled}
+                  onChange={() => onChoose(position.asset_key, "keep")}
+                />
+                Keep conviction
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name={`conviction-${position.asset_key}`}
+                  checked={choices[position.asset_key] === "other"}
+                  disabled={disabled}
+                  onChange={() => onChoose(position.asset_key, "other")}
+                />
+                Change to Other
+              </label>
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

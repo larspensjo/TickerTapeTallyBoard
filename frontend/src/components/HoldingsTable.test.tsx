@@ -20,6 +20,7 @@ function instrument(id: number, name: string, symbol: string): Instrument {
     name,
     type: "Stock",
     currency: "USD",
+    conviction: "Other",
   };
 }
 
@@ -46,6 +47,13 @@ function holding(
       unrealized_gain_base: money,
       unrealized_gain_percent: money,
       day_change_base: money,
+    },
+    conviction_target: {
+      conviction: "Other",
+      status: "no_target",
+      target_value_base: { status: "unavailable", reasons: ["no_target"] },
+      target_gap_base: { status: "unavailable", reasons: ["no_target"] },
+      target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
     },
   };
 }
@@ -89,6 +97,29 @@ describe("holdings sorting persistence", () => {
     saveHoldingsSorting(sorting);
 
     expect(loadHoldingsSorting()).toEqual(sorting);
+  });
+
+  it("accepts the new conviction and target sortable columns", () => {
+    for (const id of [
+      "conviction",
+      "target_value_base",
+      "target_gap_base",
+      "target_status",
+    ]) {
+      const sorting = [{ id, desc: true }];
+      saveHoldingsSorting(sorting);
+      expect(loadHoldingsSorting()).toEqual(sorting);
+    }
+  });
+
+  it("rejects an unknown sortable column id", () => {
+    localStorage.setItem(
+      HOLDINGS_SORTING_KEY,
+      JSON.stringify([{ id: "not_a_column", desc: true }]),
+    );
+    expect(loadHoldingsSorting()).toEqual([
+      { id: "market_value_base", desc: true },
+    ]);
   });
 
   it("applies saved sorting when the table mounts", () => {

@@ -3,10 +3,17 @@
 
 #![allow(dead_code)]
 
+mod conviction;
 mod performance;
 mod position;
 mod transaction;
 mod valuation;
+
+#[allow(unused_imports)]
+pub use conviction::{
+    derive_targets, ConvictionLevel, ConvictionTargetInput, ConvictionTargetOutput,
+    MarketValueState, TargetField, TargetReason, TargetStatus,
+};
 
 #[allow(unused_imports)]
 pub use performance::{

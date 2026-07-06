@@ -259,6 +259,7 @@ pub async fn write_batch(
     source: &str,
     hash: &str,
     mapped: &[MappedRow],
+    conviction_to_other_ids: &BTreeSet<i64>,
 ) -> Result<i64, ApiError> {
     let mut tx = state
         .pool
@@ -311,10 +312,24 @@ pub async fn write_batch(
 
     derive_affected_ledgers(&mut tx, source, &affected, &key_by_instrument_id).await?;
 
+    // Clear conviction to OTHER for instruments the user chose to release,
+    // inside the same transaction as the ledger writes so the two never diverge.
+    apply_conviction_to_other(&mut tx, conviction_to_other_ids).await?;
+
     tx.commit()
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
     Ok(batch_id)
+}
+
+async fn apply_conviction_to_other(
+    tx: &mut sqlx::SqliteConnection,
+    conviction_to_other_ids: &BTreeSet<i64>,
+) -> Result<(), ApiError> {
+    for &instrument_id in conviction_to_other_ids {
+        instruments::update_conviction_in_tx(tx, instrument_id, "OTHER").await?;
+    }
+    Ok(())
 }
 
 /// Atomically replace the transaction set of an existing Avanza import batch
@@ -333,6 +348,7 @@ pub async fn refresh_batch(
     hash: &str,
     mapped: &[MappedRow],
     excluded_instrument_ids: &BTreeSet<i64>,
+    conviction_to_other_ids: &BTreeSet<i64>,
 ) -> Result<i64, ApiError> {
     // Pre-check: verify expected_batch_id is still the latest live batch for this source.
     let latest = import_batches::find_latest_by_source(&state.pool, source).await?;
@@ -552,6 +568,10 @@ pub async fn refresh_batch(
             })));
         }
     }
+
+    // Clear conviction to OTHER for the chosen instruments in the same
+    // transaction as the refresh. Import rollback never touches conviction.
+    apply_conviction_to_other(&mut tx, conviction_to_other_ids).await?;
 
     tx.commit()
         .await

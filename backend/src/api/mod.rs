@@ -92,6 +92,14 @@ fn api_router() -> Router<AppState> {
             "/instruments",
             get(instruments::list).post(instruments::create),
         )
+        .route(
+            "/instruments/convictions",
+            put(instruments::update_convictions),
+        )
+        .route(
+            "/instruments/{id}/conviction",
+            put(instruments::update_conviction),
+        )
         .route("/instruments/{id}/prices", get(instrument_prices::list))
         .route(
             "/instruments/{id}/provider-symbols/{provider}",
@@ -180,6 +188,16 @@ mod tests {
                 "PUT",
                 "/api/instruments/1/provider-symbols/YAHOO",
                 json!({"provider_symbol":"TEST.ST","currency":"SEK","enabled":true}),
+            ),
+            (
+                "PUT",
+                "/api/instruments/1/conviction",
+                json!({"conviction":"Low"}),
+            ),
+            (
+                "PUT",
+                "/api/instruments/convictions",
+                json!({"changes":[{"instrument_id":1,"conviction":"High"}]}),
             ),
             ("POST", "/api/import/sharesight/preview", json!({})),
             ("POST", "/api/import/avanza/preview", json!({})),

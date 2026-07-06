@@ -3,7 +3,15 @@ import type { GainsRow, Instrument } from "../api/types";
 import { allocationBreakdown, topMovers } from "./dashboardSelectors";
 
 function inst(id: number, symbol: string, name = symbol): Instrument {
-  return { id, symbol, exchange: "STO", name, type: "Stock", currency: "SEK" };
+  return {
+    id,
+    symbol,
+    exchange: "STO",
+    name,
+    type: "Stock",
+    currency: "SEK",
+    conviction: "Other",
+  };
 }
 
 function row(

@@ -596,13 +596,13 @@ mod tests {
             "POST",
             "/api/transactions",
             json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
-                   "quantity":100,"price":"0.25","currency":"USD","fx_rate_to_base":"10.5"}),
+                   "quantity":100,"dividend_per_share":"0.25","currency":"USD","fx_rate_to_base":"10.5"}),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(created["type"], "Dividend");
         assert_eq!(created["quantity"], 100);
-        assert_eq!(created["price"], "0.25");
+        assert_eq!(created["dividend_per_share"], "0.25");
         assert_eq!(created["currency"], "USD");
 
         let (status, list) = send(&state, "GET", "/api/transactions", Value::Null).await;
@@ -619,7 +619,7 @@ mod tests {
             "POST",
             "/api/transactions",
             json!({"instrument_id":instrument_id,"type":"Dividend","trade_date":"2026-06-15",
-                   "quantity":100,"price":"0.25","currency":"USD","brokerage":"5.00"}),
+                   "quantity":100,"dividend_per_share":"0.25","currency":"USD","brokerage":"5.00"}),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);

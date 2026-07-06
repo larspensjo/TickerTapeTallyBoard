@@ -2,18 +2,20 @@ use sqlx::sqlite::{SqliteConnection, SqlitePool};
 
 use crate::db::RepoError;
 
-const LIST_SQL: &str = "SELECT id, symbol, exchange, name, type, currency, isin \
+const LIST_SQL: &str = "SELECT id, symbol, exchange, name, type, currency, isin, conviction \
     FROM instruments ORDER BY exchange, symbol";
-const FIND_SQL: &str =
-    "SELECT id, symbol, exchange, name, type, currency, isin FROM instruments WHERE id = ?";
+const FIND_SQL: &str = "SELECT id, symbol, exchange, name, type, currency, isin, conviction \
+    FROM instruments WHERE id = ?";
 const FIND_BY_EXCHANGE_SYMBOL_SQL: &str =
-    "SELECT id, symbol, exchange, name, type, currency, isin FROM instruments WHERE exchange = ? AND symbol = ?";
+    "SELECT id, symbol, exchange, name, type, currency, isin, conviction FROM instruments WHERE exchange = ? AND symbol = ?";
 const FIND_BY_ISIN_SQL: &str =
-    "SELECT id, symbol, exchange, name, type, currency, isin FROM instruments WHERE isin = ?";
+    "SELECT id, symbol, exchange, name, type, currency, isin, conviction FROM instruments WHERE isin = ?";
 const INSERT_SQL: &str = "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \
-     VALUES (?, ?, ?, ?, ?, ?) RETURNING id, symbol, exchange, name, type, currency, isin";
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING id, symbol, exchange, name, type, currency, isin, conviction";
 const UPDATE_ISIN_SQL: &str = "UPDATE instruments SET isin = ? WHERE id = ? \
-     RETURNING id, symbol, exchange, name, type, currency, isin";
+     RETURNING id, symbol, exchange, name, type, currency, isin, conviction";
+const UPDATE_CONVICTION_SQL: &str = "UPDATE instruments SET conviction = ? WHERE id = ? \
+     RETURNING id, symbol, exchange, name, type, currency, isin, conviction";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct InstrumentRow {
@@ -25,9 +27,14 @@ pub struct InstrumentRow {
     pub kind: String,
     pub currency: String,
     pub isin: Option<String>,
+    /// Stored conviction as the DB string: `OTHER`, `LOW`, `MEDIUM`, or `HIGH`.
+    /// User-managed metadata; never written by import or ledger paths.
+    pub conviction: String,
 }
 
 /// Fields for creating an instrument. `kind` is the DB string (e.g. "STOCK").
+/// Deliberately has no conviction field: new rows default to `OTHER` at the DB
+/// level so import-driven creation cannot carry conviction in by accident.
 #[derive(Clone, Debug)]
 pub struct NewInstrument {
     pub symbol: String,
@@ -343,9 +350,67 @@ pub async fn update_isin_in_tx(
     Ok(row)
 }
 
+/// Set the stored conviction (DB string: `OTHER`/`LOW`/`MEDIUM`/`HIGH`) for one
+/// instrument. Returns `None` when no instrument has that id. The CHECK
+/// constraint rejects any value outside the allowed set.
+pub async fn update_conviction(
+    pool: &SqlitePool,
+    id: i64,
+    conviction: &str,
+) -> Result<Option<InstrumentRow>, RepoError> {
+    let row = sqlx::query_as::<_, InstrumentRow>(UPDATE_CONVICTION_SQL)
+        .bind(conviction)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+/// Set conviction for one instrument inside a caller-managed transaction. Used
+/// by the import commit path so conviction changes land atomically with the
+/// ledger writes. Returns `None` when no instrument has that id.
+pub async fn update_conviction_in_tx(
+    conn: &mut SqliteConnection,
+    id: i64,
+    conviction: &str,
+) -> Result<Option<InstrumentRow>, RepoError> {
+    let row = sqlx::query_as::<_, InstrumentRow>(UPDATE_CONVICTION_SQL)
+        .bind(conviction)
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(row)
+}
+
+/// Apply several conviction changes in one SQL transaction. Every id must exist;
+/// if any is unknown the whole batch is rolled back and `Ok(None)` is returned so
+/// the caller can surface a 404 without partially applying changes. On success
+/// returns the updated rows in the same order as `changes`.
+pub async fn update_convictions(
+    pool: &SqlitePool,
+    changes: &[(i64, String)],
+) -> Result<Option<Vec<InstrumentRow>>, RepoError> {
+    let mut tx = pool.begin().await?;
+    let mut updated = Vec::with_capacity(changes.len());
+    for (id, conviction) in changes {
+        match update_conviction_in_tx(&mut tx, *id, conviction).await? {
+            Some(row) => updated.push(row),
+            None => {
+                tx.rollback().await?;
+                return Ok(None);
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(Some(updated))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{find_by_isin, upsert, upsert_in_tx, NewInstrument};
+    use super::{
+        find, find_by_isin, update_conviction, update_convictions, upsert, upsert_in_tx,
+        NewInstrument,
+    };
     use crate::db::memory_pool;
 
     fn avanza(isin: &str) -> NewInstrument {
@@ -407,6 +472,104 @@ mod tests {
         assert_eq!(found.id, row.id);
 
         tx.commit().await.expect("commit");
+    }
+
+    #[tokio::test]
+    async fn new_instrument_defaults_to_other_conviction() {
+        let pool = memory_pool().await.expect("pool");
+        let (row, created) = upsert(&pool, &avanza("US1111111111"))
+            .await
+            .expect("upsert");
+        assert!(created);
+        assert_eq!(row.conviction, "OTHER");
+    }
+
+    #[tokio::test]
+    async fn update_conviction_changes_stored_value() {
+        let pool = memory_pool().await.expect("pool");
+        let (row, _) = upsert(&pool, &avanza("US2222222222"))
+            .await
+            .expect("upsert");
+
+        let updated = update_conviction(&pool, row.id, "HIGH")
+            .await
+            .expect("update")
+            .expect("row exists");
+        assert_eq!(updated.conviction, "HIGH");
+
+        let reloaded = find(&pool, row.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(reloaded.conviction, "HIGH");
+    }
+
+    #[tokio::test]
+    async fn update_conviction_unknown_id_returns_none() {
+        let pool = memory_pool().await.expect("pool");
+        let result = update_conviction(&pool, 4242, "LOW").await.expect("update");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_conviction_rejects_invalid_db_value() {
+        let pool = memory_pool().await.expect("pool");
+        let (row, _) = upsert(&pool, &avanza("US3333333333"))
+            .await
+            .expect("upsert");
+        let result = update_conviction(&pool, row.id, "EXTREME").await;
+        assert!(result.is_err(), "CHECK constraint should reject the value");
+    }
+
+    #[tokio::test]
+    async fn upsert_preserves_existing_conviction() {
+        let pool = memory_pool().await.expect("pool");
+        let (row, _) = upsert(&pool, &avanza("US4444444444"))
+            .await
+            .expect("upsert");
+        update_conviction(&pool, row.id, "MEDIUM")
+            .await
+            .expect("update")
+            .expect("row exists");
+
+        let (again, created) = upsert(&pool, &avanza("US4444444444"))
+            .await
+            .expect("upsert");
+        assert!(!created);
+        assert_eq!(again.conviction, "MEDIUM");
+    }
+
+    #[tokio::test]
+    async fn update_convictions_applies_all_or_none() {
+        let pool = memory_pool().await.expect("pool");
+        let (a, _) = upsert(&pool, &avanza("US5555555555"))
+            .await
+            .expect("upsert");
+        let (b, _) = upsert(&pool, &avanza("US6666666666"))
+            .await
+            .expect("upsert");
+
+        let updated = update_convictions(
+            &pool,
+            &[(a.id, "LOW".to_owned()), (b.id, "HIGH".to_owned())],
+        )
+        .await
+        .expect("bulk update")
+        .expect("all ids exist");
+        assert_eq!(updated.len(), 2);
+        assert_eq!(updated[0].conviction, "LOW");
+        assert_eq!(updated[1].conviction, "HIGH");
+
+        // An unknown id in the batch rolls back every change.
+        let result = update_convictions(
+            &pool,
+            &[(a.id, "MEDIUM".to_owned()), (9999, "MEDIUM".to_owned())],
+        )
+        .await
+        .expect("bulk update");
+        assert!(result.is_none());
+        let reloaded = find(&pool, a.id).await.expect("find").expect("row");
+        assert_eq!(reloaded.conviction, "LOW", "rollback must preserve LOW");
     }
 
     #[tokio::test]

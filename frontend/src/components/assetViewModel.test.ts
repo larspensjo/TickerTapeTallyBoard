@@ -8,6 +8,8 @@ import type {
   Transaction,
 } from "../api/types";
 import {
+  convictionPanelView,
+  convictionResetVisible,
   findGainsRow,
   findHolding,
   findInstrument,
@@ -26,6 +28,7 @@ function makeInstrument(id: number): Instrument {
     name: `Name ${id}`,
     type: "Stock",
     currency: "USD",
+    conviction: "Other",
   };
 }
 
@@ -107,6 +110,13 @@ function makeHolding(instrumentId: number): Holding {
     average_cost_native: "100",
     base: { status: "unavailable", reasons: [] },
     valuation: null,
+    conviction_target: {
+      conviction: "Other",
+      status: "no_target",
+      target_value_base: { status: "unavailable", reasons: ["no_target"] },
+      target_gap_base: { status: "unavailable", reasons: ["no_target"] },
+      target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
+    },
   };
 }
 
@@ -308,5 +318,39 @@ describe("splitEvents", () => {
       afterQuantity: 20,
       ratioLabel: "2:1",
     });
+  });
+});
+
+describe("conviction panel view", () => {
+  it("exposes the instrument conviction and the open holding's target", () => {
+    const holding = makeHolding(1);
+    holding.instrument.conviction = "High";
+    holding.conviction_target = {
+      conviction: "High",
+      status: "below",
+      target_value_base: { status: "available", value: "1000.00" },
+      target_gap_base: { status: "available", value: "-200.00" },
+      target_gap_percent: { status: "available", value: "-20.00" },
+    };
+    const instrument = { ...makeInstrument(1), conviction: "High" as const };
+
+    const view = convictionPanelView(instrument, holding);
+    expect(view.conviction).toBe("High");
+    expect(view.target?.status).toBe("below");
+  });
+
+  it("has no target for a closed / no-position instrument", () => {
+    const view = convictionPanelView(makeInstrument(2), null);
+    expect(view.conviction).toBe("Other");
+    expect(view.target).toBeNull();
+  });
+});
+
+describe("conviction reset visibility", () => {
+  it("offers reset only when the saved value differs from the baseline", () => {
+    // Baseline captured at navigation time; a later save to "High" differs.
+    expect(convictionResetVisible("Low", "High")).toBe(true);
+    // After resetting (or saving back to the baseline) there is nothing to undo.
+    expect(convictionResetVisible("Low", "Low")).toBe(false);
   });
 });

@@ -304,6 +304,17 @@ pub async fn list_for_batch_in_tx(
     Ok(rows)
 }
 
+pub async fn list_for_batch(
+    pool: &SqlitePool,
+    batch_id: i64,
+) -> Result<Vec<TransactionRow>, RepoError> {
+    let rows = sqlx::query_as::<_, TransactionRow>(LIST_FOR_BATCH_SQL)
+        .bind(batch_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
 /// Delete a single transaction by id inside a caller-managed transaction.
 /// Uses static SQL; callers loop over ids rather than building a dynamic IN clause.
 pub async fn delete_by_id_in_tx(conn: &mut SqliteConnection, id: i64) -> Result<(), RepoError> {

@@ -9,8 +9,31 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { AvailabilityValue, Holding } from "../api/types";
+import { type Dispatch, useMemo, useReducer, useState } from "react";
+import type { ConvictionChange } from "../api/queries";
+import type {
+  AvailabilityValue,
+  Conviction,
+  ConvictionTarget,
+  Holding,
+} from "../api/types";
+import {
+  CONVICTION_OPTIONS,
+  type ConvictionEditAction,
+  type ConvictionEdits,
+  convictionEditsReducer,
+  convictionLabel,
+  convictionRank,
+  effectiveConviction,
+  holdingConvictionSearchText,
+  isTargetAlert,
+  pendingConvictionChanges,
+  targetGapField,
+  targetGapTone,
+  targetStatusLabel,
+  targetStatusRank,
+  targetValueField,
+} from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
 import {
   AvailabilityValueCell,
@@ -22,6 +45,12 @@ import {
   reasonSummary,
   unavailableValue,
 } from "./valuationDisplay";
+
+interface HoldingsTableMeta {
+  edits: ConvictionEdits;
+  canEditConviction: boolean;
+  dispatchEdits: Dispatch<ConvictionEditAction>;
+}
 
 interface RowView {
   holding: Holding;
@@ -39,6 +68,10 @@ const SORTABLE_COLUMN_IDS = new Set([
   "cost_basis_native",
   "market_value_base",
   "portfolio_percentage",
+  "conviction",
+  "target_value_base",
+  "target_gap_base",
+  "target_status",
 ]);
 
 interface HoldingsSummary {
@@ -175,6 +208,8 @@ const numericColumns = new Set([
   "average_cost_native",
   "cost_basis_native",
   "portfolio_percentage",
+  "target_value_base",
+  "target_gap_base",
 ]);
 
 function marketValueNumber(holding: Holding): number | null {
@@ -348,6 +383,87 @@ function holdingsSummaryPnlCell(summary: HoldingsSummary) {
   );
 }
 
+function convictionCell(holding: Holding, meta: HoldingsTableMeta) {
+  const saved = holding.instrument.conviction;
+  const value = effectiveConviction(holding, meta.edits);
+  const dirty = value !== saved;
+  return (
+    <select
+      className={dirty ? "conviction-select dirty" : "conviction-select"}
+      value={value}
+      disabled={!meta.canEditConviction}
+      aria-label={`Conviction for ${holding.instrument.symbol}`}
+      title={dirty ? `Unsaved change from ${saved}` : undefined}
+      onChange={(event) =>
+        meta.dispatchEdits({
+          type: "stage",
+          instrumentId: holding.instrument.id,
+          saved,
+          conviction: event.target.value as Conviction,
+        })
+      }
+    >
+      {CONVICTION_OPTIONS.map((option) => (
+        <option key={option} value={option}>
+          {convictionLabel(option)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function targetValueCell(target: ConvictionTarget) {
+  if (target.target_value_base.status === "available") {
+    return (
+      <AvailabilityValueCell value={target.target_value_base} prefix="SEK " />
+    );
+  }
+
+  // No target / excluded / unavailable: the Target status column carries the
+  // reason, so keep this cell quiet rather than a warning fill.
+  return <span className="metric-subtle">--</span>;
+}
+
+function targetGapCell(target: ConvictionTarget) {
+  const gap = target.target_gap_base;
+  if (gap.status !== "available") {
+    return <span className="metric-subtle">--</span>;
+  }
+
+  const tone = targetGapTone(gap.value);
+  const percent = target.target_gap_percent;
+  return (
+    <div className="metric-stack">
+      <span className={`number ${tone}`}>
+        <FormattedNumber value={gap.value} prefix="SEK " />
+      </span>
+      {percent.status === "available" ? (
+        <span className="metric-subtle">
+          <span className={`number ${tone}`}>
+            <FormattedNumber value={percent.value} suffix="%" />
+          </span>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function targetStatusCell(target: ConvictionTarget) {
+  const alert = isTargetAlert(target.status);
+  const reasons =
+    target.target_value_base.status === "unavailable"
+      ? target.target_value_base.reasons
+      : [];
+  return (
+    <span
+      className={alert ? "status-chip warning" : "status-chip"}
+      title={reasons.length > 0 ? reasonSummary(reasons) : undefined}
+    >
+      {targetStatusLabel(target.status)}
+    </span>
+  );
+}
+
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
   return [
     columnHelper.accessor((row) => row.holding.instrument.name, {
@@ -418,6 +534,47 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       header: "P&L hint",
       cell: (info) => pnlHintCell(info.row.original.holding),
     }),
+    columnHelper.accessor(
+      (row) => convictionRank(row.holding.instrument.conviction),
+      {
+        id: "conviction",
+        header: "Conviction",
+        cell: (info) =>
+          convictionCell(
+            info.row.original.holding,
+            info.table.options.meta as HoldingsTableMeta,
+          ),
+      },
+    ),
+    columnHelper.accessor(
+      (row) => targetValueField(row.holding.conviction_target),
+      {
+        id: "target_value_base",
+        header: "Target (SEK)",
+        sortingFn: availabilitySortRows,
+        cell: (info) =>
+          targetValueCell(info.row.original.holding.conviction_target),
+      },
+    ),
+    columnHelper.accessor(
+      (row) => targetGapField(row.holding.conviction_target),
+      {
+        id: "target_gap_base",
+        header: "Target gap",
+        sortingFn: availabilitySortRows,
+        cell: (info) =>
+          targetGapCell(info.row.original.holding.conviction_target),
+      },
+    ),
+    columnHelper.accessor(
+      (row) => targetStatusRank(row.holding.conviction_target.status),
+      {
+        id: "target_status",
+        header: "Target status",
+        cell: (info) =>
+          targetStatusCell(info.row.original.holding.conviction_target),
+      },
+    ),
   ];
 }
 
@@ -444,6 +601,7 @@ function holdingSearchText(holding: Holding): string {
     holding.valuation?.unrealized_gain_percent.status === "available"
       ? holding.valuation.unrealized_gain_percent.value
       : "",
+    holdingConvictionSearchText(holding),
   ]
     .join(" ")
     .toLowerCase();
@@ -453,18 +611,44 @@ export function HoldingsTable({
   holdings,
   filter,
   onFilterChange,
+  canEditConviction = false,
+  onApplyConvictions,
+  isApplyingConvictions = false,
+  applyError = null,
 }: {
   holdings: Holding[];
   filter: string;
   onFilterChange: (filter: string) => void;
+  canEditConviction?: boolean;
+  onApplyConvictions?: (changes: ConvictionChange[]) => Promise<void>;
+  isApplyingConvictions?: boolean;
+  applyError?: string | null;
 }) {
   const [sorting, setSorting] = useState<SortingState>(loadHoldingsSorting);
+  const [edits, dispatchEdits] = useReducer(convictionEditsReducer, {});
+  // Drop edits a background refetch has made match the saved value, so Apply
+  // never fires a no-op write.
+  const pendingChanges = pendingConvictionChanges(edits, holdings);
+  const dirty = pendingChanges.length > 0;
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     setSorting((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       saveHoldingsSorting(next);
       return next;
     });
+  };
+  const handleApply = () => {
+    if (!onApplyConvictions || !dirty || isApplyingConvictions) return;
+    onApplyConvictions(pendingChanges)
+      .then(() => {
+        // Clear staged edits only after a successful save; the refetched
+        // holdings then carry the new saved convictions and pool-wide targets.
+        dispatchEdits({ type: "discard" });
+      })
+      .catch(() => {
+        // Keep staged edits so the user can retry; the error is surfaced via
+        // the applyError message below.
+      });
   };
   const tableRows = useMemo<RowView[]>(
     () =>
@@ -482,10 +666,12 @@ export function HoldingsTable({
     () => buildColumns(portfolioPercentages),
     [portfolioPercentages],
   );
+  const meta: HoldingsTableMeta = { edits, canEditConviction, dispatchEdits };
   const table = useReactTable({
     data: tableRows,
     columns,
     state: { sorting, globalFilter: filter },
+    meta,
     onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -506,6 +692,31 @@ export function HoldingsTable({
           value={filter}
           onChange={(event) => onFilterChange(event.target.value)}
         />
+        {canEditConviction ? (
+          <div className="toolbar-actions">
+            {applyError ? (
+              <span className="toolbar-error down" role="alert">
+                {applyError}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => dispatchEdits({ type: "discard" })}
+              disabled={!dirty || isApplyingConvictions}
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={handleApply}
+              disabled={!dirty || isApplyingConvictions}
+            >
+              {isApplyingConvictions ? "Applying…" : "Apply conviction changes"}
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="table-wrap holdings-table">
         <table>
@@ -582,6 +793,11 @@ export function HoldingsTable({
                 {portfolioPercentageCell(summary.portfolioPercentage)}
               </td>
               <td>{holdingsSummaryPnlCell(summary)}</td>
+              {/* conviction, target, target gap, target status: no totals */}
+              <td />
+              <td />
+              <td />
+              <td />
             </tr>
           </tfoot>
         </table>

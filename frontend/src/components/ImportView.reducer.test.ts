@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { ImportPreview, ImportResult } from "../api/types";
+import type {
+  ConvictionClosePosition,
+  ImportPreview,
+  ImportResult,
+} from "../api/types";
 import {
+  activeConvictionClosePositions,
+  allConvictionChoicesMade,
   allSelectableSelected,
+  convictionCommitParams,
   INITIAL_STATE,
   importReducer,
   selectedFromPreview,
@@ -13,6 +20,7 @@ function makePreview(
     default_selected: boolean;
     skipped_reason: string | null;
   }> = [],
+  convictionClosePositions: ConvictionClosePosition[] = [],
 ): ImportPreview {
   return {
     metadata: null,
@@ -50,6 +58,16 @@ function makePreview(
     duplicate_of_batch_id: null,
     replace_candidate_batch_id: null,
     replace_candidate_warning: null,
+    conviction_close_positions: convictionClosePositions,
+  };
+}
+
+function closePosition(assetKey: string): ConvictionClosePosition {
+  return {
+    instrument_id: 1,
+    asset_key: assetKey,
+    symbol: assetKey.toUpperCase(),
+    conviction: "High",
   };
 }
 
@@ -317,5 +335,98 @@ describe("allSelectableSelected", () => {
   it("is false when there are no selectable assets", () => {
     expect(allSelectableSelected(makePreview([ASSET_SKIP]), {})).toBe(false);
     expect(allSelectableSelected(makePreview(), {})).toBe(false);
+  });
+});
+
+describe("conviction close-position choices", () => {
+  it("records a keep/clear choice per asset key", () => {
+    const next = importReducer(INITIAL_STATE, {
+      type: "setConvictionChoice",
+      assetKey: "nasdaq:msft",
+      choice: "other",
+    });
+    expect(next.convictionChoices).toEqual({ "nasdaq:msft": "other" });
+  });
+
+  it("clears staged choices when a new preview arrives", () => {
+    const withChoice = importReducer(INITIAL_STATE, {
+      type: "setConvictionChoice",
+      assetKey: "nasdaq:msft",
+      choice: "keep",
+    });
+    const next = importReducer(withChoice, {
+      type: "previewReady",
+      preview: makePreview(),
+      fileName: "trades.csv",
+    });
+    expect(next.convictionChoices).toEqual({});
+  });
+
+  it("blocks commit until every closing position has a choice", () => {
+    const preview = makePreview(
+      [],
+      [closePosition("nasdaq:msft"), closePosition("sto:nord")],
+    );
+    const positions = activeConvictionClosePositions(preview, {});
+    expect(allConvictionChoicesMade(positions, {})).toBe(false);
+    expect(allConvictionChoicesMade(positions, { "nasdaq:msft": "keep" })).toBe(
+      false,
+    );
+    expect(
+      allConvictionChoicesMade(positions, {
+        "nasdaq:msft": "keep",
+        "sto:nord": "other",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not block commit when nothing is closing", () => {
+    expect(
+      allConvictionChoicesMade(
+        activeConvictionClosePositions(makePreview(), {}),
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      allConvictionChoicesMade(activeConvictionClosePositions(null, {}), {}),
+    ).toBe(true);
+  });
+
+  it("does not block commit for a closing asset the user deselected", () => {
+    const preview = makePreview(
+      [{ asset_key: "AAPL", default_selected: true, skipped_reason: null }],
+      [closePosition("AAPL")],
+    );
+    // Selected: the closing position is active and must be decided.
+    const whenSelected = activeConvictionClosePositions(preview, {
+      AAPL: true,
+    });
+    expect(allConvictionChoicesMade(whenSelected, {})).toBe(false);
+    // Deselected: it is excluded from the commit, so no choice is required and
+    // nothing is serialized for it.
+    const whenDeselected = activeConvictionClosePositions(preview, {
+      AAPL: false,
+    });
+    expect(allConvictionChoicesMade(whenDeselected, {})).toBe(true);
+    expect(convictionCommitParams(whenDeselected, {})).toEqual({
+      keep: [],
+      toOther: [],
+    });
+  });
+
+  it("serializes choices into keep and change-to-other lists", () => {
+    const preview = makePreview(
+      [],
+      [closePosition("nasdaq:msft"), closePosition("sto:nord")],
+    );
+    const params = convictionCommitParams(
+      activeConvictionClosePositions(preview, {}),
+      {
+        "nasdaq:msft": "keep",
+        "sto:nord": "other",
+      },
+    );
+    expect(params.keep).toEqual(["nasdaq:msft"]);
+    expect(params.toOther).toEqual(["sto:nord"]);
   });
 });

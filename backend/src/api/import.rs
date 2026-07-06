@@ -8,11 +8,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::api::instruments::ConvictionDto;
 use crate::api::ApiError;
 use crate::db::{import_batches, instruments, transactions};
-use crate::domain;
+use crate::domain::{self, ConvictionLevel, TransactionKind};
 use crate::import::avanza::mapper::to_prepared as avanza_prepared;
 use crate::import::avanza::parser::parse_report as parse_avanza_report;
+use crate::import::core::conviction_guard::{
+    closing_convicted_positions, net_quantity, predicted_quantity_append,
+    predicted_quantity_replace, ClosingConvictedPosition, GuardInstrument,
+};
 use crate::import::core::outcome::{
     InstrumentKey, MappedRow, ParseError, PreparedImport, RowNote, RowOutcome,
 };
@@ -41,6 +46,28 @@ pub struct ImportPreview {
     pub replace_candidate_batch_id: Option<i64>,
     /// Non-blocking warning when multiple live Avanza batches exist.
     pub replace_candidate_warning: Option<String>,
+    /// Convicted open positions this import would close. When non-empty the
+    /// commit must carry a keep/clear choice for every listed asset key.
+    pub conviction_close_positions: Vec<ConvictionClosePositionDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConvictionClosePositionDto {
+    pub instrument_id: i64,
+    pub asset_key: String,
+    pub symbol: String,
+    pub conviction: ConvictionDto,
+}
+
+impl ConvictionClosePositionDto {
+    fn from_position(position: &ClosingConvictedPosition) -> Self {
+        Self {
+            instrument_id: position.instrument_id,
+            asset_key: position.asset_key.clone(),
+            symbol: position.symbol.clone(),
+            conviction: ConvictionDto::from_level(position.conviction),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +136,14 @@ pub struct CommitParams {
     pub mode: Option<String>,
     /// Required when `mode=replace`; the batch id returned by preview.
     pub replace_batch_id: Option<i64>,
+    /// Comma-separated asset keys whose conviction the user keeps despite the
+    /// import closing the position.
+    #[serde(default)]
+    pub conviction_keep: Option<String>,
+    /// Comma-separated asset keys whose conviction the user clears to `Other`
+    /// as part of this commit.
+    #[serde(default)]
+    pub conviction_to_other: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,6 +265,8 @@ async fn preview_source(
     let ctx = load_plan_context(state).await?;
     let plan = build_plan(&prepared, &ctx);
 
+    let closing = closing_convicted(state, &ctx, &plan.new_mapped_rows, GuardMode::Append).await?;
+
     Ok(Json(ImportPreview {
         metadata: Some(PreviewMetadata {
             title: prepared.header.title.clone(),
@@ -253,6 +290,10 @@ async fn preview_source(
         duplicate_of_batch_id,
         replace_candidate_batch_id: None,
         replace_candidate_warning: None,
+        conviction_close_positions: closing
+            .iter()
+            .map(ConvictionClosePositionDto::from_position)
+            .collect(),
     }))
 }
 
@@ -292,6 +333,25 @@ async fn avanza_preview_inner(
     let ctx = load_plan_context(state).await?;
     let plan = build_plan(&prepared, &ctx);
 
+    // The Avanza UI defaults to refresh when a prior batch exists, so predict
+    // against that replace candidate; otherwise this first import is an append.
+    let closing = match replace_candidate_batch_id {
+        Some(batch_id) => {
+            let excluded = compute_excluded_instrument_ids(&ctx, &BTreeSet::new(), &plan);
+            closing_convicted(
+                state,
+                &ctx,
+                &plan.new_mapped_rows,
+                GuardMode::Replace {
+                    replace_batch_id: batch_id,
+                    excluded_ids: &excluded,
+                },
+            )
+            .await?
+        }
+        None => closing_convicted(state, &ctx, &plan.new_mapped_rows, GuardMode::Append).await?,
+    };
+
     Ok(Json(ImportPreview {
         metadata: Some(PreviewMetadata {
             title: prepared.header.title.clone(),
@@ -315,6 +375,10 @@ async fn avanza_preview_inner(
         duplicate_of_batch_id,
         replace_candidate_batch_id,
         replace_candidate_warning,
+        conviction_close_positions: closing
+            .iter()
+            .map(ConvictionClosePositionDto::from_position)
+            .collect(),
     }))
 }
 
@@ -361,6 +425,18 @@ async fn avanza_commit_replace(
     // must not be re-validated.
     let excluded_instrument_ids = compute_excluded_instrument_ids(&ctx, &exclude, &plan);
 
+    let closing = closing_convicted(
+        state,
+        &ctx,
+        &plan.new_mapped_rows,
+        GuardMode::Replace {
+            replace_batch_id,
+            excluded_ids: &excluded_instrument_ids,
+        },
+    )
+    .await?;
+    let conviction_to_other_ids = resolve_conviction_choices(&closing, params)?;
+
     let batch_id = refresh_batch(
         state,
         "AVANZA",
@@ -368,6 +444,7 @@ async fn avanza_commit_replace(
         &hash,
         &mapped,
         &excluded_instrument_ids,
+        &conviction_to_other_ids,
     )
     .await?;
 
@@ -438,9 +515,19 @@ async fn commit_source(
         }
     }
 
+    let closing = closing_convicted(state, &ctx, &plan.new_mapped_rows, GuardMode::Append).await?;
+    let conviction_to_other_ids = resolve_conviction_choices(&closing, params)?;
+
     // Use the already-filtered list from the plan so already-imported
     // rows are not written again on append.
-    let batch_id = write_batch(state, source, &hash, &plan.new_mapped_rows).await?;
+    let batch_id = write_batch(
+        state,
+        source,
+        &hash,
+        &plan.new_mapped_rows,
+        &conviction_to_other_ids,
+    )
+    .await?;
 
     let warnings = unknown
         .into_iter()
@@ -477,6 +564,7 @@ fn parse_error_preview(error: ParseError, duplicate_of_batch_id: Option<i64>) ->
         duplicate_of_batch_id,
         replace_candidate_batch_id: None,
         replace_candidate_warning: None,
+        conviction_close_positions: Vec::new(),
     }
 }
 
@@ -647,6 +735,188 @@ fn row_note_dto(note: &RowNote) -> RowNoteDto {
         code: note.code,
         message: note.message.clone(),
     }
+}
+
+/// Which commit path the guard is predicting for.
+enum GuardMode<'a> {
+    /// Append: existing ledger plus the import's new rows.
+    Append,
+    /// Avanza refresh: for non-excluded instruments the batch's old rows are
+    /// replaced by the import's rows; excluded instruments are left untouched.
+    Replace {
+        replace_batch_id: i64,
+        excluded_ids: &'a BTreeSet<i64>,
+    },
+}
+
+/// Signed quantity a mapped row contributes to a position (0 for dividends).
+///
+/// An invalid row counts as 0: at commit `reject_on_errors` runs first, so only
+/// valid rows reach here; in preview an already-erroring row cannot be committed
+/// anyway, so treating it as a non-contributor is the safe approximation.
+fn mapped_row_quantity(row: &MappedRow) -> i64 {
+    if row.proposed.kind == TransactionKind::Dividend {
+        return 0;
+    }
+    domain::validate(&row.proposed).unwrap_or(0)
+}
+
+/// Detect existing convicted open positions the pending import would close.
+///
+/// `new_rows` is always the genuinely-new (not already-imported) mapped set,
+/// `plan.new_mapped_rows`. Predicted quantity is a sum of signed non-dividend
+/// quantities, which equals the derived position because buys/sells/splits are
+/// additive. Refresh distinguishes non-excluded instruments (old batch replaced)
+/// from excluded ones (old rows kept, so only genuinely-new rows are appended);
+/// a "mixed" instrument (already-imported plus new rows) is excluded, so its new
+/// sell is still counted and can close the position.
+async fn closing_convicted(
+    state: &AppState,
+    ctx: &PlanContext,
+    new_rows: &[MappedRow],
+    mode: GuardMode<'_>,
+) -> Result<Vec<ClosingConvictedPosition>, ApiError> {
+    let conviction_by_id: BTreeMap<i64, ConvictionLevel> = instruments::list(&state.pool)
+        .await?
+        .iter()
+        .filter_map(|row| ConvictionLevel::from_db_str(&row.conviction).map(|c| (row.id, c)))
+        .collect();
+
+    // For refresh, the batch's own non-dividend rows are the ones being replaced.
+    let batch_net_by_instrument: BTreeMap<i64, i64> = match &mode {
+        GuardMode::Replace {
+            replace_batch_id, ..
+        } => {
+            let mut net = BTreeMap::new();
+            for row in transactions::list_for_batch(&state.pool, *replace_batch_id).await? {
+                if row.kind != "DIVIDEND" {
+                    *net.entry(row.instrument_id).or_insert(0) += row.quantity;
+                }
+            }
+            net
+        }
+        GuardMode::Append => BTreeMap::new(),
+    };
+
+    let mut guard_instruments = Vec::new();
+    for existing in &ctx.existing_instruments {
+        let ledger = ctx.existing_ledgers.get(&existing.id);
+        let current_quantity = ledger.map(|l| net_quantity(l)).unwrap_or(0);
+
+        let new_contribution: i64 = new_rows
+            .iter()
+            .filter(|row| existing.matches(&row.instrument))
+            .map(mapped_row_quantity)
+            .sum();
+
+        let predicted_quantity = match &mode {
+            GuardMode::Append => predicted_quantity_append(current_quantity, new_contribution),
+            GuardMode::Replace { excluded_ids, .. } => {
+                let batch_net = batch_net_by_instrument
+                    .get(&existing.id)
+                    .copied()
+                    .unwrap_or(0);
+                predicted_quantity_replace(
+                    current_quantity,
+                    batch_net,
+                    new_contribution,
+                    excluded_ids.contains(&existing.id),
+                )
+            }
+        };
+
+        guard_instruments.push(GuardInstrument {
+            instrument_id: existing.id,
+            asset_key: existing.asset_key(),
+            symbol: existing.symbol.clone(),
+            conviction: conviction_by_id
+                .get(&existing.id)
+                .copied()
+                .unwrap_or(ConvictionLevel::Other),
+            current_quantity,
+            predicted_quantity,
+        });
+    }
+
+    Ok(closing_convicted_positions(&guard_instruments))
+}
+
+fn parse_asset_key_set(raw: &Option<String>) -> BTreeSet<String> {
+    raw.as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Validate the user's keep/clear choices against the closing set and return the
+/// instrument ids whose conviction should be cleared to `Other` at commit.
+///
+/// Every closing asset key must be covered by exactly one of keep/clear; an
+/// uncovered key, or a key marked both, rejects the commit. Extra keys that no
+/// longer close a position (e.g. after a re-preview) are ignored.
+fn resolve_conviction_choices(
+    closing: &[ClosingConvictedPosition],
+    params: &CommitParams,
+) -> Result<BTreeSet<i64>, ApiError> {
+    if closing.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+
+    // Only choices for the currently-closing set matter; keys that no longer
+    // close a position (e.g. after a re-preview) are ignored, including for the
+    // conflict check, so a stale key cannot spuriously reject the commit.
+    let required: BTreeSet<String> = closing
+        .iter()
+        .map(|position| position.asset_key.clone())
+        .collect();
+    let keep: BTreeSet<String> = parse_asset_key_set(&params.conviction_keep)
+        .intersection(&required)
+        .cloned()
+        .collect();
+    let to_other: BTreeSet<String> = parse_asset_key_set(&params.conviction_to_other)
+        .intersection(&required)
+        .cloned()
+        .collect();
+
+    let conflicting: Vec<String> = keep.intersection(&to_other).cloned().collect();
+    if !conflicting.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "conviction_choice_conflict",
+            "an asset key was marked both keep and change-to-other".to_string(),
+        )
+        .with_details(serde_json::json!({ "asset_keys": conflicting })));
+    }
+
+    let covered: BTreeSet<String> = keep.union(&to_other).cloned().collect();
+    let missing: Vec<serde_json::Value> = closing
+        .iter()
+        .filter(|position| !covered.contains(&position.asset_key))
+        .map(|position| {
+            serde_json::json!({
+                "instrument_id": position.instrument_id,
+                "asset_key": position.asset_key,
+                "symbol": position.symbol,
+            })
+        })
+        .collect();
+    if !missing.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "conviction_choice_required",
+            "closing convicted positions require a keep or change-to-other choice".to_string(),
+        )
+        .with_details(serde_json::json!({ "closing_positions": missing })));
+    }
+
+    Ok(closing
+        .iter()
+        .filter(|position| to_other.contains(&position.asset_key))
+        .map(|position| position.instrument_id)
+        .collect())
 }
 
 #[cfg(test)]

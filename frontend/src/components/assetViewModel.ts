@@ -1,4 +1,6 @@
 import type {
+  Conviction,
+  ConvictionTarget,
   GainsRow,
   Holding,
   Instrument,
@@ -234,6 +236,39 @@ export function tilesView(
     quantity: gain.quantity,
     averageCost: averageCostBase(holding),
   };
+}
+
+export interface ConvictionPanelView {
+  /** Saved conviction for the instrument (the source of truth for the editor). */
+  conviction: Conviction;
+  /** Pool-wide target for the current open holding, or null for closed /
+   * no-position instruments which have no current target. */
+  target: ConvictionTarget | null;
+}
+
+export function convictionPanelView(
+  instrument: Instrument,
+  holding: Holding | null,
+): ConvictionPanelView {
+  return {
+    conviction: instrument.conviction,
+    target: holding?.conviction_target ?? null,
+  };
+}
+
+/**
+ * Reset is offered only when the saved conviction differs from the baseline
+ * captured when the page first loaded for the current instrument.
+ *
+ * The baseline itself is held as component state keyed on the instrument id
+ * (the Asset Detail panel remounts per id), so it is re-captured on navigation
+ * and discarded on unmount without any render-time bookkeeping here.
+ */
+export function convictionResetVisible(
+  baseline: Conviction,
+  saved: Conviction,
+): boolean {
+  return baseline !== saved;
 }
 
 export function headerStatus(

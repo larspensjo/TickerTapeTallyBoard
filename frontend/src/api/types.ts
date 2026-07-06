@@ -1,6 +1,14 @@
 export type TransactionType = "Buy" | "Sell" | "Split" | "Dividend";
 export type InstrumentType = "Stock" | "Etf" | "Fund";
 export type ReturnMethod = "xirr" | "simple" | "modified_dietz";
+export type Conviction = "Other" | "Low" | "Medium" | "High";
+export type TargetStatus =
+  | "below"
+  | "on_target"
+  | "above"
+  | "no_target"
+  | "excluded_unavailable"
+  | "unavailable";
 
 export type AvailabilityValue<T> =
   | { status: "available"; value: T }
@@ -16,6 +24,15 @@ export interface Instrument {
   name: string;
   type: InstrumentType;
   currency: string;
+  conviction: Conviction;
+}
+
+export interface ConvictionTarget {
+  conviction: Conviction;
+  status: TargetStatus;
+  target_value_base: MoneyValue;
+  target_gap_base: MoneyValue;
+  target_gap_percent: PercentValue;
 }
 
 export interface Transaction {
@@ -60,6 +77,7 @@ export interface Holding {
     unrealized_gain_percent: PercentValue;
     day_change_base: MoneyValue;
   } | null;
+  conviction_target: ConvictionTarget;
 }
 
 export interface PriceSnapshot {
@@ -325,6 +343,13 @@ export interface ImportAssetGroup {
   is_new_instrument: boolean;
 }
 
+export interface ConvictionClosePosition {
+  instrument_id: number;
+  asset_key: string;
+  symbol: string;
+  conviction: Conviction;
+}
+
 export interface ImportPreview {
   metadata: { title: string; date_from: string; date_to: string } | null;
   counts: ImportCounts;
@@ -338,6 +363,9 @@ export interface ImportPreview {
   replace_candidate_batch_id: number | null;
   /** Non-blocking warning when multiple live Avanza batches exist. */
   replace_candidate_warning: string | null;
+  /** Convicted open positions this import would close; each needs a keep/clear
+   * choice before commit. */
+  conviction_close_positions: ConvictionClosePosition[];
 }
 
 export interface ImportResult {

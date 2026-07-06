@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { apiGet, apiSend, apiSendBytes } from "./client";
 import type {
+  Conviction,
   DateRange,
   GainsResponse,
   HealthResponse,
@@ -154,6 +155,57 @@ export function useUpsertInstrument() {
   });
 }
 
+export interface ConvictionChange {
+  instrument_id: number;
+  conviction: Conviction;
+}
+
+/**
+ * Save one instrument's conviction (Asset Detail). Conviction is portfolio
+ * metadata, so only instruments and holdings are invalidated — not gains,
+ * price status, or value history.
+ */
+export function useUpdateInstrumentConviction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      instrumentId,
+      conviction,
+    }: {
+      instrumentId: number;
+      conviction: Conviction;
+    }) =>
+      apiSend<Instrument>(
+        "PUT",
+        `/api/instruments/${instrumentId}/conviction`,
+        { conviction },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
+      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+    },
+  });
+}
+
+/**
+ * Apply several conviction changes at once (Holdings apply-all). The backend
+ * validates every id and writes them in one transaction; targets are pool-wide,
+ * so holdings must refetch after applying.
+ */
+export function useUpdateInstrumentConvictions() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (changes: ConvictionChange[]) =>
+      apiSend<Instrument[]>("PUT", "/api/instruments/convictions", { changes }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
+      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+    },
+  });
+}
+
 export function useCreateTransaction() {
   const queryClient = useQueryClient();
 
@@ -224,6 +276,8 @@ export function useCommitImport() {
       exclude,
       mode,
       replaceBatchId,
+      convictionKeep,
+      convictionToOther,
     }: {
       source: ImportSource;
       file: ArrayBuffer;
@@ -231,6 +285,8 @@ export function useCommitImport() {
       exclude: string[];
       mode?: "replace" | "append";
       replaceBatchId?: number;
+      convictionKeep?: string[];
+      convictionToOther?: string[];
     }) => {
       const params = new URLSearchParams();
 
@@ -248,6 +304,14 @@ export function useCommitImport() {
 
       if (replaceBatchId !== undefined) {
         params.set("replace_batch_id", String(replaceBatchId));
+      }
+
+      if (convictionKeep && convictionKeep.length > 0) {
+        params.set("conviction_keep", convictionKeep.join(","));
+      }
+
+      if (convictionToOther && convictionToOther.length > 0) {
+        params.set("conviction_to_other", convictionToOther.join(","));
       }
 
       const query = params.toString();

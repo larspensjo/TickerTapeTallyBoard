@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   useGains,
@@ -7,15 +7,21 @@ import {
   useInstruments,
   usePriceStatus,
   useTransactions,
+  useUpdateInstrumentConviction,
 } from "../api/queries";
 import type {
+  Conviction,
+  ConvictionTarget,
   GainsRow,
+  Holding,
   Instrument,
   PriceStatusInstrument,
   Transaction,
 } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
 import {
+  convictionPanelView,
+  convictionResetVisible,
   deriveAssetData,
   headerStatus,
   parseInstrumentId,
@@ -26,15 +32,24 @@ import {
 } from "./assetViewModel";
 import { GainsWaterfall } from "./GainsWaterfall";
 import {
+  CONVICTION_OPTIONS,
+  convictionLabel,
+  isTargetAlert,
+  targetGapTone,
+  targetStatusLabel,
+} from "./holdingsConviction";
+import {
   instrumentPriceSeries,
   tradeMarkers,
 } from "./instrumentChartViewModel";
 import { type ChartTradeMarker, TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
+import { useAppMode } from "./useAppMode";
 import {
   formatGroupedNumber,
   freshnessLabel,
   freshnessTone,
+  reasonSummary,
   SummaryAvailabilityValue,
 } from "./valuationDisplay";
 import { waterfallView } from "./waterfallViewModel";
@@ -109,6 +124,7 @@ export function AssetView() {
 
   const instruments = instrumentsQuery.data ?? [];
   const gain = data.kind === "position" ? data.gain : null;
+  const holding = data.kind === "position" ? data.holding : null;
   const splits = splitEvents(data.transactions);
 
   return (
@@ -117,6 +133,12 @@ export function AssetView() {
         instrument={data.instrument}
         gain={gain}
         priceStatus={data.priceStatus}
+      />
+
+      <AssetConvictionPanel
+        key={data.instrument.id}
+        instrument={data.instrument}
+        holding={holding}
       />
 
       {data.kind === "position" ? (
@@ -189,6 +211,147 @@ function AssetHeader({
       </div>
       <p className="asset-meta">{meta}</p>
     </header>
+  );
+}
+
+function AssetConvictionPanel({
+  instrument,
+  holding,
+}: {
+  instrument: Instrument;
+  holding: Holding | null;
+}) {
+  const { canMutate } = useAppMode();
+  const save = useUpdateInstrumentConviction();
+  const { conviction, target } = convictionPanelView(instrument, holding);
+
+  // The panel remounts per instrument id (key at the call site), so this
+  // captures the navigation-time conviction once and keeps it across saves as
+  // the reset baseline.
+  const [baseline] = useState<Conviction>(conviction);
+  const showReset = convictionResetVisible(baseline, conviction);
+
+  const disabled = !canMutate || save.isPending;
+  // Show the in-flight selection immediately; the select is otherwise bound to
+  // the saved value, which only updates once the instruments refetch lands.
+  const shownConviction =
+    save.isPending && save.variables ? save.variables.conviction : conviction;
+
+  return (
+    <section
+      className="panel asset-panel asset-conviction"
+      aria-label="Conviction"
+    >
+      <h2>Conviction</h2>
+      <div className="conviction-controls">
+        <label className="conviction-field">
+          <span className="conviction-field-label">Conviction</span>
+          <select
+            className="conviction-select"
+            value={shownConviction}
+            disabled={disabled}
+            aria-label={`Conviction for ${instrument.symbol}`}
+            onChange={(event) =>
+              save.mutate({
+                instrumentId: instrument.id,
+                conviction: event.target.value as Conviction,
+              })
+            }
+          >
+            {CONVICTION_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {convictionLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {showReset ? (
+          <button
+            type="button"
+            className="button secondary"
+            disabled={disabled}
+            onClick={() =>
+              save.mutate({
+                instrumentId: instrument.id,
+                conviction: baseline,
+              })
+            }
+          >
+            Reset
+          </button>
+        ) : null}
+      </div>
+      {save.isError ? (
+        <p className="asset-subtle down" role="alert">
+          Could not save conviction: {save.error.message}
+        </p>
+      ) : null}
+      <AssetConvictionTarget target={target} />
+    </section>
+  );
+}
+
+function AssetConvictionTarget({
+  target,
+}: {
+  target: ConvictionTarget | null;
+}) {
+  if (!target || target.status === "no_target") {
+    return <p className="asset-subtle">No current target</p>;
+  }
+
+  if (isTargetAlert(target.status)) {
+    const reasons =
+      target.target_value_base.status === "unavailable"
+        ? target.target_value_base.reasons
+        : [];
+    return (
+      <p className="asset-subtle">
+        <span
+          className="status-chip warning"
+          title={reasons.length > 0 ? reasonSummary(reasons) : undefined}
+        >
+          {targetStatusLabel(target.status)}
+        </span>{" "}
+        Target unavailable
+      </p>
+    );
+  }
+
+  const gap = target.target_gap_base;
+  const gapPercent = target.target_gap_percent;
+  const gapTone =
+    gap.status === "available" ? targetGapTone(gap.value) : "flat";
+
+  return (
+    <dl className="data-list">
+      <DataRow label="Target value">
+        <SummaryAvailabilityValue
+          value={target.target_value_base}
+          prefix="SEK "
+          tone="plain"
+        />
+      </DataRow>
+      <DataRow label="Target gap">
+        {gap.status === "available" ? (
+          <span className="data-value">
+            <span className={`number ${gapTone}`}>
+              SEK {formatGroupedNumber(gap.value)}
+            </span>{" "}
+            {gapPercent.status === "available" ? (
+              <span className={`number ${gapTone}`}>
+                ({formatGroupedNumber(gapPercent.value)}%)
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          <span className="asset-subtle">—</span>
+        )}
+      </DataRow>
+      <DataRow label="Status">
+        <span className="status-chip">{targetStatusLabel(target.status)}</span>
+      </DataRow>
+    </dl>
   );
 }
 

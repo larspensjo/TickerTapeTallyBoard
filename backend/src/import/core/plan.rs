@@ -27,7 +27,7 @@ pub struct ExistingInstrument {
 }
 
 impl ExistingInstrument {
-    fn matches(&self, key: &InstrumentKey) -> bool {
+    pub(crate) fn matches(&self, key: &InstrumentKey) -> bool {
         match (&self.isin, &key.isin) {
             (Some(existing), Some(requested)) => existing.eq_ignore_ascii_case(requested),
             _ => {

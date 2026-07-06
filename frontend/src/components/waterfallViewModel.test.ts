@@ -17,6 +17,7 @@ function openGain(overrides: Partial<GainsRow> = {}): GainsRow {
       name: "Arista",
       type: "Stock",
       currency: "USD",
+      conviction: "Other",
     },
     quantity: 100,
     cost_basis_native: "0",

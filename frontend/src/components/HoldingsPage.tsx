@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { useHoldings } from "../api/queries";
+import { useHoldings, useUpdateInstrumentConvictions } from "../api/queries";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { HoldingsTable } from "./HoldingsTable";
+import { useAppMode } from "./useAppMode";
 
 export function HoldingsPage() {
   const [filter, setFilter] = useState("");
   const holdingsQuery = useHoldings();
+  const { canMutate } = useAppMode();
+  const applyConvictions = useUpdateInstrumentConvictions();
 
   return (
     <section className="board-grid single">
@@ -27,6 +30,16 @@ export function HoldingsPage() {
             holdings={holdingsQuery.data ?? []}
             filter={filter}
             onFilterChange={setFilter}
+            canEditConviction={canMutate}
+            onApplyConvictions={async (changes) => {
+              await applyConvictions.mutateAsync(changes);
+            }}
+            isApplyingConvictions={applyConvictions.isPending}
+            applyError={
+              applyConvictions.isError
+                ? `Could not apply conviction changes: ${applyConvictions.error.message}`
+                : null
+            }
           />
         </AsyncBoundary>
       </article>

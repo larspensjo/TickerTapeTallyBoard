@@ -10,6 +10,7 @@ function inst(symbol: string, exchange = "NASDAQ"): Instrument {
     name: symbol,
     type: "Stock",
     currency: "USD",
+    conviction: "Other",
   };
 }
 
@@ -138,6 +139,7 @@ describe("treemapViewModel", () => {
           name: "Microsoft Corporation",
           type: "Stock",
           currency: "USD",
+          conviction: "Other",
         },
         avail("1000.00"),
       ),

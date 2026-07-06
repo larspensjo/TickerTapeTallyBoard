@@ -18,6 +18,7 @@ function inst(symbol: string, exchange = "NYSE", name = symbol): Instrument {
     name,
     type: "Stock",
     currency: "USD",
+    conviction: "Other",
   };
 }
 
