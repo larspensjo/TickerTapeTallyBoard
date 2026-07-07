@@ -12,16 +12,77 @@ substitute:
 
 ```text
 1. Scope        (main thread, with the user)
-2. Implement    (codex:codex-rescue: GPT-5.4-Mini, effort high, write)
+2. Implement    (Codex GPT-5.4-Mini, effort high, write — direct dispatch)
      ⟲ pause on open question → relay to user → resume with answers
 3. Review       (implementation-reviewer agent: Opus high, or Fable on request)
 4. Relay        (findings and questions to the user)
-5. Apply review (codex:codex-rescue: GPT-5.5, effort high, write)
+5. Apply review (Codex GPT-5.5, effort high, write — direct dispatch)
 6. Verify       (main thread: repo completion checks)
 ```
 
 The review is **single-shot**: one reviewer run, one apply run, then
 verification — no re-review loop.
+
+## Dispatching Codex (read before steps 2 and 5)
+
+Codex runs through the `codex` plugin's companion script, and the companion
+**hosts the Codex session in-process** — its `task` command does not detach,
+despite logging "Queued for background execution". If the process that invoked
+it dies, the run dies silently while the job registry still says `running`.
+Two things kill it in practice: foreground tool-call timeouts (2–10 min,
+vs 15–20+ min implementation runs) and output pipelines that stop early
+(`Select-Object -First N`, `head`). Do **not** dispatch through the
+`codex:codex-rescue` agent — its Bash call inherits those timeouts and its own
+contract forbids it from polling or fetching results, so long runs come back
+as "(no output)" with the work orphaned.
+
+Dispatch recipe — PowerShell tool, `run_in_background: true`, from the repo
+root (state is keyed by workspace):
+
+```powershell
+$env:CLAUDE_PLUGIN_DATA = "$HOME\.claude\plugins\data\codex-openai-codex"
+$companion = (Get-ChildItem "$HOME\.claude\plugins\cache\openai-codex\codex\*\scripts\codex-companion.mjs" |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$prompt = @'
+--model gpt-5.4-mini --effort high --write <task text from the step template>
+'@
+node $companion task $prompt
+```
+
+- `CLAUDE_PLUGIN_DATA` is required. Without it the companion silently reads an
+  empty temp-dir registry: `status` shows "No jobs recorded yet" and `cancel`
+  says "No job found" for jobs that exist.
+- Send the full output to the background task's file; never pipe it through
+  anything that can terminate the stream early.
+- The background command exits exactly when Codex finishes; the harness
+  notifies you and the output file ends with the result. Codex does not always
+  render the requested `## Implementation complete` heading literally (bold
+  `**Implementation complete**` happens) — search the tail for the phrase, not
+  the exact markdown.
+- To resume a paused session, prepend `--resume` to the flags in the same
+  recipe. Only resume a job whose status has left `running`.
+- Windows: invoke the companion via PowerShell, never Git Bash — MSYS
+  path-mangles Windows-style flags in the companion's child commands
+  (`taskkill /PID` becomes `C:/Program Files/Git/PID`).
+
+### Liveness and recovery
+
+Ground truth is never the dispatcher's words. It is, in order:
+`$env:CLAUDE_PLUGIN_DATA\state\<repo-name>-<hash>\state.json` (job status,
+host pid, log path), the job's log file, and `git status`.
+
+- The job log records shell commands and assistant messages only — **file
+  edits never appear in it**. A quiet log with a moving working tree is a
+  healthy run mid-edit.
+- A job marked `running` whose host node pid no longer exists is dead,
+  whatever the status field says.
+- Stall test: log *and* working tree both quiet for ~15 min, or a dead host
+  pid → `node $companion cancel <task-id>`, then dispatch a **fresh** task
+  whose prompt states what is already in the tree, which files are reviewed
+  and must not change, and to finish from there. Never `--resume` a job still
+  marked `running` — the runtime rejects it and records a failed duplicate.
+- Before every dispatch, check `node $companion status` and cancel leftover
+  `running` jobs for this workspace so zombies cannot race a new task.
 
 ## Step 0: Pick the review model
 
@@ -46,12 +107,10 @@ Establish exactly what is being implemented before any Codex call:
 
 ## Step 2: Implement (GPT-5.4-Mini, pause-on-question)
 
-Dispatch `codex:codex-rescue` (synchronously) with this template. The flags are
-routing controls; keep them exact:
+Dispatch with the recipe above, flags `--model gpt-5.4-mini --effort high
+--write`, followed by this task text:
 
 ```text
---model gpt-5.4-mini --effort high --wait --write
-
 Implementation task.
 
 Implement: <scope from step 1 — spec text or plan path plus the slice,
@@ -87,11 +146,11 @@ question to the user — the stakes, the options, and a recommendation. Codex
 supplies these; add your own analysis where its explanation is thin, and if
 you disagree with its recommendation, say so and why rather than passing it
 through silently. Use AskUserQuestion with the recommended option first when
-the options are enumerable. Then resume the same Codex session:
+the options are enumerable. Then resume the same Codex session — dispatch
+recipe as above with flags `--resume --model gpt-5.4-mini --effort high
+--write` and this task text:
 
 ```text
---resume --model gpt-5.4-mini --effort high --wait --write
-
 The user answered your questions:
 <question → answer, one per line>
 
@@ -99,8 +158,10 @@ Continue the implementation under the same pause contract.
 ```
 
 This pause/resume loop may repeat as often as genuine questions arise — it is
-the one loop this workflow allows. If Codex returns nothing or an error, tell
-the user and offer a retry; never quietly continue without an implementation.
+the one loop this workflow allows. If the output ends with neither contract
+section, do not assume failure or success: follow **Liveness and recovery**
+above to find out what actually happened, tell the user, and recover. Never
+quietly continue without an implementation.
 
 ## Step 3: Review (Claude, Opus high)
 
@@ -123,12 +184,11 @@ verification — do not spend a GPT-5.5 call applying nothing.
 
 ## Step 5: Apply the review (GPT-5.5)
 
-Dispatch `codex:codex-rescue` with a **fresh** task (not --resume — this is a
-different model doing a different job; the review text is its context):
+Dispatch with the recipe above as a **fresh** task (not --resume — this is a
+different model doing a different job; the review text is its context), flags
+`--model gpt-5.5 --effort high --write` and this task text:
 
 ```text
---model gpt-5.5 --effort high --wait --write
-
 Apply code-review findings to the uncommitted changes in the working tree.
 
 Task context: <one-paragraph scope from step 1>
@@ -144,8 +204,8 @@ Questions for the user" (stakes, options, recommendation per question).
 When done, end with "## Fixes applied" listing what changed per finding.
 ```
 
-A pause here is handled the same way as in step 2, resuming with
-`--resume --model gpt-5.5 --effort high --wait --write`.
+A pause here is handled the same way as in step 2, resuming with flags
+`--resume --model gpt-5.5 --effort high --write`.
 
 ## Step 6: Verify and wrap up
 
