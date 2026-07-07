@@ -456,10 +456,10 @@ table {
 }
 
 .holdings-table table {
-  /* Budget for all 11 columns (7 base + 4 conviction/target). Horizontal
-     scroll in `.table-wrap` absorbs the overflow instead of compressing the
-     Instrument name. */
-  min-width: 1320px;
+  /* Budget for 7 consolidated columns. Horizontal scroll in `.table-wrap`
+     absorbs any residual overflow instead of compressing the Instrument
+     name. */
+  min-width: 980px;
 }
 
 /* Keep the Instrument identifier wide enough for full names; the numeric
@@ -676,6 +676,13 @@ tbody tr:last-child td {
 
 .metric-subtle .number {
   font-size: inherit;
+}
+
+.target-substack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
 }
 
 .gains-totals {
