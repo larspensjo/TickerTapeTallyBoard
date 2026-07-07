@@ -190,6 +190,11 @@ function valueCell(holding: Holding, percentage: PortfolioPercentage) {
 
 function pnlCell(holding: Holding) {
   const valuation = holding.valuation;
+  // Gating on market_value_base availability is equivalent to gating on gain
+  // availability: the backend derives unrealized_gain_base from market value
+  // (backend/src/domain/valuation.rs), so an available gain with an unavailable
+  // market value cannot occur. This keeps the guard aligned with the `pnl`
+  // column sorting on unrealized_gain_base.
   if (!valuation || !isAvailable(valuation.market_value_base)) {
     return valuationMissingChip(holding);
   }
@@ -770,7 +775,7 @@ export function HoldingsTable({
                   </span>
                 </div>
               </td>
-              <td>{holdingsSummaryPnlCell(summary)}</td>
+              <td className="number">{holdingsSummaryPnlCell(summary)}</td>
               {/* conviction, target: no totals */}
               <td />
               <td />

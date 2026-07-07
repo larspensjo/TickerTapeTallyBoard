@@ -166,4 +166,24 @@ describe("holdings consolidated columns", () => {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
     }
   });
+
+  it("still renders regrouped sub-content (portfolio % and target status)", () => {
+    const held: Holding = {
+      ...holding(1, "Alpha Corp", "ALPHA", "1000.00"),
+      conviction_target: {
+        conviction: "High",
+        status: "below",
+        target_value_base: { status: "available", value: "2000.00" },
+        target_gap_base: { status: "available", value: "-1000.00" },
+        target_gap_percent: { status: "available", value: "-50.0" },
+      },
+    };
+
+    renderHoldingsTable([held]);
+
+    // Portfolio-% sub-line: a single valued holding is 100% of the portfolio.
+    expect(screen.getAllByText("100.0%").length).toBeGreaterThan(0);
+    // Target-status chip text (unique to the row; the totals row has no chip).
+    expect(screen.getByText("Below")).toBeTruthy();
+  });
 });
