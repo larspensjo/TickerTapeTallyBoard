@@ -77,18 +77,14 @@ afterEach(() => {
 
 describe("holdings sorting persistence", () => {
   it("defaults to market value descending when nothing valid is stored", () => {
-    expect(loadHoldingsSorting()).toEqual([
-      { id: "market_value_base", desc: true },
-    ]);
+    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
 
     localStorage.setItem(
       HOLDINGS_SORTING_KEY,
       JSON.stringify([{ id: "removed_column", desc: true }]),
     );
 
-    expect(loadHoldingsSorting()).toEqual([
-      { id: "market_value_base", desc: true },
-    ]);
+    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
   });
 
   it("round-trips a valid sorting selection through localStorage", () => {
@@ -99,27 +95,20 @@ describe("holdings sorting persistence", () => {
     expect(loadHoldingsSorting()).toEqual(sorting);
   });
 
-  it("accepts the new conviction and target sortable columns", () => {
-    for (const id of [
-      "conviction",
-      "target_value_base",
-      "target_gap_base",
-      "target_status",
-    ]) {
+  it("accepts the consolidated conviction and target sortable columns", () => {
+    for (const id of ["conviction", "target"]) {
       const sorting = [{ id, desc: true }];
       saveHoldingsSorting(sorting);
       expect(loadHoldingsSorting()).toEqual(sorting);
     }
   });
 
-  it("rejects an unknown sortable column id", () => {
+  it("rejects a retired sortable column id", () => {
     localStorage.setItem(
       HOLDINGS_SORTING_KEY,
-      JSON.stringify([{ id: "not_a_column", desc: true }]),
+      JSON.stringify([{ id: "target_gap_base", desc: true }]),
     );
-    expect(loadHoldingsSorting()).toEqual([
-      { id: "market_value_base", desc: true },
-    ]);
+    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
   });
 
   it("applies saved sorting when the table mounts", () => {
@@ -147,5 +136,34 @@ describe("holdings sorting persistence", () => {
     expect(
       JSON.parse(localStorage.getItem(HOLDINGS_SORTING_KEY) ?? "null"),
     ).toEqual([{ id: "instrument", desc: false }]);
+  });
+});
+
+describe("holdings consolidated columns", () => {
+  it("renders the seven consolidated column headers", () => {
+    renderHoldingsTable([holding(1, "Alpha Corp", "ALPHA", "100.00")]);
+
+    for (const name of [
+      "Instrument",
+      "Qty",
+      "Cost",
+      "Value (SEK)",
+      "P&L",
+      "Conviction",
+      "Target (SEK)",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
+
+    for (const gone of [
+      "Avg cost/share",
+      "Cost basis",
+      "Portfolio %",
+      "P&L hint",
+      "Target gap",
+      "Target status",
+    ]) {
+      expect(screen.queryByRole("button", { name: gone })).toBeNull();
+    }
   });
 });

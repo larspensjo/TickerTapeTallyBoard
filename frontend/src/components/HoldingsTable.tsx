@@ -28,10 +28,8 @@ import {
   holdingConvictionSearchText,
   isTargetAlert,
   pendingConvictionChanges,
-  targetGapField,
   targetGapTone,
   targetStatusLabel,
-  targetStatusRank,
   targetValueField,
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
@@ -60,18 +58,15 @@ interface RowView {
 const columnHelper = createColumnHelper<RowView>();
 type PortfolioPercentage = AvailabilityValue<string>;
 const HOLDINGS_SORTING_KEY = "holdings.sorting";
-const DEFAULT_SORTING: SortingState = [{ id: "market_value_base", desc: true }];
+const DEFAULT_SORTING: SortingState = [{ id: "value", desc: true }];
 const SORTABLE_COLUMN_IDS = new Set([
   "instrument",
   "quantity",
-  "average_cost_native",
-  "cost_basis_native",
-  "market_value_base",
-  "portfolio_percentage",
+  "cost",
+  "value",
+  "pnl",
   "conviction",
-  "target_value_base",
-  "target_gap_base",
-  "target_status",
+  "target",
 ]);
 
 interface HoldingsSummary {
@@ -166,31 +161,47 @@ function valuationMissingChip(holding: Holding) {
   );
 }
 
-function currentValueCell(holding: Holding) {
-  const valuation = holding.valuation;
-  if (!valuation || !isAvailable(valuation.market_value_base)) {
-    return valuationMissingChip(holding);
-  }
-
-  return <AvailabilityValueCell value={valuation.market_value_base} />;
-}
-
-function pnlHintCell(holding: Holding) {
-  const valuation = holding.valuation;
-  if (!valuation || !isAvailable(valuation.market_value_base)) {
-    return valuationMissingChip(holding);
-  }
-
+function costCell(holding: Holding) {
+  const currency = holding.instrument.currency;
   return (
     <div className="metric-stack">
+      <FormattedNumber value={holding.average_cost_native} prefix={currency} />
       <span className="metric-subtle">
-        P&amp;L{" "}
-        <AvailabilityValueCell
-          value={valuation.unrealized_gain_base}
-          prefix="SEK "
-          tone="signed"
-          unavailableLabel="Missing"
-        />{" "}
+        <FormattedNumber value={holding.cost_basis_native} prefix={currency} />
+      </span>
+    </div>
+  );
+}
+
+function valueCell(holding: Holding, percentage: PortfolioPercentage) {
+  const valuation = holding.valuation;
+  if (!valuation || !isAvailable(valuation.market_value_base)) {
+    return valuationMissingChip(holding);
+  }
+  return (
+    <div className="metric-stack">
+      <AvailabilityValueCell value={valuation.market_value_base} />
+      <span className="metric-subtle">
+        {portfolioPercentageCell(percentage)}
+      </span>
+    </div>
+  );
+}
+
+function pnlCell(holding: Holding) {
+  const valuation = holding.valuation;
+  if (!valuation || !isAvailable(valuation.market_value_base)) {
+    return valuationMissingChip(holding);
+  }
+  return (
+    <div className="metric-stack">
+      <AvailabilityValueCell
+        value={valuation.unrealized_gain_base}
+        prefix="SEK "
+        tone="signed"
+        unavailableLabel="Missing"
+      />
+      <span className="metric-subtle">
         <AvailabilityValueCell
           value={valuation.unrealized_gain_percent}
           suffix="%"
@@ -202,15 +213,7 @@ function pnlHintCell(holding: Holding) {
   );
 }
 
-const numericColumns = new Set([
-  "market_value_base",
-  "quantity",
-  "average_cost_native",
-  "cost_basis_native",
-  "portfolio_percentage",
-  "target_value_base",
-  "target_gap_base",
-]);
+const numericColumns = new Set(["quantity", "cost", "value", "pnl", "target"]);
 
 function marketValueNumber(holding: Holding): number | null {
   const marketValue = holding.valuation?.market_value_base;
@@ -464,6 +467,18 @@ function targetStatusCell(target: ConvictionTarget) {
   );
 }
 
+function targetCell(target: ConvictionTarget) {
+  return (
+    <div className="metric-stack">
+      {targetValueCell(target)}
+      <div className="metric-subtle target-substack">
+        {targetGapCell(target)}
+        {targetStatusCell(target)}
+      </div>
+    </div>
+  );
+}
+
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
   return [
     columnHelper.accessor((row) => row.holding.instrument.name, {
@@ -488,52 +503,37 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       cell: (info) => formatGroupedNumber(info.getValue()),
     }),
     columnHelper.accessor((row) => row.holding.average_cost_native, {
-      id: "average_cost_native",
-      header: "Avg cost/share",
-      cell: (info) => (
-        <FormattedNumber
-          value={info.getValue()}
-          prefix={info.row.original.holding.instrument.currency}
-        />
-      ),
-    }),
-    columnHelper.accessor((row) => row.holding.cost_basis_native, {
-      id: "cost_basis_native",
-      header: "Cost basis",
-      cell: (info) => (
-        <FormattedNumber
-          value={info.getValue()}
-          prefix={info.row.original.holding.instrument.currency}
-        />
-      ),
+      id: "cost",
+      header: "Cost",
+      cell: (info) => costCell(info.row.original.holding),
     }),
     columnHelper.accessor(
       (row) =>
         row.holding.valuation?.market_value_base ??
         unavailableValue("valuation_unavailable"),
       {
-        id: "market_value_base",
-        header: "Current value (SEK)",
+        id: "value",
+        header: "Value (SEK)",
         sortingFn: availabilitySortRows,
-        cell: (info) => currentValueCell(info.row.original.holding),
+        cell: (info) =>
+          valueCell(
+            info.row.original.holding,
+            portfolioPercentages.get(info.row.original.holding.instrument.id) ??
+              unavailableValue("valuation_unavailable"),
+          ),
       },
     ),
     columnHelper.accessor(
       (row) =>
-        portfolioPercentages.get(row.holding.instrument.id) ??
+        row.holding.valuation?.unrealized_gain_base ??
         unavailableValue("valuation_unavailable"),
       {
-        id: "portfolio_percentage",
-        header: "Portfolio %",
+        id: "pnl",
+        header: "P&L",
         sortingFn: availabilitySortRows,
-        cell: (info) => portfolioPercentageCell(info.getValue()),
+        cell: (info) => pnlCell(info.row.original.holding),
       },
     ),
-    columnHelper.display({
-      id: "pnl_hint",
-      header: "P&L hint",
-      cell: (info) => pnlHintCell(info.row.original.holding),
-    }),
     columnHelper.accessor(
       (row) => convictionRank(row.holding.instrument.conviction),
       {
@@ -549,30 +549,10 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
     columnHelper.accessor(
       (row) => targetValueField(row.holding.conviction_target),
       {
-        id: "target_value_base",
+        id: "target",
         header: "Target (SEK)",
         sortingFn: availabilitySortRows,
-        cell: (info) =>
-          targetValueCell(info.row.original.holding.conviction_target),
-      },
-    ),
-    columnHelper.accessor(
-      (row) => targetGapField(row.holding.conviction_target),
-      {
-        id: "target_gap_base",
-        header: "Target gap",
-        sortingFn: availabilitySortRows,
-        cell: (info) =>
-          targetGapCell(info.row.original.holding.conviction_target),
-      },
-    ),
-    columnHelper.accessor(
-      (row) => targetStatusRank(row.holding.conviction_target.status),
-      {
-        id: "target_status",
-        header: "Target status",
-        cell: (info) =>
-          targetStatusCell(info.row.original.holding.conviction_target),
+        cell: (info) => targetCell(info.row.original.holding.conviction_target),
       },
     ),
   ];
@@ -776,26 +756,22 @@ export function HoldingsTable({
               <th scope="row">Total</th>
               <td />
               <td />
-              <td />
               <td
                 className="number"
                 title={summaryTitle(summary.excludedMarketValueRows)}
               >
-                <AvailabilityValueCell
-                  value={summary.marketValueBase}
-                  prefix="SEK "
-                />
-              </td>
-              <td
-                className="number"
-                title={summaryTitle(summary.excludedMarketValueRows)}
-              >
-                {portfolioPercentageCell(summary.portfolioPercentage)}
+                <div className="metric-stack">
+                  <AvailabilityValueCell
+                    value={summary.marketValueBase}
+                    prefix="SEK "
+                  />
+                  <span className="metric-subtle">
+                    {portfolioPercentageCell(summary.portfolioPercentage)}
+                  </span>
+                </div>
               </td>
               <td>{holdingsSummaryPnlCell(summary)}</td>
-              {/* conviction, target, target gap, target status: no totals */}
-              <td />
-              <td />
+              {/* conviction, target: no totals */}
               <td />
               <td />
             </tr>
