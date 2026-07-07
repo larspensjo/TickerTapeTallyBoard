@@ -842,10 +842,50 @@ tbody tr:last-child td {
   font-size: inherit;
 }
 
-.target-substack {
+/* Diverging target-gap bar: zero axis in the middle, green fill growing right
+ * when above target, red fill growing left when below. Numbers live in the
+ * tooltip / Conviction column, not in this cell. */
+.target-gap-track {
+  position: relative;
+  width: 120px;
+  height: 12px;
+  margin-left: auto;
+  border-radius: 3px;
+  background: var(--surface-2);
+}
+
+.target-gap-axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--text-muted);
+}
+
+.target-gap-fill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+}
+
+.target-gap-fill.above {
+  left: 50%;
+  border-radius: 0 3px 3px 0;
+  background: var(--up);
+}
+
+.target-gap-fill.below {
+  right: 50%;
+  border-radius: 3px 0 0 3px;
+  background: var(--down);
+}
+
+/* Conviction column: the selector with the SEK target value beneath it. */
+.conviction-stack {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 2px;
 }
 

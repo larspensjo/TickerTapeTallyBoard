@@ -5,6 +5,7 @@ import type {
   Holding,
   TargetStatus,
 } from "../api/types";
+import { formatGroupedNumber, parseFiniteNumber } from "./valuationDisplay";
 
 /** Selectable conviction levels, ordered from lowest to highest weight. */
 export const CONVICTION_OPTIONS: Conviction[] = [
@@ -61,17 +62,60 @@ export function isTargetAlert(status: TargetStatus): boolean {
 }
 
 /**
- * Colour tone for the signed target gap. A negative gap means the holding is
- * below target (underweight, room to buy) and reads as `up`; a positive gap is
- * above target (overweight) and reads as `down`. This is intentionally the
- * opposite of P&L sign colouring.
+ * Target gaps follow plain sign colouring (`signedTone`): a positive gap means
+ * the holding is above target because it appreciated more than its peers and
+ * reads as `up`/green; a negative gap reads as `down`/red. This matches P&L
+ * colouring (decision log 2026-07-07, reversing the earlier inverted scheme).
  */
-export function targetGapTone(value: string): "up" | "down" | "flat" {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed === 0) {
-    return "flat";
+
+/** Full half-bar (and clamp point) of the target gap bar, in gap percent. */
+export const TARGET_GAP_BAR_CLAMP_PERCENT = 50;
+
+/**
+ * View model for the diverging target gap bar. `widthPercent` is the fill
+ * width as a percentage of the full track (0..50): the gap percent clamped to
+ * `TARGET_GAP_BAR_CLAMP_PERCENT`, mapped onto one half of the track.
+ */
+export interface TargetGapBar {
+  side: "above" | "below" | "on_target";
+  widthPercent: number;
+  tooltip: string;
+}
+
+/**
+ * Bar for a holding's target gap, or null when no gap can be computed
+ * (no target, excluded, or valuation unavailable) — those rows render an
+ * empty cell by design.
+ */
+export function targetGapBar(target: ConvictionTarget): TargetGapBar | null {
+  if (
+    target.target_gap_percent.status !== "available" ||
+    target.target_value_base.status !== "available" ||
+    target.target_gap_base.status !== "available"
+  ) {
+    return null;
   }
-  return parsed < 0 ? "up" : "down";
+
+  const gapPercent = parseFiniteNumber(target.target_gap_percent.value);
+  if (gapPercent === null) {
+    return null;
+  }
+
+  const magnitude = Math.min(
+    Math.abs(gapPercent),
+    TARGET_GAP_BAR_CLAMP_PERCENT,
+  );
+  const widthPercent = (magnitude / TARGET_GAP_BAR_CLAMP_PERCENT) * 50;
+  const side =
+    gapPercent === 0 ? "on_target" : gapPercent > 0 ? "above" : "below";
+
+  const tooltip = [
+    `Target SEK ${formatGroupedNumber(target.target_value_base.value)}`,
+    `Gap SEK ${formatGroupedNumber(target.target_gap_base.value)} (${formatGroupedNumber(target.target_gap_percent.value)}%)`,
+    targetStatusLabel(target.status),
+  ].join("\n");
+
+  return { side, widthPercent, tooltip };
 }
 
 /** The conviction a holding currently shows, honouring any staged (unsaved)
@@ -92,14 +136,10 @@ export function holdingConvictionSearchText(holding: Holding): string {
   ].join(" ");
 }
 
-/** Target field used for the "Target" sort column. */
-export function targetValueField(target: ConvictionTarget) {
-  return target.target_value_base;
-}
-
-/** Target field used for the "Target gap" sort column. */
-export function targetGapField(target: ConvictionTarget) {
-  return target.target_gap_base;
+/** Signed gap percent used for the "Target gap" sort column, so the order
+ * runs most-below -> most-above (rows without a gap sort as unavailable). */
+export function targetGapPercentField(target: ConvictionTarget) {
+  return target.target_gap_percent;
 }
 
 /**

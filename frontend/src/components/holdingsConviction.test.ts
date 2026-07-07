@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Conviction, Holding } from "../api/types";
+import type { Conviction, ConvictionTarget, Holding } from "../api/types";
 import {
   type ConvictionEdits,
   convictionEditsReducer,
@@ -9,7 +9,8 @@ import {
   hasConvictionEdits,
   holdingConvictionSearchText,
   pendingConvictionChanges,
-  targetGapTone,
+  targetGapBar,
+  targetGapPercentField,
   targetStatusRank,
 } from "./holdingsConviction";
 
@@ -131,11 +132,70 @@ describe("sort ranks and tones", () => {
       targetStatusRank("unavailable"),
     );
   });
+});
 
-  it("colours a below-target (negative) gap as up and above-target as down", () => {
-    expect(targetGapTone("-10.00")).toBe("up");
-    expect(targetGapTone("10.00")).toBe("down");
-    expect(targetGapTone("0.00")).toBe("flat");
+function target(
+  status: ConvictionTarget["status"],
+  value: string | null,
+  gap: string | null,
+  gapPercent: string | null,
+): ConvictionTarget {
+  return {
+    conviction: "High",
+    status,
+    target_value_base: value
+      ? { status: "available", value }
+      : { status: "unavailable", reasons: ["no_target"] },
+    target_gap_base: gap
+      ? { status: "available", value: gap }
+      : { status: "unavailable", reasons: ["no_target"] },
+    target_gap_percent: gapPercent
+      ? { status: "available", value: gapPercent }
+      : { status: "unavailable", reasons: ["no_target"] },
+  };
+}
+
+describe("target gap bar", () => {
+  it("puts an above-target gap on the right, proportional to the gap percent", () => {
+    const bar = targetGapBar(target("above", "2000.00", "500.00", "25.00"));
+    expect(bar).toEqual({
+      side: "above",
+      widthPercent: 25,
+      tooltip: "Target SEK 2,000.00\nGap SEK 500.00 (25.00%)\nAbove",
+    });
+  });
+
+  it("puts a below-target gap on the left", () => {
+    const bar = targetGapBar(target("below", "2000.00", "-717.00", "-35.85"));
+    expect(bar?.side).toBe("below");
+    expect(bar?.widthPercent).toBeCloseTo(35.85);
+  });
+
+  it("clamps gaps beyond +/-50% to a full half-bar", () => {
+    expect(
+      targetGapBar(target("above", "1000.00", "800.00", "80.00"))?.widthPercent,
+    ).toBe(50);
+    expect(
+      targetGapBar(target("below", "1000.00", "-900.00", "-90.00"))
+        ?.widthPercent,
+    ).toBe(50);
+  });
+
+  it("renders an on-target gap as the bare axis", () => {
+    const bar = targetGapBar(target("on_target", "1000.00", "0.00", "0.00"));
+    expect(bar?.side).toBe("on_target");
+    expect(bar?.widthPercent).toBe(0);
+  });
+
+  it("returns null when no gap can be computed", () => {
+    expect(targetGapBar(target("no_target", null, null, null))).toBeNull();
+  });
+
+  it("sorts the target column by the signed gap percent", () => {
+    const field = targetGapPercentField(
+      target("below", "2000.00", "-717.00", "-35.85"),
+    );
+    expect(field).toEqual({ status: "available", value: "-35.85" });
   });
 });
 

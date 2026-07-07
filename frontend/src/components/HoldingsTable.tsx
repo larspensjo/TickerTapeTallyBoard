@@ -26,11 +26,9 @@ import {
   convictionRank,
   effectiveConviction,
   holdingConvictionSearchText,
-  isTargetAlert,
   pendingConvictionChanges,
-  targetGapTone,
-  targetStatusLabel,
-  targetValueField,
+  targetGapBar,
+  targetGapPercentField,
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
 import {
@@ -395,91 +393,60 @@ function convictionCell(holding: Holding, meta: HoldingsTableMeta) {
   const saved = holding.instrument.conviction;
   const value = effectiveConviction(holding, meta.edits);
   const dirty = value !== saved;
+  const targetValue = holding.conviction_target.target_value_base;
   return (
-    <select
-      className={dirty ? "conviction-select dirty" : "conviction-select"}
-      value={value}
-      disabled={!meta.canEditConviction}
-      aria-label={`Conviction for ${holding.instrument.symbol}`}
-      title={dirty ? `Unsaved change from ${saved}` : undefined}
-      onChange={(event) =>
-        meta.dispatchEdits({
-          type: "stage",
-          instrumentId: holding.instrument.id,
-          saved,
-          conviction: event.target.value as Conviction,
-        })
-      }
-    >
-      {CONVICTION_OPTIONS.map((option) => (
-        <option key={option} value={option}>
-          {convictionLabel(option)}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function targetValueCell(target: ConvictionTarget) {
-  if (target.target_value_base.status === "available") {
-    return (
-      <AvailabilityValueCell value={target.target_value_base} prefix="SEK " />
-    );
-  }
-
-  // No target / excluded / unavailable: the Target status column carries the
-  // reason, so keep this cell quiet rather than a warning fill.
-  return <span className="metric-subtle">--</span>;
-}
-
-function targetGapCell(target: ConvictionTarget) {
-  const gap = target.target_gap_base;
-  if (gap.status !== "available") {
-    return <span className="metric-subtle">--</span>;
-  }
-
-  const tone = targetGapTone(gap.value);
-  const percent = target.target_gap_percent;
-  return (
-    <div className="metric-stack">
-      <span className={`number ${tone}`}>
-        <FormattedNumber value={gap.value} prefix="SEK " />
-      </span>
-      {percent.status === "available" ? (
+    <div className="conviction-stack">
+      <select
+        className={dirty ? "conviction-select dirty" : "conviction-select"}
+        value={value}
+        disabled={!meta.canEditConviction}
+        aria-label={`Conviction for ${holding.instrument.symbol}`}
+        title={dirty ? `Unsaved change from ${saved}` : undefined}
+        onChange={(event) =>
+          meta.dispatchEdits({
+            type: "stage",
+            instrumentId: holding.instrument.id,
+            saved,
+            conviction: event.target.value as Conviction,
+          })
+        }
+      >
+        {CONVICTION_OPTIONS.map((option) => (
+          <option key={option} value={option}>
+            {convictionLabel(option)}
+          </option>
+        ))}
+      </select>
+      {targetValue.status === "available" ? (
         <span className="metric-subtle">
-          <span className={`number ${tone}`}>
-            <FormattedNumber value={percent.value} suffix="%" />
-          </span>
+          <FormattedNumber value={targetValue.value} prefix="SEK " />
         </span>
       ) : null}
     </div>
   );
 }
 
-function targetStatusCell(target: ConvictionTarget) {
-  const alert = isTargetAlert(target.status);
-  const reasons =
-    target.target_value_base.status === "unavailable"
-      ? target.target_value_base.reasons
-      : [];
-  return (
-    <span
-      className={alert ? "status-chip warning" : "status-chip"}
-      title={reasons.length > 0 ? reasonSummary(reasons) : undefined}
-    >
-      {targetStatusLabel(target.status)}
-    </span>
-  );
-}
-
 function targetCell(target: ConvictionTarget) {
+  const bar = targetGapBar(target);
+  // No computable gap (no target / excluded / unavailable): empty cell.
+  if (!bar) {
+    return null;
+  }
+
   return (
-    <div className="metric-stack">
-      {targetValueCell(target)}
-      <div className="metric-subtle target-substack">
-        {targetGapCell(target)}
-        {targetStatusCell(target)}
-      </div>
+    <div
+      className="target-gap-track"
+      role="img"
+      aria-label={bar.tooltip}
+      title={bar.tooltip}
+    >
+      <span className="target-gap-axis" />
+      {bar.side !== "on_target" ? (
+        <span
+          className={`target-gap-fill ${bar.side}`}
+          style={{ width: `${bar.widthPercent}%` }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -552,10 +519,10 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       },
     ),
     columnHelper.accessor(
-      (row) => targetValueField(row.holding.conviction_target),
+      (row) => targetGapPercentField(row.holding.conviction_target),
       {
         id: "target",
-        header: "Target (SEK)",
+        header: "Target gap",
         sortingFn: availabilitySortRows,
         cell: (info) => targetCell(info.row.original.holding.conviction_target),
       },

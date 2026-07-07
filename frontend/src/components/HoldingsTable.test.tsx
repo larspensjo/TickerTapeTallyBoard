@@ -150,7 +150,7 @@ describe("holdings consolidated columns", () => {
       "Value (SEK)",
       "P&L",
       "Conviction",
-      "Target (SEK)",
+      "Target gap",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
@@ -160,14 +160,14 @@ describe("holdings consolidated columns", () => {
       "Cost basis",
       "Portfolio %",
       "P&L hint",
-      "Target gap",
+      "Target (SEK)",
       "Target status",
     ]) {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
     }
   });
 
-  it("still renders regrouped sub-content (portfolio % and target status)", () => {
+  it("still renders regrouped sub-content (portfolio % and target details)", () => {
     const held: Holding = {
       ...holding(1, "Alpha Corp", "ALPHA", "1000.00"),
       conviction_target: {
@@ -183,7 +183,20 @@ describe("holdings consolidated columns", () => {
 
     // Portfolio-% sub-line: a single valued holding is 100% of the portfolio.
     expect(screen.getAllByText("100.0%").length).toBeGreaterThan(0);
-    // Target-status chip text (unique to the row; the totals row has no chip).
-    expect(screen.getByText("Below")).toBeTruthy();
+    // Target value moved under the conviction selector.
+    expect(screen.getByText("2,000.00")).toBeTruthy();
+    // The gap bar carries the full detail in its accessible label / tooltip.
+    expect(
+      screen.getByRole("img", {
+        name: "Target SEK 2,000.00\nGap SEK -1,000.00 (-50.0%)\nBelow",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("leaves the target gap cell empty when no target exists", () => {
+    // The holding factory has a no_target conviction target.
+    renderHoldingsTable([holding(1, "Alpha Corp", "ALPHA", "1000.00")]);
+
+    expect(screen.queryByRole("img")).toBeNull();
   });
 });

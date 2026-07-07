@@ -35,7 +35,6 @@ import {
   CONVICTION_OPTIONS,
   convictionLabel,
   isTargetAlert,
-  targetGapTone,
   targetStatusLabel,
 } from "./holdingsConviction";
 import {
@@ -51,6 +50,7 @@ import {
   freshnessTone,
   reasonSummary,
   SummaryAvailabilityValue,
+  signedTone,
 } from "./valuationDisplay";
 import { waterfallView } from "./waterfallViewModel";
 
@@ -320,8 +320,9 @@ function AssetConvictionTarget({
 
   const gap = target.target_gap_base;
   const gapPercent = target.target_gap_percent;
-  const gapTone =
-    gap.status === "available" ? targetGapTone(gap.value) : "flat";
+  // Target gaps use plain sign colouring: above target (appreciated more than
+  // its peers) is green, below is red — same convention as the Holdings bar.
+  const gapTone = gap.status === "available" ? signedTone(gap.value) : "flat";
 
   return (
     <dl className="data-list">
