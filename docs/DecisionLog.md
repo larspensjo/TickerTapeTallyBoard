@@ -377,3 +377,8 @@ Consequences: Holdings sort persistence stays frontend-local unless a server-sid
 Decision: Conviction is user-managed metadata keyed by instrument id. Low, Medium, and High define relative target weights within the eligible target pool; Other means no target. Closing a position or losing valuation eligibility does not implicitly change stored conviction.
 Context: The conviction-target design chose a low-friction allocation signal for holdings and future planning without requiring absolute percentages that must sum to 100%.
 Consequences: Target values are derived from the current eligible pool and can change when one instrument's conviction, position openness, or valuation eligibility changes. UIs must refresh the full pool after conviction edits and make excluded convicted assets explicit.
+
+## 2026-07-06 - Holdings table groups metrics into stacked columns
+Decision: The Holdings table presents related figures as stacked cells (cost/basis, value/weight, P&L amount/percent, and target value/gap/status) rather than one column per figure, keeping the table within a single desktop viewport.
+Context: Adding conviction targets pushed the table to eleven columns and introduced a horizontal scrollbar; grouping related metrics is preferred over per-metric columns or width band-aids.
+Consequences: Only the headline metric of each group is independently sortable; secondary metrics (portfolio weight, cost basis, target gap, target status) are read within their group's cell. A future opt-in column-visibility control can restore per-metric columns if needed.
