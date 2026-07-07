@@ -283,7 +283,23 @@ fn fx_candidate(row: fx_rates::FxRateRow) -> Option<FxCandidate> {
     })
 }
 
-fn serialize_freshness(freshness: DataFreshness) -> String {
+pub(super) fn staler_freshness(left: DataFreshness, right: DataFreshness) -> DataFreshness {
+    fn rank(freshness: DataFreshness) -> (u8, i64) {
+        match freshness {
+            DataFreshness::Fresh => (0, 0),
+            DataFreshness::MinorStale { trading_days } => (1, trading_days),
+            DataFreshness::WarningStale { trading_days } => (2, trading_days),
+        }
+    }
+
+    if rank(left) >= rank(right) {
+        left
+    } else {
+        right
+    }
+}
+
+pub(super) fn serialize_freshness(freshness: DataFreshness) -> String {
     match freshness {
         DataFreshness::Fresh => "fresh".to_string(),
         DataFreshness::MinorStale { trading_days } => {

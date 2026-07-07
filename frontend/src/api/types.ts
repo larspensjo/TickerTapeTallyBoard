@@ -206,6 +206,50 @@ export interface GainsResponse {
   display_percent_kind: string;
 }
 
+export interface RebalanceResponse {
+  amount_base: string;
+  base_currency: string;
+  plan: RebalancePlan;
+}
+
+export type RebalanceUnavailableReason = "empty_pool" | "offset_exceeds_pool";
+
+export type RebalancePlan =
+  | {
+      status: "available";
+      pool_value_base: string;
+      candidate_count: number;
+      rungs: RebalanceRung[];
+    }
+  | {
+      status: "unavailable";
+      reasons: RebalanceUnavailableReason[];
+    };
+
+export interface RebalanceRung {
+  selected_count: number;
+  effective_trade_count: number;
+  trades: RebalanceTrade[];
+  untraded: RebalanceUntraded[];
+  achieved_net_base: string;
+  residual_base: string;
+  coverage_percent: string | null;
+}
+
+export interface RebalanceTrade {
+  instrument: Instrument;
+  side: "buy" | "sell";
+  shares: number;
+  price_base: string;
+  amount_base: string;
+  freshness: string;
+}
+
+export interface RebalanceUntraded {
+  instrument: Instrument;
+  reason: string;
+}
+
 export interface RefreshRunSummary {
   run_id: number;
   trigger: RefreshTrigger;

@@ -24,6 +24,11 @@ const HoldingsPage = lazy(() =>
     default: module.HoldingsPage,
   })),
 );
+const RebalancePage = lazy(() =>
+  import("./components/RebalancePage").then((module) => ({
+    default: module.RebalancePage,
+  })),
+);
 const GainsPage = lazy(() =>
   import("./components/GainsPage").then((module) => ({
     default: module.GainsPage,
@@ -102,6 +107,7 @@ export function App() {
             <Route element={<PortfolioLayout />}>
               <Route path="/" element={<Dashboard {...dateRangeProps} />} />
               <Route path="/holdings" element={<HoldingsPage />} />
+              <Route path="/rebalance" element={<RebalancePage />} />
               <Route
                 path="/gains"
                 element={<GainsPage {...dateRangeProps} />}

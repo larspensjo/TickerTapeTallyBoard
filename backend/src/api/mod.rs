@@ -9,9 +9,13 @@ mod instruments;
 mod portfolio;
 mod prices;
 mod provider_symbols;
+mod rebalance;
 mod root;
+#[cfg(test)]
+mod test_support;
 mod transactions;
 mod valuation;
+mod valued_holdings;
 
 use axum::{
     body::Body,
@@ -86,6 +90,7 @@ fn api_router() -> Router<AppState> {
         .route("/prices/refresh", post(prices::refresh))
         .route("/prices/status", get(prices::status))
         .route("/portfolio/value-history", get(portfolio::value_history))
+        .route("/rebalance", get(rebalance::handler))
         .route("/holdings", get(holdings::list))
         .route("/gains", get(gains::list))
         .route(

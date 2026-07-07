@@ -74,7 +74,10 @@ Offset `C` (`Decimal` SEK). `P = Σv`, `W = Σw`, `K` = candidate count.
 ### Step 1 — Ideal deltas (shared by all rungs)
 
 `P' = P + C`; `t_i = P' · w_i / W`; `d_i = t_i − v_i`. Identity: `Σd_i = C`
-exactly (pinned by test).
+exactly (pinned by test). To make the identity exact under `Decimal` division,
+the last candidate's target is computed as `P' − Σ(other targets)` — it
+absorbs the (≈1e-26 SEK) division remainder rather than using the literal
+formula (review-approved; document in the design doc).
 
 ### Step 2 — Direction-aware selection for rung N
 
@@ -147,6 +150,12 @@ stays near-nested; correctness beats strict nesting (per the brief).
 - A selected candidate ending at `q_i = 0` is reported as untraded with a
   reason: `too_small` (nonzero `d` rounded/adjusted away), `clamped`
   (redistribution clamped `x` to zero), or `on_target` (`d = 0`).
+- **Fallback rungs skip the ±1 pass** (review-approved resolution): on an
+  all-zero-fallback rung the residual is structural, not rounding noise, and
+  a literal ±1 pass would erode the fallback trade toward an empty plan —
+  contradicting "the residual is the signal". Fallback rungs also clear any
+  `clamped` flags from the discarded redistribution so untraded reasons stay
+  honest (`too_small`, not `clamped`). Both rules go into the design doc.
 
 ### Step 6 — Per-rung report
 

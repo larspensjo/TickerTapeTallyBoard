@@ -217,6 +217,31 @@ export function freshnessLabel(freshness: string): string {
   return freshness.replaceAll("_", " ");
 }
 
+export function freshnessRank(freshness: string): number {
+  const dayMatch = freshness.match(/_(\d+)_days$/);
+  const days = dayMatch ? Number(dayMatch[1]) : 0;
+
+  if (freshness.startsWith("warning_stale_")) {
+    return 200 + days;
+  }
+
+  if (freshness.startsWith("minor_stale_")) {
+    return 100 + days;
+  }
+
+  return freshness === "fresh" ? 0 : 50;
+}
+
+export function worstFreshness(freshnessValues: string[]): string | null {
+  return freshnessValues.reduce<string | null>((worst, freshness) => {
+    if (!worst || freshnessRank(freshness) > freshnessRank(worst)) {
+      return freshness;
+    }
+
+    return worst;
+  }, null);
+}
+
 export function freshnessTone(freshness: string): "warning" | "flat" {
   return freshness === "fresh" ? "flat" : "warning";
 }

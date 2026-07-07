@@ -13,6 +13,7 @@ export function appModeViewModel(demo: boolean | undefined): AppModeViewModel {
     navItems: [
       { to: "/", label: "Dashboard", end: true },
       { to: "/holdings", label: "Holdings" },
+      { to: "/rebalance", label: "Rebalance" },
       { to: "/gains", label: "Gains" },
       { to: "/transactions", label: "Transactions" },
       ...(canMutate ? [{ to: "/import", label: "Import" }] : []),

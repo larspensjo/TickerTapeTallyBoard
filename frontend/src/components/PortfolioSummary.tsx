@@ -4,22 +4,8 @@ import {
   freshnessLabel,
   freshnessTone,
   SummaryAvailabilityValue,
+  worstFreshness,
 } from "./valuationDisplay";
-
-function freshnessRank(freshness: string): number {
-  const dayMatch = freshness.match(/_(\d+)_days$/);
-  const days = dayMatch ? Number(dayMatch[1]) : 0;
-
-  if (freshness.startsWith("warning_stale_")) {
-    return 200 + days;
-  }
-
-  if (freshness.startsWith("minor_stale_")) {
-    return 100 + days;
-  }
-
-  return freshness === "fresh" ? 0 : 50;
-}
 
 function portfolioPriceFreshness(rows: GainsRow[] | undefined): string | null {
   const freshnessValues =
@@ -27,13 +13,7 @@ function portfolioPriceFreshness(rows: GainsRow[] | undefined): string | null {
       row.latest_price?.freshness ? [row.latest_price.freshness] : [],
     ) ?? [];
 
-  return freshnessValues.reduce<string | null>((worst, freshness) => {
-    if (!worst || freshnessRank(freshness) > freshnessRank(worst)) {
-      return freshness;
-    }
-
-    return worst;
-  }, null);
+  return worstFreshness(freshnessValues);
 }
 
 export function PortfolioSummary({

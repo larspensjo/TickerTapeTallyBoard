@@ -1,0 +1,359 @@
+import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
+import type {
+  Instrument,
+  RebalanceResponse,
+  RebalanceRung,
+  RebalanceTrade,
+  RebalanceUnavailableReason,
+  RebalanceUntraded,
+} from "../api/types";
+import {
+  formatGroupedNumber,
+  freshnessLabel,
+  freshnessTone,
+  worstFreshness,
+} from "./valuationDisplay";
+
+const REBALANCE_UNAVAILABLE_MESSAGES: Record<
+  RebalanceUnavailableReason,
+  string
+> = {
+  empty_pool: "No eligible holdings are available for rebalance.",
+  offset_exceeds_pool:
+    "The requested offset is at or below the negated pool value, so no valid plan exists.",
+};
+
+const REBALANCE_UNTRADED_REASON_LABELS: Record<string, string> = {
+  too_small: "Too small",
+  clamped: "Clamped",
+  on_target: "On target",
+};
+
+export type RebalanceFreshnessKind = "fresh" | "minor_stale" | "warning_stale";
+
+export interface RebalanceTradeRowViewModel {
+  instrument: Instrument;
+  side: "buy" | "sell";
+  sideLabel: string;
+  shares: number;
+  sharesLabel: string;
+  priceBaseLabel: string;
+  amountBaseLabel: string;
+  freshness: string;
+  freshnessLabel: string;
+  freshnessTone: "warning" | "flat";
+  freshnessKind: RebalanceFreshnessKind;
+}
+
+export interface RebalanceUntradedRowViewModel {
+  instrument: Instrument;
+  reason: string;
+  reasonLabel: string;
+}
+
+export interface RebalanceSummaryViewModel {
+  requestedLabel: string;
+  achievedNetLabel: string;
+  residualLabel: string;
+}
+
+export interface RebalanceSliderViewModel {
+  value: number;
+  max: number;
+  tradeCountLabel: string;
+  coverageLabel: string | null;
+}
+
+export interface RebalanceWarningBannerViewModel {
+  label: string;
+  message: string;
+}
+
+export type RebalancePageStatus =
+  | "prompt"
+  | "loading"
+  | "error"
+  | "unavailable"
+  | "available";
+
+export interface RebalancePageViewModel {
+  status: RebalancePageStatus;
+  message: string | null;
+  isRefreshing: boolean;
+  summary: RebalanceSummaryViewModel | null;
+  slider: RebalanceSliderViewModel | null;
+  warningBanner: RebalanceWarningBannerViewModel | null;
+  tradeRowsMessage: string | null;
+  tradeRows: RebalanceTradeRowViewModel[];
+  untradedRows: RebalanceUntradedRowViewModel[];
+  selectedRungFreshness: string | null;
+}
+
+export interface BuildRebalancePageViewModelInput {
+  amountInput: string;
+  committedAmount: string | null;
+  response?: RebalanceResponse;
+  isFetching: boolean;
+  isError: boolean;
+  errorMessage: string | null;
+  sliderPosition: number;
+}
+
+export function clampInteger(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
+export function formatRebalanceMoney(value: string): string {
+  return `SEK ${formatGroupedNumber(value)}`;
+}
+
+function freshnessKind(freshness: string): RebalanceFreshnessKind {
+  if (freshness.startsWith("warning_stale_")) {
+    return "warning_stale";
+  }
+
+  if (freshness.startsWith("minor_stale_")) {
+    return "minor_stale";
+  }
+
+  return "fresh";
+}
+
+export function rebalanceUnavailableMessage(
+  reasons: RebalanceUnavailableReason[],
+): string {
+  if (reasons.length === 0) {
+    return "Rebalance plan unavailable.";
+  }
+
+  return reasons
+    .map((reason) => REBALANCE_UNAVAILABLE_MESSAGES[reason] ?? reason)
+    .join(" ");
+}
+
+export function rebalanceUntradedReasonLabel(reason: string): string {
+  return (
+    REBALANCE_UNTRADED_REASON_LABELS[reason] ?? reason.replaceAll("_", " ")
+  );
+}
+
+export function rebalanceTradeCountLabel(
+  selectedCount: number,
+  effectiveTradeCount: number,
+): string {
+  const selectedLabel = `${formatGroupedNumber(selectedCount)} selected`;
+  if (selectedCount === effectiveTradeCount) {
+    return selectedLabel;
+  }
+
+  return `${formatGroupedNumber(effectiveTradeCount)} executed of ${selectedLabel}`;
+}
+
+export function selectRebalanceRung(
+  response: RebalanceResponse | undefined,
+  sliderPosition: number,
+): { rung: RebalanceRung; position: number } | null {
+  if (response?.plan.status !== "available") {
+    return null;
+  }
+
+  const rungCount = response.plan.rungs.length;
+  if (rungCount === 0) {
+    return null;
+  }
+
+  const position = clampInteger(sliderPosition, 1, rungCount);
+  return { rung: response.plan.rungs[position - 1], position };
+}
+
+function tradeRows(trades: RebalanceTrade[]): RebalanceTradeRowViewModel[] {
+  return trades.map((trade) => ({
+    instrument: trade.instrument,
+    side: trade.side,
+    sideLabel: trade.side === "buy" ? "Buy" : "Sell",
+    shares: trade.shares,
+    sharesLabel: formatGroupedNumber(trade.shares),
+    priceBaseLabel: formatRebalanceMoney(trade.price_base),
+    amountBaseLabel: formatRebalanceMoney(trade.amount_base),
+    freshness: trade.freshness,
+    freshnessLabel: freshnessLabel(trade.freshness),
+    freshnessTone: freshnessTone(trade.freshness),
+    freshnessKind: freshnessKind(trade.freshness),
+  }));
+}
+
+function untradedRows(
+  untraded: RebalanceUntraded[],
+): RebalanceUntradedRowViewModel[] {
+  return untraded.map((candidate) => ({
+    instrument: candidate.instrument,
+    reason: candidate.reason,
+    reasonLabel: rebalanceUntradedReasonLabel(candidate.reason),
+  }));
+}
+
+function emptyTradeRowsMessage(untraded: RebalanceUntraded[]): string {
+  if (
+    untraded.length > 0 &&
+    untraded.every((candidate) => candidate.reason === "on_target")
+  ) {
+    return "Portfolio is on target at this granularity.";
+  }
+
+  return "Too small to trade at this granularity.";
+}
+
+function buildAvailableViewModel(
+  response: RebalanceResponse,
+  sliderPosition: number,
+  isFetching: boolean,
+): RebalancePageViewModel {
+  if (response.plan.status !== "available") {
+    return {
+      status: "unavailable",
+      message: "Rebalance plan unavailable.",
+      isRefreshing: isFetching,
+      summary: null,
+      slider: null,
+      warningBanner: null,
+      tradeRowsMessage: null,
+      tradeRows: [],
+      untradedRows: [],
+      selectedRungFreshness: null,
+    };
+  }
+
+  const selection = selectRebalanceRung(response, sliderPosition);
+  if (!selection) {
+    return {
+      status: "unavailable",
+      message: "Rebalance plan unavailable.",
+      isRefreshing: isFetching,
+      summary: null,
+      slider: null,
+      warningBanner: null,
+      tradeRowsMessage: null,
+      tradeRows: [],
+      untradedRows: [],
+      selectedRungFreshness: null,
+    };
+  }
+
+  const { rung, position } = selection;
+  const tradeCountLabel = rebalanceTradeCountLabel(
+    rung.selected_count,
+    rung.effective_trade_count,
+  );
+  const selectedRungFreshness = worstFreshness(
+    rung.trades.map((trade) => trade.freshness),
+  );
+  const tradeRowsView = tradeRows(rung.trades);
+  const warningBanner =
+    selectedRungFreshness !== null &&
+    freshnessKind(selectedRungFreshness) === "warning_stale"
+      ? {
+          label: freshnessLabel(selectedRungFreshness),
+          message:
+            "Selected rung includes warning-stale trades. Verify these broker orders before placing.",
+        }
+      : null;
+
+  return {
+    status: "available",
+    message: null,
+    isRefreshing: isFetching,
+    summary: {
+      requestedLabel: formatRebalanceMoney(response.amount_base),
+      achievedNetLabel: formatRebalanceMoney(rung.achieved_net_base),
+      residualLabel: formatRebalanceMoney(rung.residual_base),
+    },
+    slider: {
+      value: position,
+      max: response.plan.rungs.length,
+      tradeCountLabel,
+      coverageLabel:
+        rung.coverage_percent === null ? null : `${rung.coverage_percent}%`,
+    },
+    warningBanner,
+    tradeRowsMessage:
+      tradeRowsView.length === 0 ? emptyTradeRowsMessage(rung.untraded) : null,
+    tradeRows: tradeRowsView,
+    untradedRows: untradedRows(rung.untraded),
+    selectedRungFreshness,
+  };
+}
+
+export function buildRebalancePageViewModel(
+  input: BuildRebalancePageViewModelInput,
+): RebalancePageViewModel {
+  const normalizedAmount = normalizeRebalanceAmount(input.committedAmount);
+
+  if (normalizedAmount === null && !input.isFetching) {
+    const hasTypedAmount = input.amountInput.trim().length > 0;
+    return {
+      status: "prompt",
+      message: hasTypedAmount
+        ? "Enter a valid decimal amount."
+        : "No valid amount entered yet. Enter a signed SEK amount to preview the rebalance ladder.",
+      isRefreshing: false,
+      summary: null,
+      slider: null,
+      warningBanner: null,
+      tradeRowsMessage: null,
+      tradeRows: [],
+      untradedRows: [],
+      selectedRungFreshness: null,
+    };
+  }
+
+  if (input.response && normalizedAmount !== null) {
+    if (input.response.plan.status === "available") {
+      return buildAvailableViewModel(
+        input.response,
+        input.sliderPosition,
+        input.isFetching,
+      );
+    }
+
+    return {
+      status: "unavailable",
+      message: rebalanceUnavailableMessage(input.response.plan.reasons),
+      isRefreshing: input.isFetching,
+      summary: null,
+      slider: null,
+      warningBanner: null,
+      tradeRowsMessage: null,
+      tradeRows: [],
+      untradedRows: [],
+      selectedRungFreshness: null,
+    };
+  }
+
+  if (input.isError) {
+    return {
+      status: "error",
+      message: input.errorMessage ?? "Could not load rebalance plan.",
+      isRefreshing: false,
+      summary: null,
+      slider: null,
+      warningBanner: null,
+      tradeRowsMessage: null,
+      tradeRows: [],
+      untradedRows: [],
+      selectedRungFreshness: null,
+    };
+  }
+
+  return {
+    status: "loading",
+    message: "Loading rebalance plan...",
+    isRefreshing: false,
+    summary: null,
+    slider: null,
+    warningBanner: null,
+    tradeRowsMessage: null,
+    tradeRows: [],
+    untradedRows: [],
+    selectedRungFreshness: null,
+  };
+}

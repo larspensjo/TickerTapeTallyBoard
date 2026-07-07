@@ -181,6 +181,10 @@ ring. Primary submit is the accent pill.
 **Inputs / selects** — `--surface-2`, `--radius-md`, `--hairline` border,
 placeholder `--text-muted`, focus as in the form.
 
+**Slider** — the rebalance trade-count range input uses a `--surface-2` track,
+an `--accent` filled progress segment, an `--accent` thumb with a canvas
+border and hairline outline, and the shared `--focus-ring` when focused.
+
 **States**:
 - Empty: centered `--text-muted` message + a primary CTA.
 - Loading: skeleton bars in `--surface-2` (shimmer optional).

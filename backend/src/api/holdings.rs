@@ -3,18 +3,15 @@ use axum::Json;
 use chrono::Local;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 use crate::api::error::ApiError;
 use crate::api::instruments::{ConvictionDto, InstrumentResponse};
 use crate::api::valuation::{
-    load_valuation_inputs, money_string, serialize_availability, serialize_valuation_reason,
-    AvailabilityResponse,
+    money_string, serialize_availability, serialize_valuation_reason, AvailabilityResponse,
 };
-use crate::db::{instruments, transactions};
+use crate::api::valued_holdings::{load_valued_open_holdings, ValuedOpenHolding};
 use crate::domain::{
-    derive_position, derive_targets, value_position, Availability, BaseCostBasis, ConvictionLevel,
-    ConvictionTargetInput, ConvictionTargetOutput, MarketValueState, Position, TargetField,
+    derive_targets, BaseCostBasis, ConvictionTargetOutput, Position, TargetField,
     UnavailableReason, ValuationReason,
 };
 use crate::state::AppState;
@@ -127,7 +124,7 @@ pub struct ReasonResponse {
 
 impl HoldingResponse {
     fn build(
-        instrument: &instruments::InstrumentRow,
+        instrument: &crate::db::instruments::InstrumentRow,
         position: &Position,
         valuation: Option<ValuationField>,
         conviction_target: ConvictionTargetResponse,
@@ -174,124 +171,26 @@ impl HoldingResponse {
     }
 }
 
-/// A collected open holding awaiting its pool-wide conviction target. Targets
-/// depend on every eligible holding, so they are derived once after the whole
-/// pool is gathered rather than row by row.
-struct PendingHolding<'a> {
-    instrument: &'a instruments::InstrumentRow,
-    position: Position,
-    valuation: Option<ValuationField>,
-    /// Underlying market-value reasons when the valuation is present-but-
-    /// unavailable, carried into the target response; empty otherwise.
-    market_value_reasons: Vec<ValuationReason>,
-}
-
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingResponse>>, ApiError> {
     let valuation_date = Local::now().naive_local().date();
-    let instruments_list = instruments::list(&state.pool).await?;
-    let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
-    let mut ledgers = BTreeMap::new();
-
-    for row in &transaction_rows {
-        ledgers
-            .entry(row.instrument_id)
-            .or_insert_with(Vec::new)
-            .push(row.to_ledger()?);
-    }
-
-    let mut pending = Vec::new();
-    let mut target_inputs = Vec::new();
-
-    for instrument in &instruments_list {
-        let ledger = ledgers.remove(&instrument.id).unwrap_or_default();
-        let position = derive_position(&ledger).map_err(|error| {
-            ApiError::internal(format!(
-                "inconsistent stored ledger for instrument {}: {error:?}",
-                instrument.id
-            ))
-        })?;
-        if position.quantity == 0 {
-            continue;
-        }
-
-        let valuation_inputs =
-            load_valuation_inputs(&state.pool, instrument, valuation_date).await?;
-        // `valuation: None` means price mapping is disabled, which is distinct
-        // from a present-but-unavailable valuation; the target module treats
-        // them as different exclusion reasons and never as zero value.
-        let (valuation, market_value, market_value_reasons) = if valuation_inputs
-            .price_mapping_enabled
-        {
-            let valued_holding = value_position(
-                &position,
-                &instrument.currency,
-                valuation_date,
-                valuation_inputs.latest_price,
-                valuation_inputs.previous_price,
-                valuation_inputs.latest_fx,
-                valuation_inputs.previous_fx,
-            );
-
-            let (market_value, market_value_reasons) = match &valued_holding.market_value_base {
-                Availability::Available(value) => (MarketValueState::Available(*value), Vec::new()),
-                Availability::Unavailable { reasons } => {
-                    (MarketValueState::Unavailable, reasons.clone())
-                }
-            };
-
-            let field = ValuationField {
-                market_value_base: serialize_availability(&valued_holding.market_value_base, |v| {
-                    money_string(*v)
-                }),
-                unrealized_gain_base: serialize_availability(
-                    &valued_holding.unrealized_gain_base,
-                    |v| money_string(*v),
-                ),
-                unrealized_gain_percent: serialize_availability(
-                    &valued_holding.unrealized_gain_percent,
-                    |v| format!("{:.2}", v),
-                ),
-                day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
-                    money_string(*v)
-                }),
-            };
-
-            (Some(field), market_value, market_value_reasons)
-        } else {
-            (None, MarketValueState::MappingDisabled, Vec::new())
-        };
-
-        let conviction = ConvictionLevel::from_db_str(&instrument.conviction).ok_or_else(|| {
-            ApiError::internal(format!(
-                "stored unknown conviction {:?} for instrument {}",
-                instrument.conviction, instrument.id
-            ))
-        })?;
-
-        target_inputs.push(ConvictionTargetInput {
-            instrument_id: instrument.id,
-            conviction,
-            market_value,
-        });
-        pending.push(PendingHolding {
-            instrument,
-            position,
-            valuation,
-            market_value_reasons,
-        });
-    }
+    let valued_holdings = load_valued_open_holdings(&state.pool, valuation_date).await?;
+    let target_inputs: Vec<_> = valued_holdings
+        .iter()
+        .map(ValuedOpenHolding::conviction_target_input)
+        .collect();
 
     // Derive targets once for the whole eligible pool, then attach in order.
     let targets = derive_targets(&target_inputs);
-    let holdings = pending
+    let holdings = valued_holdings
         .into_iter()
         .zip(targets.iter())
         .map(|(holding, output)| {
+            let valuation = holding.valuation.as_ref().map(valuation_field_from_holding);
             HoldingResponse::build(
-                holding.instrument,
+                &holding.instrument,
                 &holding.position,
-                holding.valuation,
-                build_conviction_target(output, &holding.market_value_reasons),
+                valuation,
+                build_conviction_target(output, &holding.market_value_reasons()),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -299,135 +198,32 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingRespo
     Ok(Json(holdings))
 }
 
+fn valuation_field_from_holding(valued_holding: &crate::domain::ValuedHolding) -> ValuationField {
+    ValuationField {
+        market_value_base: serialize_availability(&valued_holding.market_value_base, |v| {
+            money_string(*v)
+        }),
+        unrealized_gain_base: serialize_availability(&valued_holding.unrealized_gain_base, |v| {
+            money_string(*v)
+        }),
+        unrealized_gain_percent: serialize_availability(
+            &valued_holding.unrealized_gain_percent,
+            |v| format!("{:.2}", v),
+        ),
+        day_change_base: serialize_availability(&valued_holding.day_change_base, |v| {
+            money_string(*v)
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::api::router;
+    use crate::api::test_support::{
+        holdings_by_symbol, instrument, seed_valued, send, set_conviction,
+    };
     use crate::state::AppState;
-    use axum::body::{to_bytes, Body};
-    use axum::http::{Request, StatusCode};
-    use chrono::Local;
+    use axum::http::StatusCode;
     use serde_json::{json, Value};
-    use tower::ServiceExt;
-
-    async fn send(state: &AppState, method: &str, uri: &str, body: Value) -> (StatusCode, Value) {
-        let request = Request::builder()
-            .method(method)
-            .uri(uri)
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .expect("request builds");
-        let response = router(state.clone())
-            .oneshot(request)
-            .await
-            .expect("request completes");
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body readable");
-        let value = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).expect("json body")
-        };
-        (status, value)
-    }
-
-    async fn instrument(state: &AppState, symbol: &str, exchange: &str, currency: &str) -> i64 {
-        let (status, body) = send(
-            state,
-            "POST",
-            "/api/instruments",
-            json!({"symbol":symbol,"exchange":exchange,"name":symbol,"type":"Stock","currency":currency}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED);
-        body["id"].as_i64().expect("instrument id")
-    }
-
-    /// Seed one SEK holding (fx = 1) with an enabled price mapping and a current
-    /// price, so its available market value equals `quantity * price`.
-    async fn seed_valued(
-        state: &AppState,
-        symbol: &str,
-        quantity: i64,
-        price: &str,
-        conviction: &str,
-    ) -> i64 {
-        use crate::db::{prices, provider_symbols};
-        use rust_decimal::Decimal;
-        use std::str::FromStr;
-
-        let id = instrument(state, symbol, "STO", "SEK").await;
-        let now = crate::import::now_iso8601();
-        provider_symbols::upsert(
-            &state.pool,
-            &provider_symbols::NewProviderSymbol {
-                instrument_id: id,
-                provider: super::super::valuation::PRICE_PROVIDER.to_owned(),
-                provider_symbol: symbol.to_owned(),
-                currency: Some("SEK".to_owned()),
-                enabled: true,
-                created_at: now.clone(),
-                updated_at: now.clone(),
-            },
-        )
-        .await
-        .expect("provider symbol");
-        prices::upsert(
-            &state.pool,
-            &prices::NewPrice {
-                instrument_id: id,
-                provider: super::super::valuation::PRICE_PROVIDER.to_owned(),
-                provider_symbol: symbol.to_owned(),
-                date: Local::now().naive_local().date(),
-                close: Decimal::from_str(price).expect("price"),
-                currency: "SEK".to_owned(),
-                fetched_at: now,
-            },
-        )
-        .await
-        .expect("price");
-        send(
-            state,
-            "POST",
-            "/api/transactions",
-            json!({"instrument_id":id,"type":"Buy","trade_date":"2026-06-01",
-                   "quantity":quantity,"price":price,"currency":"SEK","fx_rate_to_base":"1"}),
-        )
-        .await;
-        set_conviction(state, id, conviction).await;
-        id
-    }
-
-    async fn set_conviction(state: &AppState, id: i64, conviction: &str) {
-        let (status, _) = send(
-            state,
-            "PUT",
-            &format!("/api/instruments/{id}/conviction"),
-            json!({ "conviction": conviction }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-    }
-
-    async fn holdings_by_symbol(state: &AppState) -> std::collections::HashMap<String, Value> {
-        let (status, holdings) = send(state, "GET", "/api/holdings", Value::Null).await;
-        assert_eq!(status, StatusCode::OK);
-        holdings
-            .as_array()
-            .expect("array")
-            .iter()
-            .map(|holding| {
-                (
-                    holding["instrument"]["symbol"]
-                        .as_str()
-                        .expect("symbol")
-                        .to_owned(),
-                    holding.clone(),
-                )
-            })
-            .collect()
-    }
 
     #[tokio::test]
     async fn holding_reports_weighted_average_and_base_cost() {
@@ -690,7 +486,7 @@ mod tests {
             &state.pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: id,
-                provider: super::super::valuation::PRICE_PROVIDER.to_owned(),
+                provider: crate::api::valuation::PRICE_PROVIDER.to_owned(),
                 provider_symbol: "MISS".to_owned(),
                 currency: Some("SEK".to_owned()),
                 enabled: true,

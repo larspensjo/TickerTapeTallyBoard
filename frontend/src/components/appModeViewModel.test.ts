@@ -7,7 +7,14 @@ describe("appModeViewModel", () => {
 
     expect(model.showDemoBadge).toBe(false);
     expect(model.canMutate).toBe(true);
-    expect(model.navItems.map((item) => item.label)).toContain("Import");
+    expect(model.navItems.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "Holdings",
+      "Rebalance",
+      "Gains",
+      "Transactions",
+      "Import",
+    ]);
   });
 
   it("shows the demo badge and hides mutation entry points in demo mode", () => {
@@ -15,7 +22,13 @@ describe("appModeViewModel", () => {
 
     expect(model.showDemoBadge).toBe(true);
     expect(model.canMutate).toBe(false);
-    expect(model.navItems.map((item) => item.label)).not.toContain("Import");
+    expect(model.navItems.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "Holdings",
+      "Rebalance",
+      "Gains",
+      "Transactions",
+    ]);
   });
 
   it("hides mutation entry points until app mode is known", () => {
@@ -23,6 +36,12 @@ describe("appModeViewModel", () => {
 
     expect(model.showDemoBadge).toBe(false);
     expect(model.canMutate).toBe(false);
-    expect(model.navItems.map((item) => item.label)).not.toContain("Import");
+    expect(model.navItems.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "Holdings",
+      "Rebalance",
+      "Gains",
+      "Transactions",
+    ]);
   });
 });

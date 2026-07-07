@@ -6,13 +6,14 @@
 mod conviction;
 mod performance;
 mod position;
+mod rebalance;
 mod transaction;
 mod valuation;
 
 #[allow(unused_imports)]
 pub use conviction::{
-    derive_targets, ConvictionLevel, ConvictionTargetInput, ConvictionTargetOutput,
-    MarketValueState, TargetField, TargetReason, TargetStatus,
+    derive_targets, pool_membership, ConvictionLevel, ConvictionTargetInput,
+    ConvictionTargetOutput, MarketValueState, TargetField, TargetReason, TargetStatus,
 };
 
 #[allow(unused_imports)]
@@ -26,6 +27,11 @@ pub use performance::{
 pub use position::{
     derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,
     PositionPerformance, RealizedGain, UnavailableReason,
+};
+#[allow(unused_imports)]
+pub use rebalance::{
+    build_ladder, PlannedTrade, RebalanceCandidate, RebalanceLadder, RebalanceRung,
+    RebalanceUnavailable, TradeSide, UntradedCandidate, UntradedReason,
 };
 #[allow(unused_imports)]
 pub use transaction::{

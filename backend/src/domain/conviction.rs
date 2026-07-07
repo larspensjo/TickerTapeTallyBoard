@@ -85,6 +85,22 @@ pub struct ConvictionTargetInput {
     pub market_value: MarketValueState,
 }
 
+/// Shared pool-membership predicate for target and rebalance planning.
+///
+/// Returns the conviction weight and market value when the holding belongs in
+/// the eligible pool; otherwise `None`.
+pub fn pool_membership(
+    conviction: ConvictionLevel,
+    market_value: MarketValueState,
+) -> Option<(Decimal, Decimal)> {
+    let weight = conviction.weight()?;
+
+    match market_value {
+        MarketValueState::Available(value) if value > Decimal::ZERO => Some((weight, value)),
+        _ => None,
+    }
+}
+
 /// Overall display status for a holding's target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetStatus {
@@ -183,13 +199,9 @@ pub fn derive_targets(inputs: &[ConvictionTargetInput]) -> Vec<ConvictionTargetO
     let mut pool_value = Decimal::ZERO;
     let mut total_weight = Decimal::ZERO;
     for input in inputs {
-        if let (Some(weight), MarketValueState::Available(value)) =
-            (input.conviction.weight(), input.market_value)
-        {
-            if value > Decimal::ZERO {
-                pool_value += value;
-                total_weight += weight;
-            }
+        if let Some((weight, value)) = pool_membership(input.conviction, input.market_value) {
+            pool_value += value;
+            total_weight += weight;
         }
     }
 

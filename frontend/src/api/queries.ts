@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiGet, apiSend, apiSendBytes } from "./client";
+import { normalizeRebalanceAmount } from "./rebalanceAmount";
 import type {
   Conviction,
   DateRange,
@@ -18,6 +19,7 @@ import type {
   InstrumentType,
   PriceHistoryResponse,
   PriceStatusResponse,
+  RebalanceResponse,
   RefreshPricesInput,
   RefreshPricesResult,
   ReturnMethod,
@@ -109,6 +111,20 @@ export function usePortfolioValueHistory() {
   return useQuery({
     queryKey: ["portfolio-value-history"],
     queryFn: () => apiGet<ValueHistoryResponse>("/api/portfolio/value-history"),
+  });
+}
+
+export function useRebalancePlan(amount: string | null) {
+  const normalizedAmount = normalizeRebalanceAmount(amount);
+
+  return useQuery({
+    queryKey: ["rebalance", normalizedAmount],
+    queryFn: () =>
+      apiGet<RebalanceResponse>(
+        `/api/rebalance?amount=${encodeURIComponent(normalizedAmount ?? "")}`,
+      ),
+    enabled: normalizedAmount !== null,
+    placeholderData: keepPreviousData,
   });
 }
 
