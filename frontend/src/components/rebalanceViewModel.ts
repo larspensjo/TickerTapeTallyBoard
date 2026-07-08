@@ -1,16 +1,19 @@
 import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
 import type {
   Instrument,
+  RebalanceBalanceEntry,
   RebalanceResponse,
   RebalanceRung,
   RebalanceTrade,
   RebalanceUnavailableReason,
   RebalanceUntraded,
 } from "../api/types";
+import { type GapBarGeometry, gapBarGeometry } from "./holdingsConviction";
 import {
   formatGroupedNumber,
   freshnessLabel,
   freshnessTone,
+  parseFiniteNumber,
   worstFreshness,
 } from "./valuationDisplay";
 
@@ -45,10 +48,19 @@ export interface RebalanceTradeRowViewModel {
   freshnessKind: RebalanceFreshnessKind;
 }
 
-export interface RebalanceUntradedRowViewModel {
+export interface RebalanceBalanceBarViewModel {
+  before: GapBarGeometry;
+  after: GapBarGeometry;
+  tooltip: string;
+}
+
+export interface RebalanceBalanceRowViewModel {
   instrument: Instrument;
-  reason: string;
-  reasonLabel: string;
+  actionKind: "trade" | "untraded" | "unselected";
+  actionLabel: string;
+  bar: RebalanceBalanceBarViewModel | null;
+  afterGapLabel: string;
+  flipsSide: boolean;
 }
 
 export interface RebalanceSummaryViewModel {
@@ -85,7 +97,8 @@ export interface RebalancePageViewModel {
   warningBanner: RebalanceWarningBannerViewModel | null;
   tradeRowsMessage: string | null;
   tradeRows: RebalanceTradeRowViewModel[];
-  untradedRows: RebalanceUntradedRowViewModel[];
+  balanceRows: RebalanceBalanceRowViewModel[];
+  balanceTotalLabel: string | null;
   selectedRungFreshness: string | null;
 }
 
@@ -182,14 +195,71 @@ function tradeRows(trades: RebalanceTrade[]): RebalanceTradeRowViewModel[] {
   }));
 }
 
-function untradedRows(
-  untraded: RebalanceUntraded[],
-): RebalanceUntradedRowViewModel[] {
-  return untraded.map((candidate) => ({
-    instrument: candidate.instrument,
-    reason: candidate.reason,
-    reasonLabel: rebalanceUntradedReasonLabel(candidate.reason),
-  }));
+function balanceBar(
+  entry: RebalanceBalanceEntry,
+): RebalanceBalanceBarViewModel | null {
+  if (entry.gap_before_percent === null || entry.gap_after_percent === null) {
+    return null;
+  }
+
+  const beforePercent = parseFiniteNumber(entry.gap_before_percent);
+  const afterPercent = parseFiniteNumber(entry.gap_after_percent);
+  if (beforePercent === null || afterPercent === null) {
+    return null;
+  }
+
+  return {
+    before: gapBarGeometry(beforePercent),
+    after: gapBarGeometry(afterPercent),
+    tooltip: [
+      `Before ${formatRebalanceMoney(entry.gap_before_base)} (${formatGroupedNumber(entry.gap_before_percent)}%)`,
+      `After ${formatRebalanceMoney(entry.gap_after_base)} (${formatGroupedNumber(entry.gap_after_percent)}%)`,
+    ].join("\n"),
+  };
+}
+
+export function buildRebalanceBalanceRows(
+  rung: RebalanceRung,
+): RebalanceBalanceRowViewModel[] {
+  const tradesById = new Map(
+    rung.trades.map((trade) => [trade.instrument.id, trade]),
+  );
+  const untradedById = new Map(
+    rung.untraded.map((candidate) => [candidate.instrument.id, candidate]),
+  );
+
+  return rung.balance.map((entry) => {
+    const trade = tradesById.get(entry.instrument.id);
+    const untraded = untradedById.get(entry.instrument.id);
+    const actionKind: RebalanceBalanceRowViewModel["actionKind"] = trade
+      ? "trade"
+      : untraded
+        ? "untraded"
+        : "unselected";
+    const actionLabel = trade
+      ? `${trade.side === "buy" ? "Buy" : "Sell"} ${formatRebalanceMoney(
+          trade.amount_base,
+        )}`
+      : untraded
+        ? rebalanceUntradedReasonLabel(untraded.reason)
+        : "—";
+    const bar = balanceBar(entry);
+    const afterGapLabel =
+      entry.gap_after_percent === null
+        ? formatRebalanceMoney(entry.gap_after_base)
+        : `${formatRebalanceMoney(entry.gap_after_base)} (${formatGroupedNumber(entry.gap_after_percent)}%)`;
+
+    return {
+      instrument: entry.instrument,
+      actionKind,
+      actionLabel,
+      bar,
+      afterGapLabel,
+      flipsSide:
+        (entry.status_before === "below" && entry.status_after === "above") ||
+        (entry.status_before === "above" && entry.status_after === "below"),
+    };
+  });
 }
 
 function emptyTradeRowsMessage(untraded: RebalanceUntraded[]): string {
@@ -218,7 +288,8 @@ function buildAvailableViewModel(
       warningBanner: null,
       tradeRowsMessage: null,
       tradeRows: [],
-      untradedRows: [],
+      balanceRows: [],
+      balanceTotalLabel: null,
       selectedRungFreshness: null,
     };
   }
@@ -234,7 +305,8 @@ function buildAvailableViewModel(
       warningBanner: null,
       tradeRowsMessage: null,
       tradeRows: [],
-      untradedRows: [],
+      balanceRows: [],
+      balanceTotalLabel: null,
       selectedRungFreshness: null,
     };
   }
@@ -278,7 +350,10 @@ function buildAvailableViewModel(
     tradeRowsMessage:
       tradeRowsView.length === 0 ? emptyTradeRowsMessage(rung.untraded) : null,
     tradeRows: tradeRowsView,
-    untradedRows: untradedRows(rung.untraded),
+    balanceRows: buildRebalanceBalanceRows(rung),
+    balanceTotalLabel: `${formatRebalanceMoney(
+      rung.total_gap_before_base,
+    )} → ${formatRebalanceMoney(rung.total_gap_after_base)}`,
     selectedRungFreshness,
   };
 }
@@ -301,7 +376,8 @@ export function buildRebalancePageViewModel(
       warningBanner: null,
       tradeRowsMessage: null,
       tradeRows: [],
-      untradedRows: [],
+      balanceRows: [],
+      balanceTotalLabel: null,
       selectedRungFreshness: null,
     };
   }
@@ -324,7 +400,8 @@ export function buildRebalancePageViewModel(
       warningBanner: null,
       tradeRowsMessage: null,
       tradeRows: [],
-      untradedRows: [],
+      balanceRows: [],
+      balanceTotalLabel: null,
       selectedRungFreshness: null,
     };
   }
@@ -339,7 +416,8 @@ export function buildRebalancePageViewModel(
       warningBanner: null,
       tradeRowsMessage: null,
       tradeRows: [],
-      untradedRows: [],
+      balanceRows: [],
+      balanceTotalLabel: null,
       selectedRungFreshness: null,
     };
   }
@@ -353,7 +431,8 @@ export function buildRebalancePageViewModel(
     warningBanner: null,
     tradeRowsMessage: null,
     tradeRows: [],
-    untradedRows: [],
+    balanceRows: [],
+    balanceTotalLabel: null,
     selectedRungFreshness: null,
   };
 }

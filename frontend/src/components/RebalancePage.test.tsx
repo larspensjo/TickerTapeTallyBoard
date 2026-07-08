@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RebalancePage } from "./RebalancePage";
 
 vi.mock("../api/queries", () => ({
@@ -43,9 +43,47 @@ vi.mock("../api/queries", () => ({
               },
             ],
             untraded: [],
+            balance: [
+              {
+                instrument: {
+                  id: 1,
+                  symbol: "AAA",
+                  name: "Alpha",
+                  exchange: "STO",
+                  type: "Stock",
+                  currency: "SEK",
+                  conviction: "Low",
+                },
+                gap_before_base: "40.00",
+                gap_after_base: "7.50",
+                gap_before_percent: "40.00",
+                gap_after_percent: "7.50",
+                status_before: "above",
+                status_after: "above",
+              },
+              {
+                instrument: {
+                  id: 2,
+                  symbol: "BBB",
+                  name: "Beta",
+                  exchange: "STO",
+                  type: "Stock",
+                  currency: "SEK",
+                  conviction: "Low",
+                },
+                gap_before_base: "-25.00",
+                gap_after_base: "7.50",
+                gap_before_percent: "-25.00",
+                gap_after_percent: "7.50",
+                status_before: "below",
+                status_after: "above",
+              },
+            ],
             achieved_net_base: "6147.60",
             residual_base: "-4913.10",
             coverage_percent: "88.00",
+            total_gap_before_base: "65.00",
+            total_gap_after_base: "15.00",
           },
         ],
       },
@@ -57,6 +95,7 @@ vi.mock("../api/queries", () => ({
   }),
 }));
 
+beforeEach(() => localStorage.clear());
 afterEach(cleanup);
 
 describe("RebalancePage", () => {
@@ -79,5 +118,24 @@ describe("RebalancePage", () => {
     expect(
       within(await screen.findByRole("alert")).getByText("Stale 4 days"),
     ).toBeDefined();
+  });
+
+  it("renders the balance table with a flip warning", async () => {
+    render(
+      <MemoryRouter>
+        <RebalancePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: /amount/i }), {
+      target: { value: "1234.50" },
+    });
+    fireEvent.blur(screen.getByRole("textbox", { name: /amount/i }));
+
+    const table = await screen.findByRole("table", {
+      name: /post-trade balance/i,
+    });
+    expect(within(table).getByText(/buy SEK 6,147.60/i)).toBeDefined();
+    expect(within(table).getByText(/flips target band/i)).toBeDefined();
   });
 });

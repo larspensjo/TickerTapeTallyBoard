@@ -101,6 +101,18 @@ pub fn pool_membership(
     }
 }
 
+/// Classify a signed display-gap percent (`value − target`, as percent of
+/// target) against the shared ±5% tolerance band.
+pub fn gap_band_status(gap_percent: Decimal) -> TargetStatus {
+    if gap_percent < -TOLERANCE_PERCENT {
+        TargetStatus::Below
+    } else if gap_percent > TOLERANCE_PERCENT {
+        TargetStatus::Above
+    } else {
+        TargetStatus::OnTarget
+    }
+}
+
 /// Overall display status for a holding's target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetStatus {
@@ -270,13 +282,7 @@ fn derive_one(
     let target_gap = current_value - target_value;
     let target_gap_percent = target_gap / target_value * dec!(100);
 
-    let status = if target_gap_percent < -TOLERANCE_PERCENT {
-        TargetStatus::Below
-    } else if target_gap_percent > TOLERANCE_PERCENT {
-        TargetStatus::Above
-    } else {
-        TargetStatus::OnTarget
-    };
+    let status = gap_band_status(target_gap_percent);
 
     ConvictionTargetOutput {
         instrument_id: input.instrument_id,
@@ -478,5 +484,16 @@ mod tests {
             assert_eq!(ConvictionLevel::from_db_str(level.db_str()), Some(level));
         }
         assert_eq!(ConvictionLevel::from_db_str("BOGUS"), None);
+    }
+
+    #[test]
+    fn gap_band_status_matches_derive_targets_band() {
+        use super::gap_band_status;
+
+        assert_eq!(gap_band_status(dec!(-5.01)), TargetStatus::Below);
+        assert_eq!(gap_band_status(dec!(-5)), TargetStatus::OnTarget);
+        assert_eq!(gap_band_status(dec!(0)), TargetStatus::OnTarget);
+        assert_eq!(gap_band_status(dec!(5)), TargetStatus::OnTarget);
+        assert_eq!(gap_band_status(dec!(5.01)), TargetStatus::Above);
     }
 }

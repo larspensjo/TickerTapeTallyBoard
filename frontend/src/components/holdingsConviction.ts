@@ -82,6 +82,28 @@ export interface TargetGapBar {
   tooltip: string;
 }
 
+export interface GapBarGeometry {
+  side: "above" | "below" | "on_target";
+  widthPercent: number;
+}
+
+/**
+ * Geometry of the diverging gap bar for a signed gap percent: side by sign,
+ * width clamped to TARGET_GAP_BAR_CLAMP_PERCENT and mapped onto one half of
+ * the track (0..50). Shared by Holdings targets and the rebalance balance.
+ */
+export function gapBarGeometry(gapPercent: number): GapBarGeometry {
+  const magnitude = Math.min(
+    Math.abs(gapPercent),
+    TARGET_GAP_BAR_CLAMP_PERCENT,
+  );
+  const widthPercent = (magnitude / TARGET_GAP_BAR_CLAMP_PERCENT) * 50;
+  const side =
+    gapPercent === 0 ? "on_target" : gapPercent > 0 ? "above" : "below";
+
+  return { side, widthPercent };
+}
+
 /**
  * Bar for a holding's target gap, or null when no gap can be computed
  * (no target, excluded, or valuation unavailable) — those rows render an
@@ -101,13 +123,7 @@ export function targetGapBar(target: ConvictionTarget): TargetGapBar | null {
     return null;
   }
 
-  const magnitude = Math.min(
-    Math.abs(gapPercent),
-    TARGET_GAP_BAR_CLAMP_PERCENT,
-  );
-  const widthPercent = (magnitude / TARGET_GAP_BAR_CLAMP_PERCENT) * 50;
-  const side =
-    gapPercent === 0 ? "on_target" : gapPercent > 0 ? "above" : "below";
+  const geometry = gapBarGeometry(gapPercent);
 
   const tooltip = [
     `Target SEK ${formatGroupedNumber(target.target_value_base.value)}`,
@@ -115,7 +131,7 @@ export function targetGapBar(target: ConvictionTarget): TargetGapBar | null {
     targetStatusLabel(target.status),
   ].join("\n");
 
-  return { side, widthPercent, tooltip };
+  return { ...geometry, tooltip };
 }
 
 /** The conviction a holding currently shows, honouring any staged (unsaved)

@@ -12,8 +12,8 @@ use crate::api::instruments::InstrumentResponse;
 use crate::api::valuation::{money_string, serialize_freshness, staler_freshness, BASE_CURRENCY};
 use crate::api::valued_holdings::{load_valued_open_holdings, ValuedOpenHolding};
 use crate::domain::{
-    build_ladder, pool_membership, DataFreshness, PlannedTrade, RebalanceCandidate,
-    RebalanceLadder, RebalanceRung, TradeSide, UntradedCandidate,
+    build_ladder, pool_membership, CandidateBalance, DataFreshness, PlannedTrade,
+    RebalanceCandidate, RebalanceLadder, RebalanceRung, TradeSide, UntradedCandidate,
 };
 use crate::state::AppState;
 
@@ -48,9 +48,12 @@ pub struct RebalanceRungResponse {
     pub effective_trade_count: usize,
     pub trades: Vec<RebalanceTradeResponse>,
     pub untraded: Vec<RebalanceUntradedResponse>,
+    pub balance: Vec<RebalanceBalanceResponse>,
     pub achieved_net_base: String,
     pub residual_base: String,
     pub coverage_percent: Option<String>,
+    pub total_gap_before_base: String,
+    pub total_gap_after_base: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +77,17 @@ pub enum RebalanceTradeSideResponse {
 pub struct RebalanceUntradedResponse {
     pub instrument: InstrumentResponse,
     pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RebalanceBalanceResponse {
+    pub instrument: InstrumentResponse,
+    pub gap_before_base: String,
+    pub gap_after_base: String,
+    pub gap_before_percent: Option<String>,
+    pub gap_after_percent: Option<String>,
+    pub status_before: &'static str,
+    pub status_after: &'static str,
 }
 
 #[derive(Debug)]
@@ -235,15 +249,23 @@ fn serialize_rung(
         .iter()
         .map(|candidate| serialize_untraded(candidate, prepared_by_id))
         .collect::<Result<Vec<_>, _>>()?;
+    let balance = rung
+        .balance
+        .iter()
+        .map(|entry| serialize_balance(entry, prepared_by_id))
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(RebalanceRungResponse {
         selected_count: rung.selected_count,
         effective_trade_count: rung.effective_trade_count,
         trades,
         untraded,
+        balance,
         achieved_net_base: money_string(rung.achieved_net_base),
         residual_base: money_string(rung.residual_base),
         coverage_percent: rung.coverage_percent.map(|value| format!("{value:.2}")),
+        total_gap_before_base: money_string(rung.total_gap_before_base),
+        total_gap_after_base: money_string(rung.total_gap_after_base),
     })
 }
 
@@ -275,6 +297,22 @@ fn serialize_untraded(
     Ok(RebalanceUntradedResponse {
         instrument: InstrumentResponse::from_row(&prepared.instrument)?,
         reason: untraded.reason.as_str().to_owned(),
+    })
+}
+
+fn serialize_balance(
+    entry: &CandidateBalance,
+    prepared_by_id: &BTreeMap<i64, &PreparedCandidate>,
+) -> Result<RebalanceBalanceResponse, ApiError> {
+    let prepared = lookup_prepared(prepared_by_id, entry.instrument_id)?;
+    Ok(RebalanceBalanceResponse {
+        instrument: InstrumentResponse::from_row(&prepared.instrument)?,
+        gap_before_base: money_string(entry.gap_before_base),
+        gap_after_base: money_string(entry.gap_after_base),
+        gap_before_percent: entry.gap_before_percent.map(|value| format!("{value:.2}")),
+        gap_after_percent: entry.gap_after_percent.map(|value| format!("{value:.2}")),
+        status_before: entry.status_before.as_str(),
+        status_after: entry.status_after.as_str(),
     })
 }
 
@@ -392,6 +430,42 @@ mod tests {
         )
         .expect("achieved net base decimal");
         assert!(negative_achieved < Decimal::ZERO);
+    }
+
+    #[tokio::test]
+    async fn rungs_report_post_trade_balance() {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "AAA", 100, "1000", "Low").await;
+        seed_valued(&state, "BBB", 300, "1000", "Medium").await;
+        seed_valued(&state, "CCC", 300, "1000", "High").await;
+
+        let (status, body) = send(&state, "GET", "/api/rebalance?amount=0", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_plan_status(&body, "available");
+
+        // Pool 700k, weights 1/2/4 → targets 100k/200k/400k → gaps 0/+100k/−100k.
+        // Rung 2 sells BBB 100k and buys CCC 100k, closing both gaps.
+        let rung = &body["plan"]["rungs"][1];
+        let balance = rung["balance"].as_array().expect("balance");
+        assert_eq!(balance.len(), 3);
+
+        assert_eq!(balance[0]["instrument"]["symbol"], "AAA");
+        assert_eq!(balance[0]["gap_before_base"], "0.00");
+        assert_eq!(balance[0]["status_before"], "on_target");
+
+        assert_eq!(balance[1]["instrument"]["symbol"], "BBB");
+        assert_eq!(balance[1]["gap_before_base"], "100000.00");
+        assert_eq!(balance[1]["gap_before_percent"], "50.00");
+        assert_eq!(balance[1]["status_before"], "above");
+        assert_eq!(balance[1]["gap_after_base"], "0.00");
+        assert_eq!(balance[1]["status_after"], "on_target");
+
+        assert_eq!(balance[2]["instrument"]["symbol"], "CCC");
+        assert_eq!(balance[2]["gap_before_base"], "-100000.00");
+        assert_eq!(balance[2]["status_before"], "below");
+
+        assert_eq!(rung["total_gap_before_base"], "200000.00");
+        assert_eq!(rung["total_gap_after_base"], "0.00");
     }
 
     #[tokio::test]

@@ -7,6 +7,8 @@
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, RoundingStrategy};
 
+use super::conviction::{gap_band_status, TargetStatus};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TradeSide {
     Buy,
@@ -55,14 +57,35 @@ pub struct UntradedCandidate {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct CandidateBalance {
+    pub instrument_id: i64,
+    /// Signed display gap vs the post-offset target: value − target.
+    /// Positive = above target. Note: equals −ideal_delta.
+    pub gap_before_base: Decimal,
+    /// gap_before_base + this rung's net traded amount for the candidate.
+    pub gap_after_base: Decimal,
+    /// Gaps as percent of the post-offset target; None when the target is
+    /// not strictly positive (defensive; not expected in practice).
+    pub gap_before_percent: Option<Decimal>,
+    pub gap_after_percent: Option<Decimal>,
+    pub status_before: TargetStatus,
+    pub status_after: TargetStatus,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct RebalanceRung {
     pub selected_count: usize,
     pub trades: Vec<PlannedTrade>,
     pub untraded: Vec<UntradedCandidate>,
+    pub balance: Vec<CandidateBalance>,
     pub effective_trade_count: usize,
     pub achieved_net_base: Decimal,
     pub residual_base: Decimal,
     pub coverage_percent: Option<Decimal>,
+    /// Σ|gap_before| over all candidates (the planner's G).
+    pub total_gap_before_base: Decimal,
+    /// Σ|gap_after| over all candidates (the planner's G′).
+    pub total_gap_after_base: Decimal,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -607,6 +630,7 @@ fn build_rung(
 
     let mut trades = Vec::new();
     let mut untraded = Vec::new();
+    let mut balance = Vec::with_capacity(candidates.len());
     let mut achieved_net_base = Decimal::ZERO;
     let mut g = Decimal::ZERO;
     let mut g_prime = Decimal::ZERO;
@@ -615,6 +639,39 @@ fn build_rung(
         let candidate = &candidates[idx];
         let ideal_delta = ideal_deltas[idx];
         let actual_net = Decimal::from(quantities.quantities[idx]) * candidate.price_base;
+        let gap_before = -ideal_delta;
+        let gap_after = gap_before + actual_net;
+        let target = candidate.market_value_base + ideal_delta;
+        let (gap_before_percent, gap_after_percent, status_before, status_after) =
+            if target > Decimal::ZERO {
+                let hundred = Decimal::from(100);
+                let before_percent = gap_before / target * hundred;
+                let after_percent = gap_after / target * hundred;
+                (
+                    Some(before_percent),
+                    Some(after_percent),
+                    gap_band_status(before_percent),
+                    gap_band_status(after_percent),
+                )
+            } else {
+                (
+                    None,
+                    None,
+                    TargetStatus::Unavailable,
+                    TargetStatus::Unavailable,
+                )
+            };
+
+        balance.push(CandidateBalance {
+            instrument_id: candidate.instrument_id,
+            gap_before_base: gap_before,
+            gap_after_base: gap_after,
+            gap_before_percent,
+            gap_after_percent,
+            status_before,
+            status_after,
+        });
+
         achieved_net_base += actual_net;
         g += ideal_delta.abs();
         g_prime += (actual_net - ideal_delta).abs();
@@ -660,10 +717,13 @@ fn build_rung(
         selected_count,
         trades,
         untraded,
+        balance,
         effective_trade_count,
         achieved_net_base,
         residual_base: offset - achieved_net_base,
         coverage_percent,
+        total_gap_before_base: g,
+        total_gap_after_base: g_prime,
     }
 }
 
@@ -673,6 +733,7 @@ mod tests {
         build_ladder, build_rung, ideal_deltas, redistribute_selected, resolve_quantities,
         RebalanceCandidate, RebalanceUnavailable, TradeSide, UntradedReason,
     };
+    use crate::domain::TargetStatus;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
 
@@ -986,6 +1047,52 @@ mod tests {
             .rungs
             .iter()
             .all(|rung| rung.coverage_percent.is_none()));
+    }
+
+    #[test]
+    fn balance_reports_before_after_gaps_and_side_flips() {
+        // Equal weights, pool 300, target 100 each: gaps +40, −25, −15.
+        let candidates = vec![
+            candidate(1, dec!(1), dec!(140), dec!(0.5), 280),
+            candidate(2, dec!(1), dec!(75), dec!(0.5), 150),
+            candidate(3, dec!(1), dec!(85), dec!(0.5), 170),
+        ];
+        let ladder = build_ladder(&candidates, Decimal::ZERO).expect("ladder");
+
+        // N = 2 selects instruments 1 and 2 (largest |delta|). The net-zero
+        // constraint spreads the unselected −15 across them: sell 32.50 of 1,
+        // buy 32.50 of 2 — pushing instrument 2 past its target.
+        let rung = &ladder.rungs[1];
+        let balance = &rung.balance;
+
+        assert_eq!(balance[0].gap_before_base, dec!(40));
+        assert_eq!(balance[1].gap_before_base, dec!(-25));
+        assert_eq!(balance[2].gap_before_base, dec!(-15));
+        assert_eq!(balance[0].status_before, TargetStatus::Above);
+        assert_eq!(balance[1].status_before, TargetStatus::Below);
+
+        assert_eq!(balance[0].gap_after_base, dec!(7.5));
+        assert_eq!(balance[1].gap_after_base, dec!(7.5));
+        assert_eq!(balance[1].status_after, TargetStatus::Above); // flipped side
+                                                                  // Unselected candidate is untouched.
+        assert_eq!(balance[2].gap_after_base, balance[2].gap_before_base);
+
+        assert_eq!(balance[1].gap_before_percent, Some(dec!(-25)));
+        assert_eq!(rung.total_gap_before_base, dec!(80));
+        assert_eq!(rung.total_gap_after_base, dec!(30));
+    }
+
+    #[test]
+    fn balance_gap_after_sums_to_minus_residual_at_every_rung() {
+        let ladder = build_ladder(&worked_fixture(), dec!(50000)).expect("ladder");
+        for rung in &ladder.rungs {
+            let sum_after: Decimal = rung.balance.iter().map(|b| b.gap_after_base).sum();
+            assert_eq!(sum_after, -rung.residual_base);
+            let total_before: Decimal = rung.balance.iter().map(|b| b.gap_before_base.abs()).sum();
+            let total_after: Decimal = rung.balance.iter().map(|b| b.gap_after_base.abs()).sum();
+            assert_eq!(total_before, rung.total_gap_before_base);
+            assert_eq!(total_after, rung.total_gap_after_base);
+        }
     }
 
     #[test]

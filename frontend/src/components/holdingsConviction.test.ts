@@ -6,9 +6,11 @@ import {
   convictionEditsToChanges,
   convictionRank,
   effectiveConviction,
+  gapBarGeometry,
   hasConvictionEdits,
   holdingConvictionSearchText,
   pendingConvictionChanges,
+  TARGET_GAP_BAR_CLAMP_PERCENT,
   targetGapBar,
   targetGapPercentField,
   targetStatusRank,
@@ -196,6 +198,18 @@ describe("target gap bar", () => {
       target("below", "2000.00", "-717.00", "-35.85"),
     );
     expect(field).toEqual({ status: "available", value: "-35.85" });
+  });
+});
+
+describe("gapBarGeometry", () => {
+  it("maps sign to side and clamps magnitude to the half-track", () => {
+    expect(gapBarGeometry(0)).toEqual({ side: "on_target", widthPercent: 0 });
+    expect(gapBarGeometry(25)).toEqual({ side: "above", widthPercent: 25 });
+    expect(gapBarGeometry(-25)).toEqual({ side: "below", widthPercent: 25 });
+    expect(gapBarGeometry(TARGET_GAP_BAR_CLAMP_PERCENT * 3)).toEqual({
+      side: "above",
+      widthPercent: 50,
+    });
   });
 });
 

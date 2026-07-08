@@ -3,9 +3,11 @@ import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
 import type {
   Instrument,
   RebalanceResponse,
+  RebalanceRung,
   RebalanceTrade,
 } from "../api/types";
 import {
+  buildRebalanceBalanceRows,
   buildRebalancePageViewModel,
   rebalanceTradeCountLabel,
   rebalanceUnavailableMessage,
@@ -62,9 +64,40 @@ function response(): RebalanceResponse {
           effective_trade_count: 1,
           trades: [trade(1, "AAA", "sell", 100, "1000.00", "100000.00")],
           untraded: [],
+          balance: [
+            {
+              instrument: instrument(1, "AAA"),
+              gap_before_base: "0.00",
+              gap_after_base: "-100000.00",
+              gap_before_percent: "0.00",
+              gap_after_percent: "-100.00",
+              status_before: "on_target",
+              status_after: "below",
+            },
+            {
+              instrument: instrument(2, "BBB"),
+              gap_before_base: "100000.00",
+              gap_after_base: "100000.00",
+              gap_before_percent: "50.00",
+              gap_after_percent: "50.00",
+              status_before: "above",
+              status_after: "above",
+            },
+            {
+              instrument: instrument(3, "CCC"),
+              gap_before_base: "-100000.00",
+              gap_after_base: "-100000.00",
+              gap_before_percent: "-25.00",
+              gap_after_percent: "-25.00",
+              status_before: "below",
+              status_after: "below",
+            },
+          ],
           achieved_net_base: "-100000.00",
           residual_base: "101234.50",
           coverage_percent: "50.00",
+          total_gap_before_base: "200000.00",
+          total_gap_after_base: "300000.00",
         },
         {
           selected_count: 3,
@@ -90,9 +123,40 @@ function response(): RebalanceResponse {
             ),
           ],
           untraded: [{ instrument: instrument(1, "AAA"), reason: "too_small" }],
+          balance: [
+            {
+              instrument: instrument(1, "AAA"),
+              gap_before_base: "0.00",
+              gap_after_base: "0.00",
+              gap_before_percent: "0.00",
+              gap_after_percent: "0.00",
+              status_before: "on_target",
+              status_after: "on_target",
+            },
+            {
+              instrument: instrument(2, "BBB"),
+              gap_before_base: "100.00",
+              gap_after_base: "49.90",
+              gap_before_percent: "50.00",
+              gap_after_percent: "24.95",
+              status_before: "above",
+              status_after: "above",
+            },
+            {
+              instrument: instrument(3, "CCC"),
+              gap_before_base: "-100.00",
+              gap_after_base: "0.00",
+              gap_before_percent: "-25.00",
+              gap_after_percent: "0.00",
+              status_before: "below",
+              status_after: "on_target",
+            },
+          ],
           achieved_net_base: "9950.10",
           residual_base: "49.90",
           coverage_percent: "82.50",
+          total_gap_before_base: "200.00",
+          total_gap_after_base: "49.90",
         },
       ],
     },
@@ -152,10 +216,10 @@ describe("rebalanceViewModel", () => {
     expect(vm.selectedRungFreshness).toBe("warning_stale_4_days");
     expect(vm.warningBanner?.label).toBe("Stale 4 days");
     expect(vm.warningBanner?.message).toContain("warning-stale trades");
-    expect(vm.untradedRows).toHaveLength(1);
-    expect(vm.untradedRows[0].instrument.symbol).toBe("AAA");
-    expect(vm.untradedRows[0].reason).toBe("too_small");
-    expect(vm.untradedRows[0].reasonLabel).toBe("Too small");
+    expect(vm.balanceRows).toHaveLength(3);
+    expect(vm.balanceRows[0].actionKind).toBe("untraded");
+    expect(vm.balanceRows[0].actionLabel).toBe("Too small");
+    expect(vm.balanceRows[1].actionKind).toBe("trade");
   });
 
   it("keeps minor-stale trades out of the plan-level warning banner", () => {
@@ -184,9 +248,22 @@ describe("rebalanceViewModel", () => {
                 ),
               ],
               untraded: [],
+              balance: [
+                {
+                  instrument: instrument(2, "BBB"),
+                  gap_before_base: "0.00",
+                  gap_after_base: "0.00",
+                  gap_before_percent: "0.00",
+                  gap_after_percent: "0.00",
+                  status_before: "on_target",
+                  status_after: "on_target",
+                },
+              ],
               achieved_net_base: "6147.60",
               residual_base: "-4913.10",
               coverage_percent: "100.00",
+              total_gap_before_base: "0.00",
+              total_gap_after_base: "0.00",
             },
           ],
         },
@@ -281,9 +358,31 @@ describe("rebalanceViewModel", () => {
                 { instrument: instrument(1, "AAA"), reason: "too_small" },
                 { instrument: instrument(2, "BBB"), reason: "too_small" },
               ],
+              balance: [
+                {
+                  instrument: instrument(1, "AAA"),
+                  gap_before_base: "0.00",
+                  gap_after_base: "0.00",
+                  gap_before_percent: "0.00",
+                  gap_after_percent: "0.00",
+                  status_before: "on_target",
+                  status_after: "on_target",
+                },
+                {
+                  instrument: instrument(2, "BBB"),
+                  gap_before_base: "0.00",
+                  gap_after_base: "0.00",
+                  gap_before_percent: "0.00",
+                  gap_after_percent: "0.00",
+                  status_before: "on_target",
+                  status_after: "on_target",
+                },
+              ],
               achieved_net_base: "0.00",
               residual_base: "1234.50",
               coverage_percent: "0.00",
+              total_gap_before_base: "0.00",
+              total_gap_after_base: "0.00",
             },
           ],
         },
@@ -321,9 +420,31 @@ describe("rebalanceViewModel", () => {
                 { instrument: instrument(1, "AAA"), reason: "on_target" },
                 { instrument: instrument(2, "BBB"), reason: "on_target" },
               ],
+              balance: [
+                {
+                  instrument: instrument(1, "AAA"),
+                  gap_before_base: "0.00",
+                  gap_after_base: "0.00",
+                  gap_before_percent: "0.00",
+                  gap_after_percent: "0.00",
+                  status_before: "on_target",
+                  status_after: "on_target",
+                },
+                {
+                  instrument: instrument(2, "BBB"),
+                  gap_before_base: "0.00",
+                  gap_after_base: "0.00",
+                  gap_before_percent: "0.00",
+                  gap_after_percent: "0.00",
+                  status_before: "on_target",
+                  status_after: "on_target",
+                },
+              ],
               achieved_net_base: "0.00",
               residual_base: "1234.50",
               coverage_percent: "0.00",
+              total_gap_before_base: "0.00",
+              total_gap_after_base: "0.00",
             },
           ],
         },
@@ -355,5 +476,83 @@ describe("rebalanceViewModel", () => {
 
     expect(selectRebalanceRung(response(), 9)?.position).toBe(2);
     expect(vm.slider?.value).toBe(2);
+  });
+});
+
+describe("buildRebalanceBalanceRows", () => {
+  function balanceRung(): RebalanceRung {
+    return {
+      selected_count: 2,
+      effective_trade_count: 2,
+      trades: [
+        {
+          instrument: instrument(1, "AAA"),
+          side: "sell",
+          shares: 65,
+          price_base: "0.50",
+          amount_base: "32.50",
+          freshness: "fresh",
+        },
+      ],
+      untraded: [{ instrument: instrument(2, "BBB"), reason: "too_small" }],
+      balance: [
+        {
+          instrument: instrument(1, "AAA"),
+          gap_before_base: "40.00",
+          gap_after_base: "7.50",
+          gap_before_percent: "40.00",
+          gap_after_percent: "7.50",
+          status_before: "above",
+          status_after: "above",
+        },
+        {
+          instrument: instrument(2, "BBB"),
+          gap_before_base: "-25.00",
+          gap_after_base: "7.50",
+          gap_before_percent: "-25.00",
+          gap_after_percent: "7.50",
+          status_before: "below",
+          status_after: "above",
+        },
+        {
+          instrument: instrument(3, "CCC"),
+          gap_before_base: "-15.00",
+          gap_after_base: "-15.00",
+          gap_before_percent: "-7.50",
+          gap_after_percent: "-7.50",
+          status_before: "below",
+          status_after: "below",
+        },
+      ],
+      achieved_net_base: "0.00",
+      residual_base: "0.00",
+      coverage_percent: "62.50",
+      total_gap_before_base: "80.00",
+      total_gap_after_base: "30.00",
+    };
+  }
+
+  it("joins trades and untraded reasons onto balance rows in balance order", () => {
+    const rows = buildRebalanceBalanceRows(balanceRung());
+    expect(rows.map((row) => row.actionKind)).toEqual([
+      "trade",
+      "untraded",
+      "unselected",
+    ]);
+    expect(rows[0].actionLabel).toBe("Sell SEK 32.50");
+    expect(rows[1].actionLabel).toBe("Too small");
+    expect(rows[2].actionLabel).toBe("—");
+  });
+
+  it("flags only below↔above flips and builds before/after bar geometry", () => {
+    const rows = buildRebalanceBalanceRows(balanceRung());
+    expect(rows.map((row) => row.flipsSide)).toEqual([false, true, false]);
+    expect(rows[1].bar?.before).toEqual({ side: "below", widthPercent: 25 });
+    expect(rows[1].bar?.after).toEqual({ side: "above", widthPercent: 7.5 });
+  });
+
+  it("renders an after-gap label with amount and percent", () => {
+    const rows = buildRebalanceBalanceRows(balanceRung());
+    expect(rows[1].afterGapLabel).toBe("SEK 7.50 (7.50%)");
   });
 });

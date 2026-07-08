@@ -231,9 +231,12 @@ export interface RebalanceRung {
   effective_trade_count: number;
   trades: RebalanceTrade[];
   untraded: RebalanceUntraded[];
+  balance: RebalanceBalanceEntry[];
   achieved_net_base: string;
   residual_base: string;
   coverage_percent: string | null;
+  total_gap_before_base: string;
+  total_gap_after_base: string;
 }
 
 export interface RebalanceTrade {
@@ -248,6 +251,16 @@ export interface RebalanceTrade {
 export interface RebalanceUntraded {
   instrument: Instrument;
   reason: string;
+}
+
+export interface RebalanceBalanceEntry {
+  instrument: Instrument;
+  gap_before_base: string;
+  gap_after_base: string;
+  gap_before_percent: string | null;
+  gap_after_percent: string | null;
+  status_before: TargetStatus;
+  status_after: TargetStatus;
 }
 
 export interface RefreshRunSummary {

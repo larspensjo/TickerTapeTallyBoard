@@ -220,6 +220,37 @@ Untraded reasons are:
 The selected count reflects the rung selection, not the number of executable
 orders. `residual_base = C - achieved_net_base` at every rung.
 
+## Per-Rung Balance Report
+
+Each rung also reports one balance entry per pool candidate, in input order,
+covering traded, selected-untraded, and unselected candidates alike:
+
+- `gap_before_base` / `gap_after_base`
+- `gap_before_percent` / `gap_after_percent`
+- `status_before` / `status_after`
+
+Balance gaps use the display sign convention shared with Holdings targets:
+`gap = value − target`, positive above target. This is the negation of the
+planner's internal delta `d = target − value`.
+
+Both gaps are measured against the post-offset targets `t_i = P' * w_i / W`.
+With a zero offset these equal the Holdings targets; with a nonzero offset
+they deliberately differ, because the plan aims at the post-offset pool.
+
+`gap_after_base = gap_before_base + q_i * p_i`. Invariants:
+
+- `Σ gap_after_base = -residual_base` at every rung
+- `total_gap_before_base = Σ|gap_before| = G`
+- `total_gap_after_base = Σ|gap_after| = G′`, so coverage remains
+  `100 * (G - G′) / G`
+
+Statuses reuse the shared ±5% display tolerance band from conviction targets.
+Percent fields are `None`/`null` only if a candidate's target is not strictly
+positive, which the planner's feasibility checks make unreachable in practice.
+
+The rung totals `total_gap_before_base` and `total_gap_after_base` are
+serialized as money strings; per-candidate percents as two-decimal strings.
+
 ## API Contract
 
 `GET /api/rebalance?amount=<decimal>`
@@ -256,3 +287,9 @@ string with two decimals or `null`.
 The total response size is `O(K^2)` across rungs, because there are `K` rungs
 and each rung can include up to `K` trades. That is acceptable at this app's
 scale, where the pool is expected to stay in the tens of instruments.
+
+Because the plan must absorb the requested offset into the selected rung, a
+small-N rung can concentrate the full offset into only a few traded names and
+push them across their own target bands. The balance report exists to make
+those overshoots visible rather than hiding them inside the aggregate coverage
+number.

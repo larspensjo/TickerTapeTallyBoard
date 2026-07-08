@@ -12,7 +12,7 @@ mod valuation;
 
 #[allow(unused_imports)]
 pub use conviction::{
-    derive_targets, pool_membership, ConvictionLevel, ConvictionTargetInput,
+    derive_targets, gap_band_status, pool_membership, ConvictionLevel, ConvictionTargetInput,
     ConvictionTargetOutput, MarketValueState, TargetField, TargetReason, TargetStatus,
 };
 
@@ -30,8 +30,8 @@ pub use position::{
 };
 #[allow(unused_imports)]
 pub use rebalance::{
-    build_ladder, PlannedTrade, RebalanceCandidate, RebalanceLadder, RebalanceRung,
-    RebalanceUnavailable, TradeSide, UntradedCandidate, UntradedReason,
+    build_ladder, CandidateBalance, PlannedTrade, RebalanceCandidate, RebalanceLadder,
+    RebalanceRung, RebalanceUnavailable, TradeSide, UntradedCandidate, UntradedReason,
 };
 #[allow(unused_imports)]
 pub use transaction::{

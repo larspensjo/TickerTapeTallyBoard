@@ -1,11 +1,12 @@
 import { Clock3 } from "lucide-react";
-import { type CSSProperties, useEffect, useReducer, useRef } from "react";
+import { type CSSProperties, useEffect, useReducer } from "react";
 import { useRebalancePlan } from "../api/queries";
 import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
 import { InstrumentCell } from "./InstrumentCell";
 import {
   buildRebalancePageViewModel,
   clampInteger,
+  type RebalanceBalanceBarViewModel,
 } from "./rebalanceViewModel";
 
 export interface RebalancePageState {
@@ -13,6 +14,7 @@ export interface RebalancePageState {
   committedAmount: string | null;
   sliderPosition: number;
   lastAvailableRungCount: number | null;
+  sliderRestored: boolean;
 }
 
 export type RebalancePageAction =
@@ -21,12 +23,73 @@ export type RebalancePageAction =
   | { type: "sliderChanged"; sliderPosition: number }
   | { type: "planChanged"; rungCount: number | null };
 
-const initialState: RebalancePageState = {
-  amountInput: "",
-  committedAmount: null,
+export const initialState: RebalancePageState = {
+  amountInput: "0",
+  committedAmount: "0",
   sliderPosition: 1,
   lastAvailableRungCount: null,
+  sliderRestored: false,
 };
+
+const REBALANCE_PAGE_STATE_KEY = "rebalance-page-state";
+
+interface PersistedRebalancePageState {
+  committedAmount: string;
+  sliderPosition: number;
+}
+
+function storage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function loadRebalancePageState(): RebalancePageState {
+  const saved = storage()?.getItem(REBALANCE_PAGE_STATE_KEY);
+  if (!saved) {
+    return initialState;
+  }
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<PersistedRebalancePageState>;
+    const committedAmount = normalizeRebalanceAmount(
+      parsed.committedAmount ?? null,
+    );
+    if (committedAmount === null || typeof parsed.sliderPosition !== "number") {
+      return initialState;
+    }
+
+    return {
+      amountInput: committedAmount,
+      committedAmount,
+      sliderPosition: Math.max(1, Math.trunc(parsed.sliderPosition)),
+      lastAvailableRungCount: null,
+      sliderRestored: true,
+    };
+  } catch {
+    return initialState;
+  }
+}
+
+export function saveRebalancePageState(state: RebalancePageState): void {
+  if (state.committedAmount === null) {
+    return;
+  }
+
+  if (!state.sliderRestored && state.lastAvailableRungCount === null) {
+    return;
+  }
+
+  storage()?.setItem(
+    REBALANCE_PAGE_STATE_KEY,
+    JSON.stringify({
+      committedAmount: state.committedAmount,
+      sliderPosition: state.sliderPosition,
+    } satisfies PersistedRebalancePageState),
+  );
+}
 
 export function rebalancePageReducer(
   state: RebalancePageState,
@@ -61,15 +124,10 @@ export function rebalancePageReducer(
       }
 
       const rungCount = Math.max(1, Math.trunc(action.rungCount));
-      if (state.lastAvailableRungCount === null) {
-        return {
-          ...state,
-          lastAvailableRungCount: rungCount,
-          sliderPosition: rungCount,
-        };
-      }
-
-      const sliderPosition = clampInteger(state.sliderPosition, 1, rungCount);
+      const sliderPosition =
+        state.lastAvailableRungCount === null && !state.sliderRestored
+          ? rungCount
+          : clampInteger(state.sliderPosition, 1, rungCount);
       if (
         state.lastAvailableRungCount === rungCount &&
         state.sliderPosition === sliderPosition
@@ -87,30 +145,12 @@ export function rebalancePageReducer(
 }
 
 export function RebalancePage() {
-  const [state, dispatch] = useReducer(rebalancePageReducer, initialState);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [state, dispatch] = useReducer(
+    rebalancePageReducer,
+    undefined,
+    loadRebalancePageState,
+  );
   const rebalanceQuery = useRebalancePlan(state.committedAmount);
-
-  useEffect(() => {
-    if (debounceRef.current !== null) {
-      clearTimeout(debounceRef.current);
-    }
-
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null;
-      dispatch({
-        type: "amountCommitted",
-        amount: normalizeRebalanceAmount(state.amountInput),
-      });
-    }, 400);
-
-    return () => {
-      if (debounceRef.current !== null) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-    };
-  }, [state.amountInput]);
 
   useEffect(() => {
     if (rebalanceQuery.data?.plan.status === "available") {
@@ -120,6 +160,10 @@ export function RebalancePage() {
       });
     }
   }, [rebalanceQuery.data]);
+
+  useEffect(() => {
+    saveRebalancePageState(state);
+  }, [state]);
 
   const viewModel = buildRebalancePageViewModel({
     amountInput: state.amountInput,
@@ -132,11 +176,6 @@ export function RebalancePage() {
   });
 
   const commitNow = () => {
-    if (debounceRef.current !== null) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
-
     dispatch({
       type: "amountCommitted",
       amount: normalizeRebalanceAmount(state.amountInput),
@@ -187,6 +226,13 @@ export function RebalancePage() {
               }}
             />
           </label>
+          <button
+            type="button"
+            className="button outline rebalance-apply-button"
+            onClick={commitNow}
+          >
+            Apply
+          </button>
 
           {viewModel.slider ? (
             <div className="rebalance-slider-block">
@@ -328,48 +374,65 @@ export function RebalancePage() {
               </div>
             )}
 
-            {viewModel.untradedRows.length > 0 ? (
-              <div className="rebalance-untraded">
-                <div className="panel-header compact">
-                  <div>
-                    <p className="eyebrow">Untraded</p>
-                    <h2>Selected but not executed</h2>
-                  </div>
+            <div className="rebalance-balance">
+              <div className="panel-header compact">
+                <div>
+                  <p className="eyebrow">Resulting balance</p>
+                  <h2>Gap vs plan target</h2>
+                </div>
+                {viewModel.balanceTotalLabel ? (
                   <span className="status-chip compact">
-                    {viewModel.slider?.tradeCountLabel}
+                    Total gap {viewModel.balanceTotalLabel}
                   </span>
-                </div>
-                <div className="table-wrap">
-                  <table aria-label="Rebalance untraded candidates">
-                    <thead>
-                      <tr>
-                        <th>Instrument</th>
-                        <th>Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {viewModel.untradedRows.map((row) => (
-                        <tr key={`${row.instrument.id}-${row.reason}`}>
-                          <td>
-                            <InstrumentCell
-                              instrumentId={row.instrument.id}
-                              name={row.instrument.name}
-                              symbol={row.instrument.symbol}
-                              exchange={row.instrument.exchange}
-                            />
-                          </td>
-                          <td>
-                            <span className="status-chip">
-                              {row.reasonLabel}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                ) : null}
               </div>
-            ) : null}
+              <div className="table-wrap">
+                <table aria-label="Post-trade balance">
+                  <thead>
+                    <tr>
+                      <th>Instrument</th>
+                      <th>Action</th>
+                      <th>Balance</th>
+                      <th className="number-head">After gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewModel.balanceRows.map((row) => (
+                      <tr key={row.instrument.id}>
+                        <td>
+                          <InstrumentCell
+                            instrumentId={row.instrument.id}
+                            name={row.instrument.name}
+                            symbol={row.instrument.symbol}
+                            exchange={row.instrument.exchange}
+                          />
+                        </td>
+                        <td>
+                          {row.actionKind === "trade" ? (
+                            <span className="type-chip">{row.actionLabel}</span>
+                          ) : row.actionKind === "untraded" ? (
+                            <span className="status-chip">
+                              {row.actionLabel}
+                            </span>
+                          ) : (
+                            <span>{row.actionLabel}</span>
+                          )}
+                        </td>
+                        <td>{row.bar ? balanceBarCell(row.bar) : null}</td>
+                        <td className="number">
+                          {row.afterGapLabel}
+                          {row.flipsSide ? (
+                            <span className="status-chip warning compact rebalance-flip-chip">
+                              Flips target band
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </>
         ) : null}
       </article>
@@ -406,5 +469,25 @@ function tradeFreshnessCell({
     >
       {freshnessLabel}
     </span>
+  );
+}
+
+function balanceBarCell(bar: RebalanceBalanceBarViewModel) {
+  return (
+    <div className="target-gap-track" title={bar.tooltip}>
+      <span className="target-gap-axis" />
+      {bar.before.side !== "on_target" ? (
+        <span
+          className={`target-gap-fill ghost ${bar.before.side}`}
+          style={{ width: `${bar.before.widthPercent}%` }}
+        />
+      ) : null}
+      {bar.after.side !== "on_target" ? (
+        <span
+          className={`target-gap-fill ${bar.after.side}`}
+          style={{ width: `${bar.after.widthPercent}%` }}
+        />
+      ) : null}
+    </div>
   );
 }

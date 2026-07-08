@@ -248,7 +248,12 @@ pub(super) fn fx_snapshot_response(snapshot: &crate::domain::FxSnapshot) -> FxSn
 }
 
 pub(super) fn money_string(value: Decimal) -> String {
-    let raw = value.round_dp(2).to_string();
+    let rounded = value.round_dp(2);
+    if rounded.is_zero() {
+        return "0.00".to_owned();
+    }
+
+    let raw = rounded.to_string();
     match raw.split_once('.') {
         Some((whole, fractional)) => {
             let two_digits = match fractional.len() {
@@ -308,5 +313,18 @@ pub(super) fn serialize_freshness(freshness: DataFreshness) -> String {
         DataFreshness::WarningStale { trading_days } => {
             format!("warning_stale_{}_days", trading_days)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_decimal_macros::dec;
+
+    use super::money_string;
+
+    #[test]
+    fn money_string_formats_two_decimals_and_normalizes_negative_zero() {
+        assert_eq!(money_string(dec!(12.3)), "12.30");
+        assert_eq!(money_string(dec!(-0.001)), "0.00");
     }
 }

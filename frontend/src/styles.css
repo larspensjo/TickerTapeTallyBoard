@@ -511,6 +511,10 @@ table {
   border-bottom: 1px solid var(--hairline);
 }
 
+.rebalance-apply-button {
+  align-self: flex-end;
+}
+
 .rebalance-amount-field {
   min-width: min(100%, 360px);
 }
@@ -879,6 +883,33 @@ tbody tr:last-child td {
   right: 50%;
   border-radius: 3px 0 0 3px;
   background: var(--down);
+}
+
+/* Rebalance balance preview: the pre-trade gap renders as a hollow ghost
+   behind the solid post-trade fill. */
+.target-gap-fill.ghost {
+  background: transparent;
+  border: 1px solid;
+  opacity: 0.65;
+}
+
+.target-gap-fill.ghost.above {
+  border-color: var(--up);
+  background: transparent;
+}
+
+.target-gap-fill.ghost.below {
+  border-color: var(--down);
+  background: transparent;
+}
+
+.rebalance-balance {
+  padding: var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+
+.rebalance-flip-chip {
+  margin-left: 8px;
 }
 
 /* Conviction column: the selector with the SEK target value beneath it. */
