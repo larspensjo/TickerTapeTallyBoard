@@ -15,7 +15,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      // Ride out brief connect stalls in the dev proxy hop (a single retry
+      // landed inside the same failure window and still surfaced an error).
+      retry: 3,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 3000),
       staleTime: 30_000,
     },
   },
