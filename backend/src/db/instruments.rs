@@ -16,6 +16,7 @@ const UPDATE_ISIN_SQL: &str = "UPDATE instruments SET isin = ? WHERE id = ? \
      RETURNING id, symbol, exchange, name, type, currency, isin, conviction";
 const UPDATE_CONVICTION_SQL: &str = "UPDATE instruments SET conviction = ? WHERE id = ? \
      RETURNING id, symbol, exchange, name, type, currency, isin, conviction";
+const DELETE_SQL: &str = "DELETE FROM instruments WHERE id = ?";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct InstrumentRow {
@@ -380,6 +381,14 @@ pub async fn update_conviction_in_tx(
         .fetch_optional(&mut *conn)
         .await?;
     Ok(row)
+}
+
+/// Delete one instrument row inside a caller-managed transaction. Returns the
+/// number of affected rows so callers can distinguish a race from a normal
+/// success path.
+pub async fn delete_in_tx(conn: &mut SqliteConnection, id: i64) -> Result<u64, RepoError> {
+    let result = sqlx::query(DELETE_SQL).bind(id).execute(&mut *conn).await?;
+    Ok(result.rows_affected())
 }
 
 /// Apply several conviction changes in one SQL transaction. Every id must exist;

@@ -18,6 +18,7 @@ function filledState(): AddInstrumentState {
     name: "Microsoft",
     instrumentType: "Etf",
     currency: "EUR",
+    isin: "US5949181045",
     submitting: true,
     error: "old error",
   };
@@ -44,12 +45,22 @@ describe("addInstrumentReducer", () => {
     expect(next.name).toBe("");
     expect(next.instrumentType).toBe("Stock");
     expect(next.currency).toBe("USD");
+    expect(next.isin).toBe("");
     expect(next.submitting).toBe(false);
     expect(next.error).toBeNull();
     expect(next.result).toEqual({
       instrumentId: 17,
       messages: ["already exists"],
     });
+  });
+
+  it("updates the ISIN field and clears errors", () => {
+    const next = addInstrumentReducer(
+      { ...createInitialAddInstrumentState(), error: "boom" },
+      { type: "fieldChanged", field: "isin", value: "US1234567890" },
+    );
+    expect(next.isin).toBe("US1234567890");
+    expect(next.error).toBeNull();
   });
 });
 

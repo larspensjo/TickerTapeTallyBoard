@@ -8,8 +8,10 @@ import type {
   Transaction,
 } from "../api/types";
 import {
+  canDeleteInstrument,
   convictionPanelView,
   convictionResetVisible,
+  deleteInstrumentDisabledReason,
   findGainsRow,
   findHolding,
   findInstrument,
@@ -118,6 +120,14 @@ function makeHolding(instrumentId: number): Holding {
       target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
     },
     row_kind: "open",
+  };
+}
+
+function makeWatchlistHolding(instrumentId: number, quantity: number): Holding {
+  return {
+    ...makeHolding(instrumentId),
+    quantity,
+    row_kind: "watchlist",
   };
 }
 
@@ -252,6 +262,53 @@ describe("instrumentTransactions", () => {
 
   it("returns empty array when no transactions match", () => {
     expect(instrumentTransactions(txns, 99)).toHaveLength(0);
+  });
+});
+
+describe("canDeleteInstrument", () => {
+  it("allows deleting a never-traded zero-quantity watchlist instrument", () => {
+    expect(
+      canDeleteInstrument({
+        holding: makeWatchlistHolding(1, 0),
+        transactions: [],
+      }),
+    ).toBe(true);
+    expect(
+      deleteInstrumentDisabledReason({
+        holding: makeWatchlistHolding(1, 0),
+        transactions: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects instruments with transaction history", () => {
+    expect(
+      canDeleteInstrument({
+        holding: makeWatchlistHolding(1, 0),
+        transactions: [makeTransaction(1, 1, "Buy", 10)],
+      }),
+    ).toBe(false);
+    expect(
+      deleteInstrumentDisabledReason({
+        holding: makeWatchlistHolding(1, 0),
+        transactions: [makeTransaction(1, 1, "Buy", 10)],
+      }),
+    ).toBe("Only never-traded instruments can be deleted.");
+  });
+
+  it("rejects open positions even without transaction history in the selector input", () => {
+    expect(
+      canDeleteInstrument({
+        holding: makeHolding(1),
+        transactions: [],
+      }),
+    ).toBe(false);
+    expect(
+      deleteInstrumentDisabledReason({
+        holding: makeHolding(1),
+        transactions: [],
+      }),
+    ).toBe("Open positions cannot be deleted.");
   });
 });
 

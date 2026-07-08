@@ -10,6 +10,8 @@ const FIND_BY_INSTRUMENT_PROVIDER_SQL: &str = "SELECT id, instrument_id, provide
     FROM instrument_provider_symbols WHERE instrument_id = ? AND provider = ?";
 const LIST_BY_PROVIDER_SYMBOL_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at \
     FROM instrument_provider_symbols WHERE provider = ? AND provider_symbol = ? ORDER BY instrument_id, id";
+const DELETE_BY_INSTRUMENT_SQL: &str =
+    "DELETE FROM instrument_provider_symbols WHERE instrument_id = ?";
 const UPSERT_SQL: &str = "INSERT INTO instrument_provider_symbols \
        (instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at) \
      VALUES (?, ?, ?, ?, ?, ?, ?) \
@@ -100,6 +102,17 @@ pub async fn upsert(
         .fetch_one(pool)
         .await?;
     Ok(row)
+}
+
+pub async fn delete_by_instrument_id_in_tx(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    instrument_id: i64,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query(DELETE_BY_INSTRUMENT_SQL)
+        .bind(instrument_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 #[cfg(test)]

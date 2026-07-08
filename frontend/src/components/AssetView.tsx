@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  useDeleteInstrument,
   useGains,
   useHoldings,
   useInstrumentPrices,
@@ -20,8 +21,10 @@ import type {
 } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
 import {
+  canDeleteInstrument,
   convictionPanelView,
   convictionResetVisible,
+  deleteInstrumentDisabledReason,
   deriveAssetData,
   headerStatus,
   parseInstrumentId,
@@ -57,6 +60,7 @@ import { waterfallView } from "./waterfallViewModel";
 export function AssetView() {
   const { id: idParam } = useParams();
   const id = parseInstrumentId(idParam);
+  const navigate = useNavigate();
 
   const instrumentsQuery = useInstruments();
   // method is intentionally unset: the asset page shows method-independent current-position
@@ -67,6 +71,7 @@ export function AssetView() {
   const transactionsQuery = useTransactions();
   const priceStatusQuery = usePriceStatus();
   const pricesQuery = useInstrumentPrices(id);
+  const deleteInstrument = useDeleteInstrument();
 
   const isPending =
     instrumentsQuery.isPending ||
@@ -122,22 +127,55 @@ export function AssetView() {
     );
   }
 
+  const instrument = data.instrument;
   const instruments = instrumentsQuery.data ?? [];
   const gain = data.kind === "position" ? data.gain : null;
   const holding = data.kind === "position" ? data.holding : null;
   const splits = splitEvents(data.transactions);
+  const canDelete = canDeleteInstrument({
+    holding,
+    transactions: data.transactions,
+  });
+  const deleteDisabledReason = deleteInstrumentDisabledReason({
+    holding,
+    transactions: data.transactions,
+  });
+
+  async function handleDeleteInstrument() {
+    if (!canDelete) {
+      return;
+    }
+    if (
+      !window.confirm(
+        "Delete this never-traded instrument? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await deleteInstrument.mutateAsync(instrument.id);
+      navigate("/holdings");
+    } catch {
+      // Mutation state renders the error message below the header.
+    }
+  }
 
   return (
     <article className="asset-page">
       <AssetHeader
-        instrument={data.instrument}
+        instrument={instrument}
         gain={gain}
         priceStatus={data.priceStatus}
+        canDelete={canDelete}
+        deleteDisabledReason={deleteDisabledReason}
+        deletePending={deleteInstrument.isPending}
+        onDelete={handleDeleteInstrument}
       />
 
       <AssetConvictionPanel
-        key={data.instrument.id}
-        instrument={data.instrument}
+        key={instrument.id}
+        instrument={instrument}
         holding={holding}
       />
 
@@ -171,6 +209,11 @@ export function AssetView() {
         transactions={data.transactions}
         instruments={instruments}
       />
+      {deleteInstrument.isError ? (
+        <p className="asset-subtle down" role="alert">
+          Could not delete instrument: {deleteInstrument.error.message}
+        </p>
+      ) : null}
     </article>
   );
 }
@@ -179,10 +222,18 @@ function AssetHeader({
   instrument,
   gain,
   priceStatus,
+  canDelete,
+  deleteDisabledReason,
+  deletePending,
+  onDelete,
 }: {
   instrument: Instrument;
   gain: GainsRow | null;
   priceStatus: PriceStatusInstrument | null;
+  canDelete: boolean;
+  deleteDisabledReason: string | null;
+  deletePending: boolean;
+  onDelete: () => void;
 }) {
   const status = headerStatus(gain, priceStatus);
   const meta = [
@@ -201,13 +252,26 @@ function AssetHeader({
       </Link>
       <div className="asset-title-row">
         <h1>{instrument.name || instrument.symbol}</h1>
-        <span
-          className={
-            status.tone === "warning" ? "status-chip warning" : "status-chip"
-          }
-        >
-          {status.label}
-        </span>
+        <div className="asset-header-actions">
+          <span
+            className={
+              status.tone === "warning" ? "status-chip warning" : "status-chip"
+            }
+          >
+            {status.label}
+          </span>
+          <button
+            type="button"
+            className="button outline danger"
+            disabled={!canDelete || deletePending}
+            title={
+              canDelete ? "Delete instrument" : (deleteDisabledReason ?? "")
+            }
+            onClick={onDelete}
+          >
+            {deletePending ? "Deleting..." : "Delete instrument"}
+          </button>
+        </div>
       </div>
       <p className="asset-meta">{meta}</p>
     </header>

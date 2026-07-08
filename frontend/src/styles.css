@@ -1515,6 +1515,12 @@ th.number-head .sort-button {
   box-shadow: var(--focus-ring);
 }
 
+.form-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;
@@ -1590,6 +1596,12 @@ th.number-head .sort-button {
 .button.outline {
   background: transparent;
   border: 1px solid var(--hairline);
+}
+
+.button.outline.danger {
+  border-color: rgba(255, 77, 79, 0.28);
+  background: rgba(255, 77, 79, 0.06);
+  color: #ff8a8c;
 }
 
 .button.outline.danger:hover {
@@ -1698,6 +1710,13 @@ th.number-head .sort-button {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+}
+
+.asset-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .asset-meta {

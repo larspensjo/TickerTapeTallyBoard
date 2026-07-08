@@ -56,6 +56,10 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, code, message)
     }
 
+    pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, code, message)
+    }
+
     pub fn demo_read_only() -> Self {
         Self::new(
             StatusCode::FORBIDDEN,

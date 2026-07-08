@@ -24,7 +24,7 @@ use axum::{
     http::{Method, Request, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::{path::Path, sync::Arc};
@@ -99,6 +99,7 @@ fn api_router() -> Router<AppState> {
             get(instruments::list).post(instruments::create),
         )
         .route("/instruments/lookup", get(instrument_lookup::lookup))
+        .route("/instruments/{id}", delete(instruments::remove))
         .route(
             "/instruments/convictions",
             put(instruments::update_convictions),
@@ -201,6 +202,7 @@ mod tests {
                 "/api/instruments/1/conviction",
                 json!({"conviction":"Low"}),
             ),
+            ("DELETE", "/api/instruments/1", Value::Null),
             (
                 "PUT",
                 "/api/instruments/convictions",

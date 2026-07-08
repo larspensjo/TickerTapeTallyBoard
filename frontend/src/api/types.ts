@@ -27,6 +27,15 @@ export interface Instrument {
   conviction: Conviction;
 }
 
+export interface CreateInstrumentInput {
+  symbol: string;
+  exchange: string;
+  name: string;
+  type: InstrumentType;
+  currency: string;
+  isin?: string;
+}
+
 export interface ConvictionTarget {
   conviction: Conviction;
   status: TargetStatus;

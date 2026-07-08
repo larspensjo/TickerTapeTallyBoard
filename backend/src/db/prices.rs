@@ -26,6 +26,7 @@ const LIST_IN_RANGE_SQL: &str =
       AND (? IS NULL OR date >= ?) \
       AND (? IS NULL OR date <= ?) \
     ORDER BY date ASC, id ASC";
+const DELETE_BY_INSTRUMENT_SQL: &str = "DELETE FROM prices WHERE instrument_id = ?";
 const UPSERT_SQL: &str = "INSERT INTO prices \
        (instrument_id, provider, provider_symbol, date, close, currency, fetched_at) \
      VALUES (?, ?, ?, ?, ?, ?, ?) \
@@ -165,6 +166,17 @@ pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoE
         .fetch_one(pool)
         .await?;
     Ok(row)
+}
+
+pub async fn delete_by_instrument_id_in_tx(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    instrument_id: i64,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query(DELETE_BY_INSTRUMENT_SQL)
+        .bind(instrument_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 #[cfg(test)]

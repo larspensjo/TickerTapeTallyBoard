@@ -8,6 +8,7 @@ import { apiGet, apiSend, apiSendBytes, apiSendWithStatus } from "./client";
 import { normalizeRebalanceAmount } from "./rebalanceAmount";
 import type {
   Conviction,
+  CreateInstrumentInput,
   DateRange,
   GainsResponse,
   HealthResponse,
@@ -17,7 +18,6 @@ import type {
   ImportSource,
   Instrument,
   InstrumentLookupResponse,
-  InstrumentType,
   PriceHistoryResponse,
   PriceStatusResponse,
   RebalanceResponse,
@@ -140,13 +140,7 @@ export function useRebalancePlan(amount: string | null) {
   });
 }
 
-export interface NewInstrumentInput {
-  symbol: string;
-  exchange: string;
-  name: string;
-  type: InstrumentType;
-  currency: string;
-}
+export type NewInstrumentInput = CreateInstrumentInput;
 
 export interface UpsertInstrumentResult {
   status: number;
@@ -177,6 +171,20 @@ function invalidatePortfolioData(
   void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
 }
 
+function invalidateInstrumentData(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  void queryClient.invalidateQueries({ queryKey: ["instruments"] });
+  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+  void queryClient.invalidateQueries({ queryKey: ["gains"] });
+  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+  void queryClient.invalidateQueries({ queryKey: ["price-status"] });
+  void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
+  void queryClient.invalidateQueries({
+    queryKey: ["portfolio-value-history"],
+  });
+}
+
 export function useUpsertInstrument() {
   const queryClient = useQueryClient();
 
@@ -192,9 +200,7 @@ export function useUpsertInstrument() {
       return { status: response.status, instrument: response.body };
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+      invalidateInstrumentData(queryClient);
     },
   });
 }
@@ -229,6 +235,18 @@ export function useUpdateInstrumentConviction() {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
       void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+    },
+  });
+}
+
+export function useDeleteInstrument() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (instrumentId: number) =>
+      apiSend<void>("DELETE", `/api/instruments/${instrumentId}`, undefined),
+    onSuccess: () => {
+      invalidateInstrumentData(queryClient);
     },
   });
 }

@@ -105,6 +105,32 @@ export function instrumentTransactions(
   return transactions.filter((transaction) => transaction.instrument_id === id);
 }
 
+export function canDeleteInstrument(args: {
+  holding: Holding | null;
+  transactions: Transaction[];
+}): boolean {
+  return args.transactions.length === 0 && (args.holding?.quantity ?? 0) === 0;
+}
+
+export function deleteInstrumentDisabledReason(args: {
+  holding: Holding | null;
+  transactions: Transaction[];
+}): string | null {
+  if (canDeleteInstrument(args)) {
+    return null;
+  }
+
+  if (args.transactions.length > 0) {
+    return "Only never-traded instruments can be deleted.";
+  }
+
+  if ((args.holding?.quantity ?? 0) !== 0) {
+    return "Open positions cannot be deleted.";
+  }
+
+  return "Only never-traded instruments can be deleted.";
+}
+
 export function sharesSold(transactions: Transaction[]): number {
   return transactions
     .filter((transaction) => transaction.type === "Sell")

@@ -28,6 +28,7 @@ export interface AddInstrumentState {
   name: string;
   instrumentType: InstrumentType;
   currency: string;
+  isin: string;
   submitting: boolean;
   error: string | null;
   result: AddInstrumentSubmission | null;
@@ -36,7 +37,7 @@ export interface AddInstrumentState {
 export type AddInstrumentAction =
   | {
       type: "fieldChanged";
-      field: "symbol" | "exchange" | "name" | "currency";
+      field: "symbol" | "exchange" | "name" | "currency" | "isin";
       value: string;
     }
   | { type: "instrumentTypeChanged"; value: InstrumentType }
@@ -51,6 +52,7 @@ export function createInitialAddInstrumentState(): AddInstrumentState {
     name: "",
     instrumentType: "Stock",
     currency: "USD",
+    isin: "",
     submitting: false,
     error: null,
     result: null,
@@ -189,6 +191,11 @@ export function validateInstrumentDraft(
   return null;
 }
 
+function trimmedOrUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 async function lookupGuard(symbol: string): Promise<InstrumentLookupGuard> {
   const response = await lookupInstrument(symbol);
   return guardInstrumentLookup(response);
@@ -216,7 +223,7 @@ export function AddInstrumentDialog({
   const upsertInstrument = useUpsertInstrument();
 
   const setField =
-    (field: "symbol" | "exchange" | "name" | "currency") =>
+    (field: "symbol" | "exchange" | "name" | "currency" | "isin") =>
     (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       dispatch({ type: "fieldChanged", field, value: event.target.value });
 
@@ -247,6 +254,7 @@ export function AddInstrumentDialog({
         name: state.name.trim(),
         type: state.instrumentType,
         currency: state.currency.trim(),
+        isin: trimmedOrUndefined(state.isin),
       });
 
       let priceMappingNote: string | null = null;
@@ -310,6 +318,16 @@ export function AddInstrumentDialog({
             <label className="form-field grow">
               <span>Name</span>
               <input value={state.name} onChange={setField("name")} />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label className="form-field grow">
+              <span>ISIN</span>
+              <input value={state.isin} onChange={setField("isin")} />
+              <p className="form-hint">
+                Optional. Enables matching with broker imports.
+              </p>
             </label>
           </div>
 

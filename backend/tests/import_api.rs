@@ -260,6 +260,64 @@ async fn avanza_commit_matches_existing_instrument_by_isin() {
 }
 
 #[tokio::test]
+async fn avanza_commit_reuses_manual_isin_instrument_created_through_the_api() {
+    let state = test_state().await;
+    let (status, body) = send_json_body(
+        &state,
+        "POST",
+        "/api/instruments",
+        json!({
+            "symbol": "GLW",
+            "exchange": " nyse ",
+            "name": "Corning",
+            "type": "Stock",
+            "currency": "USD",
+            "isin": " us2193501051 "
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let manual_id = body["id"].as_i64().expect("manual instrument id");
+
+    let csv = concat!(
+        "Datum;Konto;Typ av transaktion;Värdepapper/beskrivning;Antal;Kurs;Belopp;Transaktionsvaluta;Courtage;Valutakurs;Instrumentvaluta;ISIN;Resultat\n",
+        "2026-06-02;ISK;Köp;Corning;1;45,00;-450,00;SEK;0,00;10,00;USD;US2193501051;\n",
+    );
+    let (commit_status, _) = send_bytes(&state, "/api/import/avanza/commit", csv.as_bytes()).await;
+    assert_eq!(commit_status, StatusCode::OK);
+
+    let matched = db::instruments::find_by_isin(&state.pool, "US2193501051")
+        .await
+        .expect("query")
+        .expect("manual instrument should still exist");
+    assert_eq!(
+        matched.id, manual_id,
+        "Avanza import must reuse the manually created row"
+    );
+    // The manual row keeps its own exchange/symbol; the import reconciled purely
+    // via the stored ISIN, not the exchange+symbol pair (which differ here).
+    assert_eq!(matched.exchange, "NYSE");
+    assert_eq!(matched.symbol, "GLW");
+    assert_eq!(matched.isin.as_deref(), Some("US2193501051"));
+
+    let txs = db::transactions::list(&state.pool)
+        .await
+        .expect("transactions");
+    assert_eq!(txs.len(), 1, "import should create exactly one transaction");
+    assert_eq!(
+        txs[0].instrument_id, manual_id,
+        "imported transaction must point at the manual instrument"
+    );
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instruments WHERE isin = ?")
+        .bind("US2193501051")
+        .fetch_one(&state.pool)
+        .await
+        .expect("count");
+    assert_eq!(count, 1, "exactly one instrument row should own the ISIN");
+}
+
+#[tokio::test]
 async fn avanza_rollback_via_shared_route() {
     let state = test_state().await;
     let (_, committed) = send_bytes(&state, "/api/import/avanza/commit", AVANZA).await;

@@ -3,9 +3,12 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::api::error::ApiError;
 use crate::db::instruments::{self, InstrumentRow, NewInstrument};
+use crate::db::{prices, provider_symbols, transactions};
+use crate::domain::derive_position;
 use crate::domain::ConvictionLevel;
 use crate::state::AppState;
 
@@ -81,6 +84,8 @@ pub struct CreateInstrument {
     #[serde(rename = "type")]
     pub kind: InstrumentKindDto,
     pub currency: String,
+    #[serde(default)]
+    pub isin: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,11 +139,11 @@ pub async fn create(
 
     let new = NewInstrument {
         symbol: body.symbol.trim().to_owned(),
-        exchange: body.exchange.trim().to_owned(),
+        exchange: body.exchange.trim().to_ascii_uppercase(),
         name: body.name.trim().to_owned(),
         kind: body.kind.as_db_str().to_owned(),
         currency: body.currency.trim().to_owned(),
-        isin: None,
+        isin: normalize_isin(body.isin),
     };
     if new.symbol.is_empty()
         || new.exchange.is_empty()
@@ -158,6 +163,97 @@ pub async fn create(
         StatusCode::OK
     };
     Ok((status, Json(InstrumentResponse::from_row(&row)?)))
+}
+
+pub async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    crate::api::reject_demo_mutation(&state)?;
+
+    let instrument = instruments::find(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("instrument", id))?;
+    let mut tx = state.pool.begin().await.map_err(|error| {
+        ApiError::internal(format!(
+            "instrument delete: failed to begin transaction for instrument {}: {error}",
+            id
+        ))
+    })?;
+    let ledger = transactions::ledger_for_instrument_in_tx(&mut tx, id).await?;
+    let position = derive_position(&ledger).map_err(|error| {
+        ApiError::internal(format!(
+            "instrument delete: inconsistent stored ledger for instrument {}: {error:?}",
+            id
+        ))
+    })?;
+
+    if !ledger.is_empty() || position.quantity != 0 {
+        let reason = if !ledger.is_empty() {
+            "has_transactions"
+        } else {
+            "nonzero_quantity"
+        };
+        crate::engine_warn!(
+            "instrument delete rejected instrument_id={} symbol={} exchange={} transactions={} quantity={} reason={}",
+            instrument.id,
+            instrument.symbol,
+            instrument.exchange,
+            ledger.len(),
+            position.quantity,
+            reason
+        );
+        if let Err(error) = tx.rollback().await {
+            crate::engine_error!(
+                "instrument delete rollback failed instrument_id={} reason={} error={}",
+                instrument.id,
+                reason,
+                error
+            );
+        }
+        return Err(ApiError::conflict(
+            "instrument_not_deletable",
+            "Instrument can only be deleted when it has no transactions and zero quantity.",
+        )
+        .with_details(json!({
+            "instrument_id": instrument.id,
+            "reason": reason,
+            "transactions": ledger.len(),
+            "quantity": position.quantity,
+        })));
+    }
+
+    let provider_symbol_rows =
+        provider_symbols::delete_by_instrument_id_in_tx(&mut tx, instrument.id).await?;
+    let price_rows = prices::delete_by_instrument_id_in_tx(&mut tx, instrument.id).await?;
+    let deleted = instruments::delete_in_tx(&mut tx, instrument.id).await?;
+    if deleted == 0 {
+        if let Err(error) = tx.rollback().await {
+            crate::engine_error!(
+                "instrument delete rollback failed instrument_id={} error={}",
+                instrument.id,
+                error
+            );
+        }
+        return Err(ApiError::not_found("instrument", id));
+    }
+    tx.commit().await.map_err(|error| {
+        ApiError::internal(format!(
+            "instrument delete: failed to commit deletion for instrument {}: {error}",
+            id
+        ))
+    })?;
+
+    crate::engine_info!(
+        "instrument deleted instrument_id={} symbol={} exchange={} provider_symbol_rows={} price_rows={}",
+        instrument.id,
+        instrument.symbol,
+        instrument.exchange,
+        provider_symbol_rows,
+        price_rows
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,12 +317,24 @@ pub async fn update_convictions(
     Ok(Json(body))
 }
 
+fn normalize_isin(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_uppercase())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::api::router;
+    use crate::db::{instruments as instruments_db, prices, provider_symbols};
+    use crate::import::now_iso8601;
     use crate::state::AppState;
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
@@ -254,13 +362,26 @@ mod tests {
     }
 
     async fn create_instrument(state: &AppState, symbol: &str) -> i64 {
-        let (status, body) = send(
-            state,
-            "POST",
-            "/api/instruments",
-            json!({"symbol":symbol,"exchange":"NASDAQ","name":symbol,"type":"Stock","currency":"USD"}),
-        )
-        .await;
+        create_instrument_with(state, symbol, "NASDAQ", None).await
+    }
+
+    async fn create_instrument_with(
+        state: &AppState,
+        symbol: &str,
+        exchange: &str,
+        isin: Option<&str>,
+    ) -> i64 {
+        let mut payload = json!({
+            "symbol": symbol,
+            "exchange": exchange,
+            "name": symbol,
+            "type": "Stock",
+            "currency": "USD",
+        });
+        if let Some(isin) = isin {
+            payload["isin"] = json!(isin);
+        }
+        let (status, body) = send(state, "POST", "/api/instruments", payload).await;
         assert_eq!(status, StatusCode::CREATED);
         body["id"].as_i64().expect("instrument id")
     }
@@ -359,5 +480,136 @@ mod tests {
         // The valid id in the batch must remain unchanged after rollback.
         let (_, list) = send(&state, "GET", "/api/instruments", Value::Null).await;
         assert_eq!(list[0]["conviction"], "Other");
+    }
+
+    #[tokio::test]
+    async fn create_normalizes_exchange_and_isin_before_persisting() {
+        let state = AppState::for_tests().await;
+
+        let (status, body) = send(
+            &state,
+            "POST",
+            "/api/instruments",
+            json!({
+                "symbol": "CORN",
+                "exchange": " Avanza ",
+                "name": "Corning",
+                "type": "Stock",
+                "currency": "usd",
+                "isin": " us2193501051 ",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["exchange"], "AVANZA");
+
+        let row = instruments_db::find(&state.pool, body["id"].as_i64().expect("id"))
+            .await
+            .expect("find instrument")
+            .expect("instrument exists");
+        assert_eq!(row.exchange, "AVANZA");
+        assert_eq!(row.isin.as_deref(), Some("US2193501051"));
+    }
+
+    #[tokio::test]
+    async fn delete_removes_never_traded_instrument_and_dependents() {
+        let state = AppState::for_tests().await;
+        let id = create_instrument_with(&state, "CORN", "Avanza", Some("us2193501051")).await;
+        let now = now_iso8601();
+
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: id,
+                provider: "YAHOO".to_owned(),
+                provider_symbol: "CORN".to_owned(),
+                currency: Some("USD".to_owned()),
+                enabled: true,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            },
+        )
+        .await
+        .expect("provider symbol");
+        prices::upsert(
+            &state.pool,
+            &prices::NewPrice {
+                instrument_id: id,
+                provider: "YAHOO".to_owned(),
+                provider_symbol: "CORN".to_owned(),
+                date: NaiveDate::from_ymd_opt(2026, 6, 1).expect("date"),
+                close: Decimal::new(12345, 2),
+                currency: "USD".to_owned(),
+                fetched_at: now,
+            },
+        )
+        .await
+        .expect("price");
+
+        let (status, _) = send(
+            &state,
+            "DELETE",
+            &format!("/api/instruments/{id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert!(instruments_db::find(&state.pool, id)
+            .await
+            .expect("find")
+            .is_none());
+        assert!(
+            provider_symbols::find_by_instrument_provider(&state.pool, id, "YAHOO")
+                .await
+                .expect("provider symbol lookup")
+                .is_none()
+        );
+        assert!(prices::find_by_key(
+            &state.pool,
+            id,
+            "YAHOO",
+            NaiveDate::from_ymd_opt(2026, 6, 1).expect("date"),
+        )
+        .await
+        .expect("price lookup")
+        .is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_instrument_with_transaction_history() {
+        let state = AppState::for_tests().await;
+        let id = create_instrument_with(&state, "CORN", "Avanza", Some("US2193501051")).await;
+
+        let (status, _) = send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({
+                "instrument_id": id,
+                "type": "Buy",
+                "trade_date": "2026-06-01",
+                "quantity": 1,
+                "price": "10",
+                "currency": "USD",
+                "fx_rate_to_base": "10"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let (status, body) = send(
+            &state,
+            "DELETE",
+            &format!("/api/instruments/{id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"]["code"], "instrument_not_deletable");
+        assert!(instruments_db::find(&state.pool, id)
+            .await
+            .expect("find")
+            .is_some());
     }
 }
