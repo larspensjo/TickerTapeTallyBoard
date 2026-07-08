@@ -6,9 +6,11 @@ import type {
   RebalanceRung,
   RebalanceTrade,
 } from "../api/types";
+import { REBALANCE_RANK_BY_VALUES } from "../api/types";
 import {
   buildRebalanceBalanceRows,
   buildRebalancePageViewModel,
+  rankByOptions,
   rebalanceTradeCountLabel,
   rebalanceUnavailableMessage,
   selectRebalanceRung,
@@ -173,6 +175,16 @@ function response(): RebalanceResponse {
 }
 
 describe("rebalanceViewModel", () => {
+  it("exposes rankBy options for each wire value", () => {
+    expect(rankByOptions.map((option) => option.value)).toEqual([
+      ...REBALANCE_RANK_BY_VALUES,
+    ]);
+    expect(rankByOptions.map((option) => option.label)).toEqual([
+      "Amount",
+      "Relative",
+    ]);
+  });
+
   it("normalizes signed amounts with commas and rejects garbage", () => {
     expect(normalizeRebalanceAmount(" +1,25 ")).toBe("+1.25");
     expect(normalizeRebalanceAmount("1,5")).toBe("1.5");

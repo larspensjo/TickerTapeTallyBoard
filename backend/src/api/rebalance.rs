@@ -12,7 +12,7 @@ use crate::api::instruments::InstrumentResponse;
 use crate::api::valuation::{money_string, serialize_freshness, staler_freshness, BASE_CURRENCY};
 use crate::api::valued_holdings::{load_valued_holdings, ValuedOpenHolding};
 use crate::domain::{
-    build_ladder, pool_membership, CandidateBalance, DataFreshness, PlannedTrade,
+    build_ladder, pool_membership, CandidateBalance, DataFreshness, PlannedTrade, RankBy,
     RebalanceCandidate, RebalanceLadder, RebalanceRung, TradeSide, UntradedCandidate,
 };
 use crate::state::AppState;
@@ -20,6 +20,7 @@ use crate::state::AppState;
 #[derive(Debug, Deserialize)]
 pub struct RebalanceQuery {
     pub amount: Option<String>,
+    pub rank_by: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -105,6 +106,7 @@ pub async fn handler(
     Query(query): Query<RebalanceQuery>,
 ) -> Result<Json<RebalanceResponse>, ApiError> {
     let amount = parse_amount(query.amount.as_deref())?;
+    let rank_by = parse_rank_by(query.rank_by.as_deref())?;
     let valuation_date = Local::now().naive_local().date();
     let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
     let prepared = assemble_candidates(valued_holdings)?;
@@ -113,7 +115,7 @@ pub async fn handler(
         .map(|entry| entry.candidate.clone())
         .collect();
 
-    let ladder = match build_ladder(&candidates, amount) {
+    let ladder = match build_ladder(&candidates, amount, rank_by) {
         Ok(ladder) => ladder,
         Err(reason) => {
             return Ok(Json(RebalanceResponse {
@@ -141,6 +143,20 @@ fn parse_amount(amount: Option<&str>) -> Result<Decimal, ApiError> {
     })?;
     Decimal::from_str(amount.trim())
         .map_err(|_| ApiError::bad_request("invalid_amount", "amount must be a decimal"))
+}
+
+fn parse_rank_by(rank_by: Option<&str>) -> Result<RankBy, ApiError> {
+    match rank_by {
+        None => Ok(RankBy::Sek),
+        Some(rank_by) => match rank_by.trim() {
+            "sek" => Ok(RankBy::Sek),
+            "percent" => Ok(RankBy::Percent),
+            _ => Err(ApiError::bad_request(
+                "invalid_rank",
+                "rank_by must be sek or percent",
+            )),
+        },
+    }
 }
 
 fn assemble_candidates(
@@ -609,6 +625,89 @@ mod tests {
         assert_eq!(balance[0]["is_new"], false);
         assert_eq!(balance[1]["instrument"]["symbol"], "WATCH");
         assert_eq!(balance[1]["is_new"], true);
+    }
+
+    async fn seeded_rank_by_fixture() -> AppState {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "BIGA", 66, "1000", "High").await;
+        seed_valued(&state, "BIGB", 11, "1000", "Medium").await;
+        let watchlist_id = seed_valued(&state, "CORN", 100, "1000", "Low").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":watchlist_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"1000","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+        state
+    }
+
+    #[tokio::test]
+    async fn rank_by_percent_prefers_the_zero_value_watchlist_name_while_sek_does_not() {
+        let state = seeded_rank_by_fixture().await;
+
+        let (status, sek_body) = send(
+            &state,
+            "GET",
+            "/api/rebalance?amount=7000&rank_by=sek",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_plan_status(&sek_body, "available");
+        let sek_rung = &sek_body["plan"]["rungs"][0];
+        let sek_trades = sek_rung["trades"].as_array().expect("sek trades");
+        assert!(!sek_trades
+            .iter()
+            .any(|trade| trade["instrument"]["symbol"] == "CORN"));
+
+        let (status, percent_body) = send(
+            &state,
+            "GET",
+            "/api/rebalance?amount=7000&rank_by=percent",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_plan_status(&percent_body, "available");
+        let percent_rung = &percent_body["plan"]["rungs"][0];
+        let percent_trades = percent_rung["trades"].as_array().expect("percent trades");
+        let watchlist_trade = percent_trades
+            .iter()
+            .find(|trade| trade["instrument"]["symbol"] == "CORN")
+            .expect("watchlist trade");
+        assert_eq!(watchlist_trade["side"], "buy");
+        assert_eq!(watchlist_trade["is_new"], true);
+    }
+
+    #[tokio::test]
+    async fn absent_rank_by_matches_explicit_sek_and_invalid_values_are_rejected() {
+        let state = seeded_rank_by_fixture().await;
+
+        let (status, implicit_sek_body) =
+            send(&state, "GET", "/api/rebalance?amount=7000", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, explicit_sek_body) = send(
+            &state,
+            "GET",
+            "/api/rebalance?amount=7000&rank_by=sek",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(implicit_sek_body, explicit_sek_body);
+
+        for uri in [
+            "/api/rebalance?amount=7000&rank_by=bogus",
+            "/api/rebalance?amount=7000&rank_by=SEK",
+            "/api/rebalance?amount=7000&rank_by=",
+        ] {
+            let (status, body) = send(&state, "GET", uri, Value::Null).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+            assert_eq!(body["error"]["code"], "invalid_rank", "{uri}");
+        }
     }
 
     #[tokio::test]

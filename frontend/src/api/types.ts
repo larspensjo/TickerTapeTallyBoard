@@ -246,6 +246,9 @@ export interface RebalanceResponse {
   plan: RebalancePlan;
 }
 
+export const REBALANCE_RANK_BY_VALUES = ["sek", "percent"] as const;
+export type RebalanceRankBy = (typeof REBALANCE_RANK_BY_VALUES)[number];
+
 export type RebalanceUnavailableReason = "empty_pool" | "offset_exceeds_pool";
 
 export type RebalancePlan =

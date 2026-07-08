@@ -20,6 +20,7 @@ import type {
   InstrumentLookupResponse,
   PriceHistoryResponse,
   PriceStatusResponse,
+  RebalanceRankBy,
   RebalanceResponse,
   RefreshPricesInput,
   RefreshPricesResult,
@@ -126,14 +127,19 @@ export function usePortfolioValueHistory() {
   });
 }
 
-export function useRebalancePlan(amount: string | null) {
+export function useRebalancePlan(
+  amount: string | null,
+  rankBy: RebalanceRankBy,
+) {
   const normalizedAmount = normalizeRebalanceAmount(amount);
 
   return useQuery({
-    queryKey: ["rebalance", normalizedAmount],
+    queryKey: ["rebalance", normalizedAmount, rankBy],
     queryFn: () =>
       apiGet<RebalanceResponse>(
-        `/api/rebalance?amount=${encodeURIComponent(normalizedAmount ?? "")}`,
+        `/api/rebalance?amount=${encodeURIComponent(
+          normalizedAmount ?? "",
+        )}&rank_by=${rankBy}`,
       ),
     enabled: normalizedAmount !== null,
     placeholderData: keepPreviousData,

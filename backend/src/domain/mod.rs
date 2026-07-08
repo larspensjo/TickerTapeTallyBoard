@@ -30,7 +30,7 @@ pub use position::{
 };
 #[allow(unused_imports)]
 pub use rebalance::{
-    build_ladder, CandidateBalance, PlannedTrade, RebalanceCandidate, RebalanceLadder,
+    build_ladder, CandidateBalance, PlannedTrade, RankBy, RebalanceCandidate, RebalanceLadder,
     RebalanceRung, RebalanceUnavailable, TradeSide, UntradedCandidate, UntradedReason,
 };
 #[allow(unused_imports)]

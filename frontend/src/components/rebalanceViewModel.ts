@@ -2,6 +2,7 @@ import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
 import type {
   Instrument,
   RebalanceBalanceEntry,
+  RebalanceRankBy,
   RebalanceResponse,
   RebalanceRung,
   RebalanceTrade,
@@ -82,6 +83,14 @@ export interface RebalanceWarningBannerViewModel {
   label: string;
   message: string;
 }
+
+export const rankByOptions: ReadonlyArray<{
+  value: RebalanceRankBy;
+  label: string;
+}> = [
+  { value: "sek", label: "Amount" },
+  { value: "percent", label: "Relative" },
+];
 
 export type RebalancePageStatus =
   | "prompt"

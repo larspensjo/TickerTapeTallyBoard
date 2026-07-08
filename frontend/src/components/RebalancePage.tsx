@@ -2,16 +2,19 @@ import { Clock3 } from "lucide-react";
 import { type CSSProperties, useEffect, useReducer } from "react";
 import { useRebalancePlan } from "../api/queries";
 import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
+import { REBALANCE_RANK_BY_VALUES, type RebalanceRankBy } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import {
   buildRebalancePageViewModel,
   clampInteger,
   type RebalanceBalanceBarViewModel,
+  rankByOptions,
 } from "./rebalanceViewModel";
 
 export interface RebalancePageState {
   amountInput: string;
   committedAmount: string | null;
+  rankBy: RebalanceRankBy;
   sliderPosition: number;
   lastAvailableRungCount: number | null;
   sliderRestored: boolean;
@@ -20,12 +23,14 @@ export interface RebalancePageState {
 export type RebalancePageAction =
   | { type: "amountInputChanged"; amountInput: string }
   | { type: "amountCommitted"; amount: string | null }
+  | { type: "rankByChanged"; rankBy: RebalanceRankBy }
   | { type: "sliderChanged"; sliderPosition: number }
   | { type: "planChanged"; rungCount: number | null };
 
 export const initialState: RebalancePageState = {
   amountInput: "0",
   committedAmount: "0",
+  rankBy: "sek",
   sliderPosition: 1,
   lastAvailableRungCount: null,
   sliderRestored: false,
@@ -36,6 +41,14 @@ const REBALANCE_PAGE_STATE_KEY = "rebalance-page-state";
 interface PersistedRebalancePageState {
   committedAmount: string;
   sliderPosition: number;
+  rankBy: RebalanceRankBy;
+}
+
+function parsePersistedRankBy(value: unknown): RebalanceRankBy {
+  return typeof value === "string" &&
+    REBALANCE_RANK_BY_VALUES.includes(value as RebalanceRankBy)
+    ? (value as RebalanceRankBy)
+    : "sek";
 }
 
 function storage(): Storage | null {
@@ -61,9 +74,12 @@ export function loadRebalancePageState(): RebalancePageState {
       return initialState;
     }
 
+    const rankBy = parsePersistedRankBy(parsed.rankBy);
+
     return {
       amountInput: committedAmount,
       committedAmount,
+      rankBy,
       sliderPosition: Math.max(1, Math.trunc(parsed.sliderPosition)),
       lastAvailableRungCount: null,
       sliderRestored: true,
@@ -87,6 +103,7 @@ export function saveRebalancePageState(state: RebalancePageState): void {
     JSON.stringify({
       committedAmount: state.committedAmount,
       sliderPosition: state.sliderPosition,
+      rankBy: state.rankBy,
     } satisfies PersistedRebalancePageState),
   );
 }
@@ -106,6 +123,11 @@ export function rebalancePageReducer(
         return state;
       }
       return { ...state, committedAmount: action.amount };
+    case "rankByChanged":
+      if (state.rankBy === action.rankBy) {
+        return state;
+      }
+      return { ...state, rankBy: action.rankBy };
     case "sliderChanged": {
       const max =
         state.lastAvailableRungCount ?? Math.max(1, action.sliderPosition);
@@ -150,7 +172,7 @@ export function RebalancePage() {
     undefined,
     loadRebalancePageState,
   );
-  const rebalanceQuery = useRebalancePlan(state.committedAmount);
+  const rebalanceQuery = useRebalancePlan(state.committedAmount, state.rankBy);
 
   useEffect(() => {
     if (rebalanceQuery.data?.plan.status === "available") {
@@ -238,12 +260,38 @@ export function RebalancePage() {
             <div className="rebalance-slider-block">
               <div className="rebalance-slider-header">
                 <span className="conviction-field-label">Trades</span>
-                <span className="status-chip compact">
-                  {viewModel.slider.tradeCountLabel}
-                </span>
-                <span className="status-chip compact">
-                  Coverage {viewModel.slider.coverageLabel ?? "--"}
-                </span>
+                <div className="rebalance-slider-meta">
+                  <span className="status-chip compact">
+                    {viewModel.slider.tradeCountLabel}
+                  </span>
+                  <span className="status-chip compact">
+                    Coverage {viewModel.slider.coverageLabel ?? "--"}
+                  </span>
+                  <fieldset
+                    className="segmented-control"
+                    aria-label="Rebalance ranking"
+                  >
+                    <legend className="sr-only">Rebalance ranking</legend>
+                    {rankByOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={
+                          state.rankBy === option.value ? "active" : undefined
+                        }
+                        aria-pressed={state.rankBy === option.value}
+                        onClick={() =>
+                          dispatch({
+                            type: "rankByChanged",
+                            rankBy: option.value,
+                          })
+                        }
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </fieldset>
+                </div>
               </div>
               <input
                 className="rebalance-slider"
