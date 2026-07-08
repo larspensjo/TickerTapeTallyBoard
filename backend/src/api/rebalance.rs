@@ -10,7 +10,7 @@ use std::str::FromStr;
 use crate::api::error::ApiError;
 use crate::api::instruments::InstrumentResponse;
 use crate::api::valuation::{money_string, serialize_freshness, staler_freshness, BASE_CURRENCY};
-use crate::api::valued_holdings::{load_valued_open_holdings, ValuedOpenHolding};
+use crate::api::valued_holdings::{load_valued_holdings, ValuedOpenHolding};
 use crate::domain::{
     build_ladder, pool_membership, CandidateBalance, DataFreshness, PlannedTrade,
     RebalanceCandidate, RebalanceLadder, RebalanceRung, TradeSide, UntradedCandidate,
@@ -64,6 +64,7 @@ pub struct RebalanceTradeResponse {
     pub price_base: String,
     pub amount_base: String,
     pub freshness: String,
+    pub is_new: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +89,7 @@ pub struct RebalanceBalanceResponse {
     pub gap_after_percent: Option<String>,
     pub status_before: &'static str,
     pub status_after: &'static str,
+    pub is_new: bool,
 }
 
 #[derive(Debug)]
@@ -104,7 +106,7 @@ pub async fn handler(
 ) -> Result<Json<RebalanceResponse>, ApiError> {
     let amount = parse_amount(query.amount.as_deref())?;
     let valuation_date = Local::now().naive_local().date();
-    let valued_holdings = load_valued_open_holdings(&state.pool, valuation_date).await?;
+    let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
     let prepared = assemble_candidates(valued_holdings)?;
     let candidates: Vec<RebalanceCandidate> = prepared
         .iter()
@@ -148,9 +150,12 @@ fn assemble_candidates(
 
     for holding in valued_holdings {
         let market_value_state = holding.market_value_state();
-        let Some((weight, market_value_base)) =
-            pool_membership(holding.conviction, market_value_state)
-        else {
+        let Some((weight, market_value_base)) = pool_membership(
+            holding.conviction,
+            market_value_state,
+            holding.position.quantity,
+            holding.has_positive_price(),
+        ) else {
             continue;
         };
 
@@ -286,6 +291,7 @@ fn serialize_trade(
         price_base: money_string(trade.price_base),
         amount_base: money_string(trade.amount_base),
         freshness,
+        is_new: candidate_is_new(prepared),
     })
 }
 
@@ -313,7 +319,12 @@ fn serialize_balance(
         gap_after_percent: entry.gap_after_percent.map(|value| format!("{value:.2}")),
         status_before: entry.status_before.as_str(),
         status_after: entry.status_after.as_str(),
+        is_new: candidate_is_new(prepared),
     })
+}
+
+fn candidate_is_new(prepared: &PreparedCandidate) -> bool {
+    prepared.candidate.held_quantity == 0
 }
 
 fn lookup_prepared<'a>(
@@ -469,7 +480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ineligible_holdings_stay_out_of_the_candidate_pool() {
+    async fn convicted_closed_watchlist_rows_join_the_candidate_pool_while_unpriced_rows_do_not() {
         let state = AppState::for_tests().await;
         seed_valued(&state, "AAA", 100, "1000", "Low").await;
         seed_valued(&state, "BBB", 300, "1000", "Medium").await;
@@ -552,7 +563,91 @@ mod tests {
         let (status, body) = send(&state, "GET", "/api/rebalance?amount=0", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
         assert_plan_status(&body, "available");
-        assert_eq!(body["plan"]["candidate_count"], eligible_count);
+        assert_eq!(body["plan"]["candidate_count"], eligible_count + 1);
+        let closed_balance = body["plan"]["rungs"][0]["balance"]
+            .as_array()
+            .expect("balance")
+            .iter()
+            .find(|entry| entry["instrument"]["symbol"] == "CLOSED")
+            .expect("closed balance");
+        assert_eq!(closed_balance["is_new"], true);
+    }
+
+    #[tokio::test]
+    async fn rebalance_marks_open_and_watchlist_candidates_and_proposes_a_watchlist_buy() {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "OPEN", 100, "1000", "Low").await;
+        let watchlist_id = seed_valued(&state, "WATCH", 100, "500", "High").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":watchlist_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"500","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, body) = send(&state, "GET", "/api/rebalance?amount=50000", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_plan_status(&body, "available");
+        assert_eq!(body["plan"]["candidate_count"], 2);
+
+        let rung = &body["plan"]["rungs"][1];
+        assert_eq!(rung["selected_count"], 2);
+        assert_eq!(rung["effective_trade_count"], 2);
+
+        let trades = rung["trades"].as_array().expect("trades");
+        assert_eq!(trades.len(), 2);
+        assert_eq!(trades[0]["instrument"]["symbol"], "OPEN");
+        assert_eq!(trades[0]["is_new"], false);
+        assert_eq!(trades[1]["instrument"]["symbol"], "WATCH");
+        assert_eq!(trades[1]["side"], "buy");
+        assert_eq!(trades[1]["is_new"], true);
+
+        let balance = rung["balance"].as_array().expect("balance");
+        assert_eq!(balance[0]["instrument"]["symbol"], "OPEN");
+        assert_eq!(balance[0]["is_new"], false);
+        assert_eq!(balance[1]["instrument"]["symbol"], "WATCH");
+        assert_eq!(balance[1]["is_new"], true);
+    }
+
+    #[tokio::test]
+    async fn pure_watchlist_pool_returns_a_buy_ladder() {
+        let state = AppState::for_tests().await;
+        let low = seed_valued(&state, "LOW", 100, "1000", "Low").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":low,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"1000","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+        let high = seed_valued(&state, "HIGH", 100, "1000", "High").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":high,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"1000","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, body) = send(&state, "GET", "/api/rebalance?amount=10000", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_plan_status(&body, "available");
+        assert_eq!(body["plan"]["pool_value_base"], "0.00");
+        assert_eq!(body["plan"]["candidate_count"], 2);
+
+        let rung = &body["plan"]["rungs"][1];
+        assert_eq!(rung["selected_count"], 2);
+        assert_eq!(rung["effective_trade_count"], 2);
+        let trades = rung["trades"].as_array().expect("trades");
+        assert!(trades
+            .iter()
+            .all(|trade| trade["side"] == "buy" && trade["is_new"] == true));
+        let balance = rung["balance"].as_array().expect("balance");
+        assert!(balance.iter().all(|entry| entry["is_new"] == true));
     }
 
     #[tokio::test]

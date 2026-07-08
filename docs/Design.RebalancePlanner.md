@@ -3,10 +3,11 @@
 **Status:** Accepted design. This document is the durable specification for the
 preview-only rebalance ladder returned by `GET /api/rebalance`.
 
-The planner consumes the conviction-target pool already assembled by Holdings.
-It does not write to the ledger, it does not model brokerage or FX costs, and
-it reports whole-share trade previews plus explicit reasons when a selected
-candidate does not trade.
+The planner consumes the shared holdings loader in include-watchlist mode, so
+the candidate pool contains open holdings plus zero-quantity, convicted,
+priced watchlist members. It does not write to the ledger, it does not model
+brokerage or FX costs, and it reports whole-share trade previews plus explicit
+reasons when a selected candidate does not trade.
 
 All money math uses `Decimal`.
 
@@ -17,14 +18,17 @@ conviction-target pool:
 
 - `instrument_id`
 - `weight` `w` in `{1, 2, 4}` from conviction level
-- `market_value_base` `v` in SEK, `Decimal`, strictly positive
+- `market_value_base` `v` in SEK, `Decimal`, nonnegative
 - `price_base` `p` in SEK per share, `Decimal`, strictly positive
-- `held_quantity` `q_held`, `i64`, strictly positive
+- `held_quantity` `q_held`, `i64`, nonnegative
 
 Candidates are already filtered by the shared conviction-target pool rule: only
-Low/Medium/High convictions with an available, strictly positive market value
-enter the planner. The input order is the Holdings order `(exchange, symbol)`
-ascending, and every tie-break in this planner uses that order.
+Low/Medium/High convictions with an available market value enter the planner.
+Open holdings still require a strictly positive market value; a zero-value,
+zero-quantity watchlist candidate is buy-only and enters with `v = 0`,
+`q_held = 0`, and a strictly positive `p`. The input order is the Holdings
+order `(exchange, symbol)` ascending, and every tie-break in this planner uses
+that order.
 
 The planner also takes the user offset `C` in SEK as a `Decimal`. Let:
 
@@ -40,7 +44,9 @@ These states are explicit and are never silently clamped:
 - `C <= -P` -> `offset_exceeds_pool`
 
 The offset check treats `C = -P` as infeasible, so full liquidation is reported
-as unavailable rather than planned.
+as unavailable rather than planned. A zero-value pool remains unavailable for
+`C <= 0`, but a pure-watchlist pool (`P = 0`) with `C > 0` is feasible and
+becomes a buy-only ladder.
 
 ## Ideal Targets And Deltas
 
@@ -186,6 +192,9 @@ Then:
 - `coverage = 100 * (G - G') / G`
 - `coverage = None` when `G = 0`
 
+Pure-buy pools with zero market value can still have nonzero gaps once cash is
+applied, so their coverage remains defined and meaningful.
+
 Coverage is non-decreasing in `N` for the exact pre-rounding solution under
 nested selection, but rounding and repair swaps can cause small decreases in
 the shipped rung output. The tests pin the intended behavior on exact-friendly
@@ -273,12 +282,16 @@ Unavailable response shape:
 
 - `plan.reasons[]` with `empty_pool` or `offset_exceeds_pool`
 
-API-layer trade fields add freshness and instrument serialization:
+API-layer trade fields add freshness, an additive `is_new` marker, and
+instrument serialization:
 
 - freshness is the staler of the price and FX freshness states
 - the serialized freshness labels remain `fresh`, `minor_stale_N_days`, and
   `warning_stale_N_days`
 - freshness is attached at the API layer; the domain module stays freshness-free
+- `is_new` is `true` when the candidate's held quantity is zero and `false`
+  otherwise; balance rows carry the same marker so untraded watchlist members
+  can still be badged
 
 Response values such as `amount_base`, `pool_value_base`, `achieved_net_base`,
 and `residual_base` are serialized as money strings. `coverage_percent` is a

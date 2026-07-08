@@ -40,6 +40,7 @@ vi.mock("../api/queries", () => ({
                 price_base: "512.30",
                 amount_base: "6147.60",
                 freshness: "warning_stale_4_days",
+                is_new: true,
               },
             ],
             untraded: [],
@@ -60,6 +61,7 @@ vi.mock("../api/queries", () => ({
                 gap_after_percent: "7.50",
                 status_before: "above",
                 status_after: "above",
+                is_new: true,
               },
               {
                 instrument: {
@@ -77,6 +79,7 @@ vi.mock("../api/queries", () => ({
                 gap_after_percent: "7.50",
                 status_before: "below",
                 status_after: "above",
+                is_new: false,
               },
             ],
             achieved_net_base: "6147.60",
@@ -136,6 +139,7 @@ describe("RebalancePage", () => {
       name: /post-trade balance/i,
     });
     expect(within(table).getByText(/buy SEK 6,147.60/i)).toBeDefined();
+    expect(within(table).getAllByText(/new/i).length).toBeGreaterThan(0);
     expect(within(table).getByText(/flips target band/i)).toBeDefined();
   });
 });

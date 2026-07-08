@@ -55,6 +55,7 @@ function holding(
       target_gap_base: { status: "unavailable", reasons: ["no_target"] },
       target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
     },
+    row_kind: "open",
   };
 }
 

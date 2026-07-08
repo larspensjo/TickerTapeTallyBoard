@@ -1,11 +1,16 @@
 import type { ConvictionChange } from "../api/queries";
 import type {
+  AvailabilityValue,
   Conviction,
   ConvictionTarget,
   Holding,
   TargetStatus,
 } from "../api/types";
-import { formatGroupedNumber, parseFiniteNumber } from "./valuationDisplay";
+import {
+  formatGroupedNumber,
+  parseFiniteNumber,
+  unavailableValue,
+} from "./valuationDisplay";
 
 /** Selectable conviction levels, ordered from lowest to highest weight. */
 export const CONVICTION_OPTIONS: Conviction[] = [
@@ -150,6 +155,37 @@ export function holdingConvictionSearchText(holding: Holding): string {
     convictionLabel(holding.instrument.conviction),
     targetStatusLabel(holding.conviction_target.status),
   ].join(" ");
+}
+
+/**
+ * Value sort key for the Holdings table. Watchlist rows display a blank value
+ * but should cluster with zero when sorted by Value.
+ */
+export function holdingValueSortField(
+  holding: Holding,
+): AvailabilityValue<string> {
+  if (holding.row_kind === "watchlist") {
+    return { status: "available", value: "0.00" };
+  }
+
+  return (
+    holding.valuation?.market_value_base ??
+    unavailableValue("valuation_unavailable")
+  );
+}
+
+/**
+ * Hint text shown when watchlist rows are hidden but still participate in the
+ * shared target pool.
+ */
+export function watchlistTargetsHint(
+  hiddenWatchlistPoolCount: number,
+): string | null {
+  if (hiddenWatchlistPoolCount <= 0) {
+    return null;
+  }
+
+  return `Targets include ${formatGroupedNumber(hiddenWatchlistPoolCount)} watchlist instruments`;
 }
 
 /** Signed gap percent used for the "Target gap" sort column, so the order

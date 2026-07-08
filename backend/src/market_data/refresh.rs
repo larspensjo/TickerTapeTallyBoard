@@ -252,20 +252,7 @@ impl MarketDataService {
 
         let mut readiness = Vec::new();
         for instrument in instruments {
-            let Some(rows) = grouped.get(&instrument.id) else {
-                continue;
-            };
-
-            let ledger = rows
-                .iter()
-                .map(|row| row.to_ledger())
-                .collect::<Result<Vec<_>, _>>()?;
-            let position = domain::derive_position(&ledger).map_err(|error| {
-                MarketDataError::internal(format!(
-                    "inconsistent stored ledger for instrument {}: {error:?}",
-                    instrument.id
-                ))
-            })?;
+            let position = position_for_instrument(&grouped, instrument.id)?;
 
             let mapping =
                 provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
@@ -304,6 +291,40 @@ impl MarketDataService {
             latest_run,
             instruments: readiness,
         })
+    }
+
+    pub async fn lookup_symbol_search(&self, query: &str) -> SymbolSearchLookupResponse {
+        let query = query.trim().to_owned();
+        let Some(provider) = self.inner.symbol_search_provider.as_ref().map(Arc::clone) else {
+            crate::engine_info!("instrument lookup provider unavailable query={query}");
+            return SymbolSearchLookupResponse::provider_unavailable(query);
+        };
+
+        let matches = match provider.search(&query).await {
+            Ok(matches) => matches,
+            Err(error) => {
+                crate::engine_warn!(
+                    "instrument lookup provider search failed query={} reason={} message={}",
+                    query,
+                    error.reason_code(),
+                    error.message()
+                );
+                return SymbolSearchLookupResponse::provider_unavailable(query);
+            }
+        };
+
+        let supported_matches = matches
+            .into_iter()
+            .filter(is_supported_yahoo_quote)
+            .map(SymbolSearchLookupMatch::from)
+            .collect::<Vec<_>>();
+
+        if supported_matches.is_empty() {
+            crate::engine_info!("instrument lookup returned no supported match query={query}");
+            SymbolSearchLookupResponse::no_match(query)
+        } else {
+            SymbolSearchLookupResponse::matches(query, supported_matches)
+        }
     }
 
     async fn running_response(
@@ -356,20 +377,31 @@ impl MarketDataService {
 
         let mut targets = Vec::new();
         for instrument in instruments {
-            let Some(rows) = grouped.get(&instrument.id) else {
-                continue;
+            let has_history = grouped.contains_key(&instrument.id);
+            let position = position_for_instrument(&grouped, instrument.id)?;
+            let should_skip = match request.mode {
+                RefreshMode::Latest => {
+                    let conviction =
+                        match domain::ConvictionLevel::from_db_str(&instrument.conviction) {
+                            Some(conviction) => conviction,
+                            None => {
+                                return Err(MarketDataError::internal(format!(
+                                    "stored unknown conviction {:?} for instrument {}",
+                                    instrument.conviction, instrument.id
+                                )));
+                            }
+                        };
+                    position.quantity == 0
+                        && !matches!(
+                            conviction,
+                            domain::ConvictionLevel::Low
+                                | domain::ConvictionLevel::Medium
+                                | domain::ConvictionLevel::High
+                        )
+                }
+                RefreshMode::Backfill => !has_history,
             };
-            let ledger = rows
-                .iter()
-                .map(|row| row.to_ledger())
-                .collect::<Result<Vec<_>, _>>()?;
-            let position = domain::derive_position(&ledger).map_err(|error| {
-                MarketDataError::internal(format!(
-                    "inconsistent stored ledger for instrument {}: {error:?}",
-                    instrument.id
-                ))
-            })?;
-            if request.mode == RefreshMode::Latest && position.quantity == 0 {
+            if should_skip {
                 continue;
             }
 
@@ -813,6 +845,68 @@ pub struct PriceStatusResponse {
     pub instruments: Vec<InstrumentMarketDataStatus>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SymbolSearchLookupMatch {
+    pub provider: String,
+    pub provider_symbol: String,
+    pub quote_type: Option<String>,
+    pub exchange: Option<String>,
+    pub name: Option<String>,
+}
+
+impl From<SymbolSearchMatch> for SymbolSearchLookupMatch {
+    fn from(value: SymbolSearchMatch) -> Self {
+        Self {
+            provider: value.provider.to_string(),
+            provider_symbol: value.provider_symbol,
+            quote_type: value.quote_type,
+            exchange: value.exchange,
+            name: value.name,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolSearchLookupStatus {
+    Matches,
+    NoMatch,
+    ProviderUnavailable,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SymbolSearchLookupResponse {
+    pub query: String,
+    pub status: SymbolSearchLookupStatus,
+    pub matches: Vec<SymbolSearchLookupMatch>,
+}
+
+impl SymbolSearchLookupResponse {
+    pub(crate) fn matches(query: String, matches: Vec<SymbolSearchLookupMatch>) -> Self {
+        Self {
+            query,
+            status: SymbolSearchLookupStatus::Matches,
+            matches,
+        }
+    }
+
+    pub(crate) fn no_match(query: String) -> Self {
+        Self {
+            query,
+            status: SymbolSearchLookupStatus::NoMatch,
+            matches: Vec::new(),
+        }
+    }
+
+    pub(crate) fn provider_unavailable(query: String) -> Self {
+        Self {
+            query,
+            status: SymbolSearchLookupStatus::ProviderUnavailable,
+            matches: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct InstrumentMarketDataStatus {
     pub instrument_id: i64,
@@ -1163,6 +1257,25 @@ fn group_transactions(
     grouped
 }
 
+fn position_for_instrument(
+    grouped: &BTreeMap<i64, Vec<crate::db::transactions::TransactionRow>>,
+    instrument_id: i64,
+) -> Result<domain::Position, MarketDataError> {
+    let ledger = match grouped.get(&instrument_id) {
+        Some(rows) => rows
+            .iter()
+            .map(|row| row.to_ledger())
+            .collect::<Result<Vec<_>, _>>()?,
+        None => Vec::new(),
+    };
+    domain::derive_position(&ledger).map_err(|error| {
+        MarketDataError::internal(format!(
+            "inconsistent stored ledger for instrument {}: {error:?}",
+            instrument_id
+        ))
+    })
+}
+
 fn target_currencies(targets: &[RefreshTarget]) -> BTreeSet<String> {
     targets
         .iter()
@@ -1320,6 +1433,63 @@ mod tests {
         .expect("transaction insert should succeed");
     }
 
+    async fn sell(
+        pool: &SqlitePool,
+        instrument_id: i64,
+        trade_date: &str,
+        quantity: i64,
+        price: &str,
+        currency: &str,
+        fx_rate_to_base: Option<&str>,
+    ) {
+        transactions::insert(
+            pool,
+            &crate::db::transactions::NewTransaction {
+                instrument_id,
+                kind: domain::TransactionKind::Sell,
+                trade_date: NaiveDate::parse_from_str(trade_date, "%Y-%m-%d").expect("date"),
+                quantity: -quantity,
+                price: Some(price.parse().expect("price")),
+                dividend_per_share: None,
+                currency: Some(currency.to_owned()),
+                fx_rate_to_base: fx_rate_to_base.map(|value| value.parse().expect("fx")),
+                brokerage: None,
+                note: None,
+            },
+        )
+        .await
+        .expect("transaction insert should succeed");
+    }
+
+    async fn map_yahoo_symbol(
+        pool: &SqlitePool,
+        instrument_id: i64,
+        provider_symbol: &str,
+        enabled: bool,
+    ) {
+        let now = now_iso8601();
+        provider_symbols::upsert(
+            pool,
+            &crate::db::provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: YAHOO_PROVIDER.to_owned(),
+                provider_symbol: provider_symbol.to_owned(),
+                currency: Some("SEK".to_owned()),
+                enabled,
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )
+        .await
+        .expect("provider symbol upsert should succeed");
+    }
+
+    async fn set_conviction(pool: &SqlitePool, instrument_id: i64, conviction: &str) {
+        instruments::update_conviction(pool, instrument_id, conviction)
+            .await
+            .expect("update conviction should succeed");
+    }
+
     #[tokio::test]
     async fn latest_refresh_writes_prices_fx_and_seeds_mappings() {
         let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
@@ -1383,6 +1553,139 @@ mod tests {
         assert_eq!(prices.len(), 2);
         let fx = fx_rates::list(&pool).await.expect("fx list");
         assert_eq!(fx.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn latest_refresh_fetches_never_traded_convicted_instrument() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "WATCH".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(101),
+            currency: "SEK".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+
+        let (pool, service) = test_state(price_provider.clone(), fx_provider).await;
+        let watch = instrument(&pool, "WATCH", "NASDAQ", "SEK").await;
+        map_yahoo_symbol(&pool, watch, "WATCH", true).await;
+        set_conviction(&pool, watch, "LOW").await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 1);
+        assert_eq!(response.fx_rates_written, 0);
+        assert_eq!(price_provider.calls().len(), 1);
+        assert_eq!(price_provider.calls()[0].symbol, "WATCH");
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].status, RefreshItemStatus::Fetched);
+        assert_eq!(response.items[0].symbol_or_pair, "WATCH");
+    }
+
+    #[tokio::test]
+    async fn latest_refresh_skips_closed_other_instrument() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+
+        let (pool, service) = test_state(price_provider.clone(), fx_provider).await;
+        let closed = instrument(&pool, "CLOSED", "NASDAQ", "SEK").await;
+        buy(&pool, closed, "2026-06-01", 10, "100", "SEK", None).await;
+        sell(&pool, closed, "2026-06-02", 10, "100", "SEK", None).await;
+        map_yahoo_symbol(&pool, closed, "CLOSED", true).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert!(price_provider.calls().is_empty());
+        assert!(response.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn latest_refresh_fetches_closed_convicted_instrument() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "CLOSED".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(101),
+            currency: "SEK".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+
+        let (pool, service) = test_state(price_provider.clone(), fx_provider).await;
+        let closed = instrument(&pool, "CLOSED", "NASDAQ", "SEK").await;
+        buy(&pool, closed, "2026-06-01", 10, "100", "SEK", None).await;
+        sell(&pool, closed, "2026-06-02", 10, "100", "SEK", None).await;
+        map_yahoo_symbol(&pool, closed, "CLOSED", true).await;
+        set_conviction(&pool, closed, "HIGH").await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 1);
+        assert_eq!(response.fx_rates_written, 0);
+        assert_eq!(price_provider.calls().len(), 1);
+        assert_eq!(price_provider.calls()[0].symbol, "CLOSED");
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].status, RefreshItemStatus::Fetched);
+    }
+
+    #[tokio::test]
+    async fn status_readiness_includes_convicted_never_traded_instrument() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+
+        let (pool, service) = test_state(price_provider, fx_provider).await;
+        let watch = instrument(&pool, "WATCH", "NASDAQ", "SEK").await;
+        map_yahoo_symbol(&pool, watch, "WATCH", true).await;
+        set_conviction(&pool, watch, "MEDIUM").await;
+
+        let status = service.status(&pool).await.expect("status should succeed");
+        assert_eq!(status.instruments.len(), 1);
+        assert_eq!(status.instruments[0].symbol, "WATCH");
+        assert_eq!(status.instruments[0].open_quantity, 0);
+        assert!(status.instruments[0].mapping_enabled);
+        assert_eq!(
+            status.instruments[0]
+                .provider_symbol
+                .as_deref()
+                .expect("provider symbol"),
+            "WATCH"
+        );
     }
 
     #[tokio::test]
@@ -1666,6 +1969,50 @@ mod tests {
         assert_eq!(response.status, RefreshRunStatus::Succeeded);
         assert_eq!(response.prices_written, 1);
         assert_eq!(response.fx_rates_written, 1);
+    }
+
+    #[tokio::test]
+    async fn backfill_refresh_skips_never_traded_instruments() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "HELD.ST".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date"),
+            close: dec!(100),
+            currency: "SEK".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+
+        let (pool, service) = test_state(price_provider.clone(), fx_provider).await;
+        let held = instrument(&pool, "HELD", "XSTO", "SEK").await;
+        let convicted_watch = instrument(&pool, "WATCH", "NASDAQ", "SEK").await;
+        let other_watch = instrument(&pool, "OTHER", "NASDAQ", "SEK").await;
+        buy(&pool, held, "2026-06-10", 3, "100", "SEK", None).await;
+        map_yahoo_symbol(&pool, held, "HELD.ST", true).await;
+        map_yahoo_symbol(&pool, convicted_watch, "WATCH", true).await;
+        map_yahoo_symbol(&pool, other_watch, "OTHER", true).await;
+        set_conviction(&pool, convicted_watch, "HIGH").await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Backfill,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Backfill,
+                    start_date: None,
+                    end_date: Some("2026-06-12".to_owned()),
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        let calls = price_provider.calls();
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 1);
+        assert_eq!(response.unmapped_instruments, 0);
+        assert_eq!(response.failed_items, 0);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].symbol, "HELD.ST");
     }
 
     #[tokio::test]

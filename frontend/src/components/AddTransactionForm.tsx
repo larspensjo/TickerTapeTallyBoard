@@ -166,14 +166,14 @@ export function AddTransactionForm({
           throw new Error("Select an instrument.");
         }
       } else {
-        const instrument = await upsertInstrument.mutateAsync({
+        const result = await upsertInstrument.mutateAsync({
           symbol: state.symbol.trim(),
           exchange: state.exchange.trim(),
           name: state.name.trim(),
           type: state.instrumentType,
           currency: state.instrumentCurrency.trim(),
         });
-        instrumentId = instrument.id;
+        instrumentId = result.instrument.id;
       }
 
       const input: NewTransactionInput = {

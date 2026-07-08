@@ -1,15 +1,15 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 use chrono::Local;
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
 use crate::api::instruments::{ConvictionDto, InstrumentResponse};
 use crate::api::valuation::{
     money_string, serialize_availability, serialize_valuation_reason, AvailabilityResponse,
 };
-use crate::api::valued_holdings::{load_valued_open_holdings, ValuedOpenHolding};
+use crate::api::valued_holdings::{load_valued_holdings, ValuedOpenHolding};
 use crate::domain::{
     derive_targets, BaseCostBasis, ConvictionTargetOutput, Position, TargetField,
     UnavailableReason, ValuationReason,
@@ -20,12 +20,32 @@ use crate::state::AppState;
 pub struct HoldingResponse {
     pub instrument: InstrumentResponse,
     pub quantity: i64,
-    pub cost_basis_native: String,
-    pub average_cost_native: String,
-    pub base: BaseResponse,
+    pub cost_basis_native: Option<String>,
+    pub average_cost_native: Option<String>,
+    pub base: Option<BaseResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valuation: Option<ValuationField>,
     pub conviction_target: ConvictionTargetResponse,
+    pub row_kind: HoldingRowKind,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HoldingsResponse {
+    pub holdings: Vec<HoldingResponse>,
+    pub hidden_watchlist_pool_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HoldingsQuery {
+    #[serde(default)]
+    pub include_watchlist: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoldingRowKind {
+    Open,
+    Watchlist,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,51 +149,65 @@ impl HoldingResponse {
         valuation: Option<ValuationField>,
         conviction_target: ConvictionTargetResponse,
     ) -> Result<Self, ApiError> {
-        let average_cost_native = position
-            .average_cost_native()
-            .ok_or_else(|| ApiError::internal("holding with non-positive quantity"))
-            .map(money_string)?;
-
-        let base = match &position.base {
-            BaseCostBasis::Available {
-                cost_basis_base,
-                fee_component_base,
-            } => BaseResponse::Available {
-                cost_basis_base: money_string(*cost_basis_base),
-                average_cost_base: position
-                    .average_cost_base()
-                    .ok_or_else(|| ApiError::internal("available base without average"))
-                    .map(money_string)?,
-                fee_component_base: money_string(*fee_component_base),
-            },
-            BaseCostBasis::Unavailable { reasons } => BaseResponse::Unavailable {
-                reasons: reasons
-                    .iter()
-                    .map(|reason| match reason {
-                        UnavailableReason::MissingFx { transaction_id } => ReasonResponse {
-                            code: "missing_fx",
-                            transaction_id: *transaction_id,
-                        },
-                    })
-                    .collect(),
-            },
+        let (cost_basis_native, average_cost_native, base, row_kind) = if position.quantity == 0 {
+            (None, None, None, HoldingRowKind::Watchlist)
+        } else {
+            let base = match &position.base {
+                BaseCostBasis::Available {
+                    cost_basis_base,
+                    fee_component_base,
+                } => Some(BaseResponse::Available {
+                    cost_basis_base: money_string(*cost_basis_base),
+                    average_cost_base: position
+                        .average_cost_base()
+                        .ok_or_else(|| ApiError::internal("available base without average"))
+                        .map(money_string)?,
+                    fee_component_base: money_string(*fee_component_base),
+                }),
+                BaseCostBasis::Unavailable { reasons } => Some(BaseResponse::Unavailable {
+                    reasons: reasons
+                        .iter()
+                        .map(|reason| match reason {
+                            UnavailableReason::MissingFx { transaction_id } => ReasonResponse {
+                                code: "missing_fx",
+                                transaction_id: *transaction_id,
+                            },
+                        })
+                        .collect(),
+                }),
+            };
+            (
+                Some(money_string(position.cost_basis_native)),
+                Some(
+                    position
+                        .average_cost_native()
+                        .ok_or_else(|| ApiError::internal("holding with non-positive quantity"))
+                        .map(money_string)?,
+                ),
+                base,
+                HoldingRowKind::Open,
+            )
         };
 
         Ok(Self {
             instrument: InstrumentResponse::from_row(instrument)?,
             quantity: position.quantity,
-            cost_basis_native: money_string(position.cost_basis_native),
+            cost_basis_native,
             average_cost_native,
             base,
             valuation,
             conviction_target,
+            row_kind,
         })
     }
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingResponse>>, ApiError> {
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<HoldingsQuery>,
+) -> Result<Json<HoldingsResponse>, ApiError> {
     let valuation_date = Local::now().naive_local().date();
-    let valued_holdings = load_valued_open_holdings(&state.pool, valuation_date).await?;
+    let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
     let target_inputs: Vec<_> = valued_holdings
         .iter()
         .map(ValuedOpenHolding::conviction_target_input)
@@ -181,9 +215,27 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingRespo
 
     // Derive targets once for the whole eligible pool, then attach in order.
     let targets = derive_targets(&target_inputs);
+    let hidden_watchlist_pool_count = if query.include_watchlist {
+        0
+    } else {
+        valued_holdings
+            .iter()
+            .zip(targets.iter())
+            .filter(|(holding, output)| {
+                holding.position.quantity == 0
+                    && matches!(
+                        output.status,
+                        crate::domain::TargetStatus::Below
+                            | crate::domain::TargetStatus::OnTarget
+                            | crate::domain::TargetStatus::Above
+                    )
+            })
+            .count()
+    };
     let holdings = valued_holdings
         .into_iter()
         .zip(targets.iter())
+        .filter(|(holding, _)| query.include_watchlist || holding.position.quantity > 0)
         .map(|(holding, output)| {
             let valuation = holding.valuation.as_ref().map(valuation_field_from_holding);
             HoldingResponse::build(
@@ -195,7 +247,10 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<HoldingRespo
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(Json(holdings))
+    Ok(Json(HoldingsResponse {
+        holdings,
+        hidden_watchlist_pool_count,
+    }))
 }
 
 fn valuation_field_from_holding(valued_holding: &crate::domain::ValuedHolding) -> ValuationField {
@@ -240,7 +295,7 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        let holding = &holdings.as_array().expect("array")[0];
+        let holding = &holdings["holdings"].as_array().expect("array")[0];
         assert_eq!(holding["quantity"], 10);
         assert_eq!(holding["average_cost_native"], "12.50");
         assert_eq!(holding["cost_basis_native"], "125.00");
@@ -272,7 +327,7 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        let holding = &holdings.as_array().expect("array")[0];
+        let holding = &holdings["holdings"].as_array().expect("array")[0];
         assert_eq!(holding["quantity"], 20);
         assert_eq!(holding["average_cost_native"], "60.00");
     }
@@ -293,7 +348,7 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        let holding = &holdings.as_array().expect("array")[0];
+        let holding = &holdings["holdings"].as_array().expect("array")[0];
         assert_eq!(holding["average_cost_native"], "600.00");
         assert_eq!(holding["base"]["status"], "unavailable");
         assert_eq!(holding["base"]["reasons"][0]["code"], "missing_fx");
@@ -323,7 +378,7 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(holdings.as_array().expect("array").len(), 0);
+        assert_eq!(holdings["holdings"].as_array().expect("array").len(), 0);
     }
 
     #[tokio::test]
@@ -349,7 +404,7 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        let holding = &holdings.as_array().expect("array")[0];
+        let holding = &holdings["holdings"].as_array().expect("array")[0];
         assert_eq!(holding["quantity"], 2);
         assert_eq!(holding["cost_basis_native"], "200.00");
         assert_eq!(holding["average_cost_native"], "100.00");
@@ -375,12 +430,137 @@ mod tests {
 
         let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
-        let holdings = holdings.as_array().expect("array");
+        let holdings = holdings["holdings"].as_array().expect("array");
         assert_eq!(holdings.len(), 2);
         assert_eq!(holdings[0]["instrument"]["exchange"], "NASDAQ");
         assert_eq!(holdings[0]["instrument"]["symbol"], "AAA");
         assert_eq!(holdings[1]["instrument"]["exchange"], "NYSE");
         assert_eq!(holdings[1]["instrument"]["symbol"], "ZZZ");
+    }
+
+    #[tokio::test]
+    async fn hidden_priced_watchlist_members_shift_open_targets_without_changing_the_envelope() {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "OPEN", 100, "2500", "High").await;
+        let watchlist_id = seed_valued(&state, "WATCH", 100, "500", "Low").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":watchlist_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"500","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        let holdings = holdings["holdings"].as_array().expect("array");
+        assert_eq!(holdings.len(), 1);
+        let holding = &holdings[0];
+        assert_eq!(holding["row_kind"], "open");
+        assert_eq!(holding["instrument"]["symbol"], "OPEN");
+        assert_eq!(holding["conviction_target"]["status"], "above");
+        assert_eq!(
+            holding["conviction_target"]["target_value_base"]["value"],
+            "200000.00"
+        );
+        assert_eq!(
+            holding["conviction_target"]["target_gap_base"]["value"],
+            "50000.00"
+        );
+    }
+
+    #[tokio::test]
+    async fn include_watchlist_serializes_blank_costs_for_zero_quantity_rows_without_500() {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "OPEN", 100, "2500", "High").await;
+        let watchlist_id = seed_valued(&state, "WATCH", 100, "500", "Low").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":watchlist_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"500","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, holdings) = send(
+            &state,
+            "GET",
+            "/api/holdings?include_watchlist=true",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let holdings = holdings["holdings"].as_array().expect("array");
+        assert_eq!(holdings.len(), 2);
+        let watchlist = holdings
+            .iter()
+            .find(|holding| holding["instrument"]["symbol"] == "WATCH")
+            .expect("watchlist row");
+        assert_eq!(watchlist["row_kind"], "watchlist");
+        assert!(watchlist["cost_basis_native"].is_null());
+        assert!(watchlist["average_cost_native"].is_null());
+        assert!(watchlist["base"].is_null());
+        assert_eq!(
+            watchlist["valuation"]["market_value_base"]["status"],
+            "available"
+        );
+        assert_eq!(watchlist["valuation"]["market_value_base"]["value"], "0.00");
+    }
+
+    #[tokio::test]
+    async fn zero_quantity_other_and_unpriced_rows_render_but_stay_out_of_the_pool() {
+        let state = AppState::for_tests().await;
+        let other_id = instrument(&state, "OTHER", "STO", "SEK").await;
+        set_conviction(&state, other_id, "Other").await;
+
+        let unpriced_id = instrument(&state, "UNPRICED", "STO", "SEK").await;
+        set_conviction(&state, unpriced_id, "High").await;
+
+        let (status, holdings) = send(
+            &state,
+            "GET",
+            "/api/holdings?include_watchlist=true",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let holdings = holdings["holdings"].as_array().expect("array");
+        assert_eq!(holdings.len(), 2);
+
+        let other = holdings
+            .iter()
+            .find(|holding| holding["instrument"]["symbol"] == "OTHER")
+            .expect("other row");
+        assert_eq!(other["row_kind"], "watchlist");
+        assert_eq!(other["conviction_target"]["status"], "no_target");
+        assert_eq!(
+            other["conviction_target"]["target_value_base"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            other["conviction_target"]["target_value_base"]["reasons"][0],
+            "no_target"
+        );
+
+        let unpriced = holdings
+            .iter()
+            .find(|holding| holding["instrument"]["symbol"] == "UNPRICED")
+            .expect("unpriced row");
+        assert_eq!(unpriced["row_kind"], "watchlist");
+        assert_eq!(
+            unpriced["conviction_target"]["status"],
+            "excluded_unavailable"
+        );
+        assert_eq!(
+            unpriced["conviction_target"]["target_value_base"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            unpriced["conviction_target"]["target_value_base"]["reasons"][0],
+            "price_mapping_disabled"
+        );
     }
 
     #[tokio::test]
@@ -546,5 +726,36 @@ mod tests {
             assert_eq!(target["target_value_base"]["status"], "unavailable");
             assert_eq!(target["target_value_base"]["reasons"][0], "no_target");
         }
+    }
+
+    #[tokio::test]
+    async fn hidden_watchlist_pool_count_is_reported_without_the_toggle_and_zero_with_it() {
+        let state = AppState::for_tests().await;
+        seed_valued(&state, "OPEN", 100, "2500", "High").await;
+        let watchlist_id = seed_valued(&state, "WATCH", 100, "500", "Low").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":watchlist_id,"type":"Sell","trade_date":"2026-06-02",
+                   "quantity":100,"price":"500","currency":"SEK","fx_rate_to_base":"1"}),
+        )
+        .await;
+
+        let (status, hidden) = send(&state, "GET", "/api/holdings", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(hidden["hidden_watchlist_pool_count"], 1);
+        assert_eq!(hidden["holdings"].as_array().expect("array").len(), 1);
+
+        let (status, visible) = send(
+            &state,
+            "GET",
+            "/api/holdings?include_watchlist=true",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(visible["hidden_watchlist_pool_count"], 0);
+        assert_eq!(visible["holdings"].as_array().expect("array").len(), 2);
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveDate;
+use rust_decimal::Decimal;
 use sqlx::sqlite::SqlitePool;
 
 use crate::api::error::ApiError;
@@ -25,6 +26,8 @@ impl ValuedOpenHolding {
             instrument_id: self.instrument.id,
             conviction: self.conviction,
             market_value: self.market_value_state(),
+            open_quantity: self.position.quantity,
+            has_positive_price: self.has_positive_price(),
         }
     }
 
@@ -52,9 +55,15 @@ impl ValuedOpenHolding {
     pub(crate) fn latest_fx_snapshot(&self) -> Option<&FxSnapshot> {
         self.valuation.as_ref()?.latest_fx.as_ref()
     }
+
+    pub(crate) fn has_positive_price(&self) -> bool {
+        self.latest_price_snapshot()
+            .is_some_and(|snapshot| snapshot.close > Decimal::ZERO)
+    }
 }
 
-pub async fn load_valued_open_holdings(
+/// Loads valued positions for all instruments, including zero-quantity watchlist rows.
+pub async fn load_valued_holdings(
     pool: &SqlitePool,
     valuation_date: NaiveDate,
 ) -> Result<Vec<ValuedOpenHolding>, ApiError> {
@@ -78,10 +87,6 @@ pub async fn load_valued_open_holdings(
                 instrument.id
             ))
         })?;
-        if position.quantity == 0 {
-            continue;
-        }
-
         let valuation_inputs = load_valuation_inputs(pool, instrument, valuation_date).await?;
         let valuation = if valuation_inputs.price_mapping_enabled {
             Some(value_position(

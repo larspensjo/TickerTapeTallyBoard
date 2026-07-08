@@ -620,9 +620,15 @@ mod tests {
         .with_demo_mode(true);
 
         let holdings = get_json(&state, "/api/holdings").await;
-        assert_eq!(holdings.as_array().expect("holdings array").len(), 6);
+        assert_eq!(
+            holdings["holdings"]
+                .as_array()
+                .expect("holdings array")
+                .len(),
+            6
+        );
         assert_no_missing_price_or_fx(&holdings);
-        for holding in holdings.as_array().expect("holdings array") {
+        for holding in holdings["holdings"].as_array().expect("holdings array") {
             assert_eq!(holding["base"]["status"], "available");
             assert_eq!(
                 holding["valuation"]["market_value_base"]["status"],
@@ -641,7 +647,7 @@ mod tests {
             .is_empty());
         assert_no_missing_price_or_fx(&value_history);
 
-        let instrument_id = holdings[0]["instrument"]["id"]
+        let instrument_id = holdings["holdings"][0]["instrument"]["id"]
             .as_i64()
             .expect("instrument id");
         let prices = get_json(&state, &format!("/api/instruments/{instrument_id}/prices")).await;
@@ -666,7 +672,7 @@ mod tests {
         .with_demo_mode(true);
 
         let holdings = get_json(&state, "/api/holdings").await;
-        let holdings = holdings.as_array().expect("holdings array");
+        let holdings = holdings["holdings"].as_array().expect("holdings array");
 
         // Representative non-Other convictions are visible.
         let convictions: HashSet<&str> = holdings

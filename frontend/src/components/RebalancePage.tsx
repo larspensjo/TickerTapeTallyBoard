@@ -349,12 +349,19 @@ export function RebalancePage() {
                         key={`${row.instrument.id}-${row.side}-${row.shares}`}
                       >
                         <td>
-                          <InstrumentCell
-                            instrumentId={row.instrument.id}
-                            name={row.instrument.name}
-                            symbol={row.instrument.symbol}
-                            exchange={row.instrument.exchange}
-                          />
+                          <div className="rebalance-instrument-cell">
+                            <InstrumentCell
+                              instrumentId={row.instrument.id}
+                              name={row.instrument.name}
+                              symbol={row.instrument.symbol}
+                              exchange={row.instrument.exchange}
+                            />
+                            {row.is_new ? (
+                              <span className="status-chip compact rebalance-new-badge">
+                                new
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td>
                           <span className="type-chip">{row.sideLabel}</span>
@@ -400,12 +407,19 @@ export function RebalancePage() {
                     {viewModel.balanceRows.map((row) => (
                       <tr key={row.instrument.id}>
                         <td>
-                          <InstrumentCell
-                            instrumentId={row.instrument.id}
-                            name={row.instrument.name}
-                            symbol={row.instrument.symbol}
-                            exchange={row.instrument.exchange}
-                          />
+                          <div className="rebalance-instrument-cell">
+                            <InstrumentCell
+                              instrumentId={row.instrument.id}
+                              name={row.instrument.name}
+                              symbol={row.instrument.symbol}
+                              exchange={row.instrument.exchange}
+                            />
+                            {row.is_new ? (
+                              <span className="status-chip compact rebalance-new-badge">
+                                new
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td>
                           {row.actionKind === "trade" ? (

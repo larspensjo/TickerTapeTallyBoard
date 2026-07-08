@@ -68,9 +68,9 @@ export type HoldingBase =
 export interface Holding {
   instrument: Instrument;
   quantity: number;
-  cost_basis_native: string;
-  average_cost_native: string;
-  base: HoldingBase;
+  cost_basis_native: string | null;
+  average_cost_native: string | null;
+  base: HoldingBase | null;
   valuation?: {
     market_value_base: MoneyValue;
     unrealized_gain_base: MoneyValue;
@@ -78,6 +78,31 @@ export interface Holding {
     day_change_base: MoneyValue;
   } | null;
   conviction_target: ConvictionTarget;
+  row_kind: "open" | "watchlist";
+}
+
+export interface HoldingsResponse {
+  holdings: Holding[];
+  hidden_watchlist_pool_count: number;
+}
+
+export type InstrumentLookupStatus =
+  | "matches"
+  | "no_match"
+  | "provider_unavailable";
+
+export interface InstrumentLookupMatch {
+  provider: string;
+  provider_symbol: string;
+  quote_type: string | null;
+  exchange: string | null;
+  name: string | null;
+}
+
+export interface InstrumentLookupResponse {
+  query: string;
+  status: InstrumentLookupStatus;
+  matches: InstrumentLookupMatch[];
 }
 
 export interface PriceSnapshot {
@@ -246,6 +271,7 @@ export interface RebalanceTrade {
   price_base: string;
   amount_base: string;
   freshness: string;
+  is_new: boolean;
 }
 
 export interface RebalanceUntraded {
@@ -261,6 +287,7 @@ export interface RebalanceBalanceEntry {
   gap_after_percent: string | null;
   status_before: TargetStatus;
   status_after: TargetStatus;
+  is_new: boolean;
 }
 
 export interface RefreshRunSummary {

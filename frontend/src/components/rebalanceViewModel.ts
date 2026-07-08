@@ -46,6 +46,7 @@ export interface RebalanceTradeRowViewModel {
   freshnessLabel: string;
   freshnessTone: "warning" | "flat";
   freshnessKind: RebalanceFreshnessKind;
+  is_new: boolean;
 }
 
 export interface RebalanceBalanceBarViewModel {
@@ -61,6 +62,7 @@ export interface RebalanceBalanceRowViewModel {
   bar: RebalanceBalanceBarViewModel | null;
   afterGapLabel: string;
   flipsSide: boolean;
+  is_new: boolean;
 }
 
 export interface RebalanceSummaryViewModel {
@@ -192,6 +194,7 @@ function tradeRows(trades: RebalanceTrade[]): RebalanceTradeRowViewModel[] {
     freshnessLabel: freshnessLabel(trade.freshness),
     freshnessTone: freshnessTone(trade.freshness),
     freshnessKind: freshnessKind(trade.freshness),
+    is_new: trade.is_new,
   }));
 }
 
@@ -258,6 +261,7 @@ export function buildRebalanceBalanceRows(
       flipsSide:
         (entry.status_before === "below" && entry.status_after === "above") ||
         (entry.status_before === "above" && entry.status_after === "below"),
+      is_new: entry.is_new,
     };
   });
 }

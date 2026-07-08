@@ -49,8 +49,10 @@ High-conviction asset targets twice the value of a Medium-conviction asset.
 Assets with conviction `Other` are excluded from the target denominator.
 
 Only assets with `Low`, `Medium`, or `High` conviction and a usable valuation
-participate in the target pool. Their current total values are summed, and each
-target value is calculated from that target pool.
+participate in the target pool. A zero-quantity watchlist asset can join when
+it has a strictly-positive available price; a held zero-value position stays
+excluded. Their current total values are summed, and each target value is
+calculated from that target pool.
 
 A lagging valuation can be used when there is a last known value. A truly
 unavailable valuation excludes the asset from the target calculation while
@@ -222,9 +224,11 @@ Planning should account for practical constraints such as:
   valuation excludes a convicted asset from target calculation without changing
   stored conviction.
 - If all assets are `Other`, there is no target pool.
-- If only one asset is eligible for the target pool, that asset targets 100% of
-  the target pool and will always be on target unless valuation becomes
-  unavailable.
+- If only one open asset is eligible for the target pool, and no priced
+  watchlist member also joins it, that asset targets 100% of the target pool
+  and will always be on target unless valuation becomes unavailable.
+- A convicted zero-quantity asset with a usable price can join the pool and
+  split targets away from a sole open holding.
 - Target gaps across the effective eligible target pool should sum to
   approximately zero, subject to rounding. Convicted assets excluded because
   their valuation is unavailable are outside that invariant.

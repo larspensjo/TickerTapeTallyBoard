@@ -4,6 +4,7 @@ mod gains;
 mod health;
 mod holdings;
 mod import;
+mod instrument_lookup;
 mod instrument_prices;
 mod instruments;
 mod portfolio;
@@ -97,6 +98,7 @@ fn api_router() -> Router<AppState> {
             "/instruments",
             get(instruments::list).post(instruments::create),
         )
+        .route("/instruments/lookup", get(instrument_lookup::lookup))
         .route(
             "/instruments/convictions",
             put(instruments::update_convictions),

@@ -19,8 +19,11 @@ pub enum TradeSide {
 pub struct RebalanceCandidate {
     pub instrument_id: i64,
     pub weight: Decimal,
+    /// Current market value in base currency. May be zero for watchlist rows.
     pub market_value_base: Decimal,
+    /// Latest tradeable price in base currency per share. Must stay positive.
     pub price_base: Decimal,
+    /// Quantity currently held. May be zero for buy-only watchlist rows.
     pub held_quantity: i64,
 }
 
@@ -171,7 +174,7 @@ fn ideal_deltas(
         pool_value_base += candidate.market_value_base;
         total_weight += candidate.weight;
     }
-    debug_assert!(pool_value_base > Decimal::ZERO);
+    debug_assert!(pool_value_base >= Decimal::ZERO);
     debug_assert!(total_weight > Decimal::ZERO);
 
     let pool_plus_offset = pool_value_base + offset;
@@ -777,6 +780,138 @@ mod tests {
         let left = build_ladder(&candidates, Decimal::ZERO).expect("ladder");
         let right = build_ladder(&candidates, Decimal::ZERO).expect("ladder");
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn mixed_pool_redistributes_into_a_zero_value_buy_only_candidate() {
+        let candidates = vec![
+            candidate(1, dec!(1), dec!(100), dec!(1), 100),
+            candidate(2, dec!(4), dec!(0), dec!(1), 0),
+        ];
+        let offset = dec!(50);
+        let (pool_value, _, deltas) = ideal_deltas(&candidates, offset);
+        assert_eq!(pool_value, dec!(100));
+        assert_eq!(deltas.iter().copied().sum::<Decimal>(), offset);
+
+        let ladder = build_ladder(&candidates, offset).expect("ladder");
+        let rung = &ladder.rungs[0];
+        assert_eq!(rung.selected_count, 1);
+        assert_eq!(rung.effective_trade_count, 1);
+        assert_eq!(rung.trades.len(), 1);
+        assert_eq!(rung.trades[0].instrument_id, 2);
+        assert_eq!(rung.trades[0].side, TradeSide::Buy);
+        assert_eq!(rung.trades[0].shares, 50);
+        assert_eq!(rung.achieved_net_base, offset);
+        assert_eq!(rung.residual_base, Decimal::ZERO);
+        assert!(rung.coverage_percent.expect("coverage") > Decimal::ZERO);
+
+        let gap_before_sum: Decimal = rung.balance.iter().map(|entry| entry.gap_before_base).sum();
+        let gap_after_sum: Decimal = rung.balance.iter().map(|entry| entry.gap_after_base).sum();
+        assert_eq!(gap_before_sum, -offset);
+        assert_eq!(gap_after_sum, -rung.residual_base);
+        assert_eq!(
+            rung.total_gap_before_base,
+            rung.balance
+                .iter()
+                .map(|entry| entry.gap_before_base.abs())
+                .sum::<Decimal>()
+        );
+        assert_eq!(
+            rung.total_gap_after_base,
+            rung.balance
+                .iter()
+                .map(|entry| entry.gap_after_base.abs())
+                .sum::<Decimal>()
+        );
+    }
+
+    #[test]
+    fn mixed_pool_keeps_all_zero_fallback_honest_with_a_zero_value_watchlist_member_present() {
+        let candidates = vec![
+            candidate(1, dec!(4), dec!(100), dec!(1), 100),
+            candidate(2, dec!(1), dec!(0), dec!(1), 0),
+        ];
+        let ladder = build_ladder(&candidates, Decimal::ZERO).expect("ladder");
+        let rung = &ladder.rungs[0];
+
+        assert_eq!(rung.selected_count, 1);
+        assert_eq!(rung.effective_trade_count, 1);
+        assert_eq!(
+            rung.trades,
+            vec![super::PlannedTrade {
+                instrument_id: 1,
+                side: TradeSide::Sell,
+                shares: 20,
+                price_base: dec!(1),
+                amount_base: dec!(20),
+            }]
+        );
+        assert_eq!(rung.achieved_net_base, dec!(-20));
+        assert_eq!(rung.residual_base, dec!(20));
+        assert_eq!(rung.coverage_percent.expect("coverage"), dec!(50));
+    }
+
+    #[test]
+    fn pure_watchlist_pool_splits_cash_by_conviction_weight_and_produces_buy_ladder() {
+        let candidates = vec![
+            candidate(1, dec!(1), dec!(0), dec!(1), 0),
+            candidate(2, dec!(4), dec!(0), dec!(1), 0),
+        ];
+
+        let ladder = build_ladder(&candidates, dec!(100)).expect("ladder");
+        assert_eq!(ladder.pool_value_base, Decimal::ZERO);
+        assert_eq!(ladder.candidate_count, 2);
+
+        let rung = &ladder.rungs[1];
+        assert_eq!(rung.selected_count, 2);
+        assert_eq!(rung.effective_trade_count, 2);
+        assert_eq!(rung.trades.len(), 2);
+        assert!(rung.trades.iter().all(|trade| trade.side == TradeSide::Buy));
+        assert!(rung.trades.iter().any(|trade| {
+            trade.instrument_id == 1 && trade.shares == 20 && trade.amount_base == dec!(20)
+        }));
+        assert!(rung.trades.iter().any(|trade| {
+            trade.instrument_id == 2 && trade.shares == 80 && trade.amount_base == dec!(80)
+        }));
+        assert_eq!(rung.achieved_net_base, dec!(100));
+        assert_eq!(rung.residual_base, Decimal::ZERO);
+        assert_eq!(rung.coverage_percent.expect("coverage"), dec!(100));
+    }
+
+    #[test]
+    fn zero_pool_with_nonpositive_cash_is_unavailable() {
+        let candidates = vec![
+            candidate(1, dec!(1), dec!(0), dec!(1), 0),
+            candidate(2, dec!(4), dec!(0), dec!(1), 0),
+        ];
+
+        assert_eq!(
+            build_ladder(&candidates, Decimal::ZERO).unwrap_err(),
+            RebalanceUnavailable::OffsetExceedsPool
+        );
+        assert_eq!(
+            build_ladder(&candidates, dec!(-1)).unwrap_err(),
+            RebalanceUnavailable::OffsetExceedsPool
+        );
+    }
+
+    #[test]
+    fn zero_value_buy_only_candidate_can_survive_residual_repair() {
+        let candidates = vec![
+            candidate(1, dec!(1), dec!(100), dec!(1), 100),
+            candidate(2, dec!(4), dec!(0), dec!(4), 0),
+        ];
+        let quantities = resolve_quantities(
+            &candidates,
+            &[false, true],
+            &[dec!(-1), dec!(1)],
+            &[dec!(0), dec!(1)],
+            dec!(3),
+            false,
+        );
+
+        assert_eq!(quantities.quantities, vec![0, 1]);
+        assert_eq!(quantities.iterations, 1);
     }
 
     #[test]

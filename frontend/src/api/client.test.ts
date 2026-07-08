@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiGet, apiSend } from "./client";
+import { ApiError, apiGet, apiSend, apiSendWithStatus } from "./client";
 
 // The production parse() function only reads response.status, response.ok,
 // and response.text(), so a plain object satisfies its interface without
@@ -105,5 +105,21 @@ describe("apiSend", () => {
     await apiSend("DELETE", "/api/x", undefined);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.body).toBeUndefined();
+  });
+});
+
+describe("apiSendWithStatus", () => {
+  it("returns the response status alongside the parsed body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockResponse(200, { ok: true })),
+    );
+
+    await expect(
+      apiSendWithStatus("POST", "/api/x", { a: 1 }),
+    ).resolves.toEqual({
+      status: 200,
+      body: { ok: true },
+    });
   });
 });

@@ -349,7 +349,7 @@ async fn commit_excludes_a_bad_asset_and_writes_the_rest() {
     assert_eq!(body["counts"]["buys"], 1);
 
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert_eq!(holdings.as_array().expect("array").len(), 1);
+    assert_eq!(holdings["holdings"].as_array().expect("array").len(), 1);
 }
 
 #[tokio::test]
@@ -394,7 +394,7 @@ async fn commit_excludes_an_asset_with_a_mapper_stage_error() {
     assert_eq!(body["counts"]["rows"], 1);
 
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert_eq!(holdings.as_array().expect("array").len(), 1);
+    assert_eq!(holdings["holdings"].as_array().expect("array").len(), 1);
 }
 
 #[tokio::test]
@@ -409,7 +409,7 @@ async fn commit_writes_one_atomic_batch() {
 
     let (status, holdings) = send_json(&state, "GET", "/api/holdings").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(holdings.as_array().expect("array").len(), 2);
+    assert_eq!(holdings["holdings"].as_array().expect("array").len(), 2);
 }
 
 #[tokio::test]
@@ -533,7 +533,7 @@ async fn rollback_removes_a_batch() {
     assert_eq!(body["removed"].as_u64().expect("removed"), 4);
 
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert_eq!(holdings.as_array().expect("array").len(), 0);
+    assert_eq!(holdings["holdings"].as_array().expect("array").len(), 0);
 }
 
 #[tokio::test]
@@ -574,7 +574,7 @@ async fn rollback_is_rejected_when_a_dependent_manual_sell_exists() {
     assert_eq!(body["error"]["code"], "sell_exceeds_position");
 
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert!(!holdings.as_array().expect("array").is_empty());
+    assert!(!holdings["holdings"].as_array().expect("array").is_empty());
 }
 
 #[tokio::test]
@@ -613,7 +613,7 @@ async fn rollback_is_rejected_when_a_dependent_manual_split_exists() {
     assert_eq!(body["error"]["code"], "split_without_position");
 
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert!(!holdings.as_array().expect("array").is_empty());
+    assert!(!holdings["holdings"].as_array().expect("array").is_empty());
 }
 
 #[tokio::test]
@@ -1381,8 +1381,8 @@ async fn rollback_leaves_conviction_unchanged() {
     // Rollback restores the open position and never touches conviction.
     assert_eq!(conviction_of(&state, id).await, "High");
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    assert_eq!(holdings.as_array().expect("array").len(), 1);
-    assert_eq!(holdings[0]["quantity"], 10);
+    assert_eq!(holdings["holdings"].as_array().expect("array").len(), 1);
+    assert_eq!(holdings["holdings"][0]["quantity"], 10);
 }
 
 // A report that closes MSFT (convicted) and buys a second, new asset.
@@ -1411,7 +1411,7 @@ async fn deselected_closing_asset_does_not_require_a_conviction_choice() {
     // MSFT stays open with its conviction intact; only AAPL was imported.
     assert_eq!(conviction_of(&state, id).await, "High");
     let (_, holdings) = send_json(&state, "GET", "/api/holdings").await;
-    let msft = holdings
+    let msft = holdings["holdings"]
         .as_array()
         .expect("array")
         .iter()

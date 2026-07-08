@@ -176,7 +176,7 @@ pub(crate) async fn set_conviction(state: &AppState, id: i64, conviction: &str) 
 pub(crate) async fn holdings_by_symbol(state: &AppState) -> HashMap<String, Value> {
     let (status, holdings) = send(state, "GET", "/api/holdings", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    holdings
+    holdings["holdings"]
         .as_array()
         .expect("array")
         .iter()

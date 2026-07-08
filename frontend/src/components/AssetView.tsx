@@ -106,7 +106,7 @@ export function AssetView() {
     id,
     instruments: instrumentsQuery.data ?? [],
     gainsRows: gainsQuery.data?.rows ?? [],
-    holdings: holdingsQuery.data ?? [],
+    holdings: holdingsQuery.data?.holdings ?? [],
     transactions: transactionsQuery.data ?? [],
     priceStatus: priceStatusQuery.data?.instruments ?? [],
   });

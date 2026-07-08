@@ -22,7 +22,12 @@ async function parseJson(text: string): Promise<unknown> {
   }
 }
 
-async function parse<T>(response: Response): Promise<T> {
+export interface ApiResponse<T> {
+  status: number;
+  body: T;
+}
+
+async function parseBody<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
@@ -41,6 +46,17 @@ async function parse<T>(response: Response): Promise<T> {
   return body as T;
 }
 
+async function parse<T>(response: Response): Promise<T> {
+  return (await parseBody<T>(response)) as T;
+}
+
+async function parseWithStatus<T>(response: Response): Promise<ApiResponse<T>> {
+  return {
+    status: response.status,
+    body: await parseBody<T>(response),
+  };
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   return parse<T>(await fetch(path));
 }
@@ -51,6 +67,20 @@ export async function apiSend<T>(
   body: unknown,
 ): Promise<T> {
   return parse<T>(
+    await fetch(path, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+}
+
+export async function apiSendWithStatus<T>(
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<ApiResponse<T>> {
+  return parseWithStatus<T>(
     await fetch(path, {
       method,
       headers: { "content-type": "application/json" },

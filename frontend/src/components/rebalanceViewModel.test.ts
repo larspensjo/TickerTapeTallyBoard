@@ -39,6 +39,7 @@ function trade(
   priceBase: string,
   amountBase: string,
   freshness = "fresh",
+  isNew = false,
 ): RebalanceTrade {
   return {
     instrument: instrument(id, symbol),
@@ -47,6 +48,7 @@ function trade(
     price_base: priceBase,
     amount_base: amountBase,
     freshness,
+    is_new: isNew,
   };
 }
 
@@ -73,6 +75,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "-100.00",
               status_before: "on_target",
               status_after: "below",
+              is_new: false,
             },
             {
               instrument: instrument(2, "BBB"),
@@ -82,6 +85,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "50.00",
               status_before: "above",
               status_after: "above",
+              is_new: false,
             },
             {
               instrument: instrument(3, "CCC"),
@@ -91,6 +95,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "-25.00",
               status_before: "below",
               status_after: "below",
+              is_new: false,
             },
           ],
           achieved_net_base: "-100000.00",
@@ -120,6 +125,7 @@ function response(): RebalanceResponse {
               "950.00",
               "3800.00",
               "warning_stale_4_days",
+              true,
             ),
           ],
           untraded: [{ instrument: instrument(1, "AAA"), reason: "too_small" }],
@@ -132,6 +138,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "0.00",
               status_before: "on_target",
               status_after: "on_target",
+              is_new: false,
             },
             {
               instrument: instrument(2, "BBB"),
@@ -141,6 +148,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "24.95",
               status_before: "above",
               status_after: "above",
+              is_new: false,
             },
             {
               instrument: instrument(3, "CCC"),
@@ -150,6 +158,7 @@ function response(): RebalanceResponse {
               gap_after_percent: "0.00",
               status_before: "below",
               status_after: "on_target",
+              is_new: true,
             },
           ],
           achieved_net_base: "9950.10",
@@ -213,6 +222,8 @@ describe("rebalanceViewModel", () => {
       freshnessTone: "warning",
       freshnessKind: "warning_stale",
     });
+    expect(vm.tradeRows[0].is_new).toBe(false);
+    expect(vm.tradeRows[1].is_new).toBe(true);
     expect(vm.selectedRungFreshness).toBe("warning_stale_4_days");
     expect(vm.warningBanner?.label).toBe("Stale 4 days");
     expect(vm.warningBanner?.message).toContain("warning-stale trades");
@@ -220,6 +231,8 @@ describe("rebalanceViewModel", () => {
     expect(vm.balanceRows[0].actionKind).toBe("untraded");
     expect(vm.balanceRows[0].actionLabel).toBe("Too small");
     expect(vm.balanceRows[1].actionKind).toBe("trade");
+    expect(vm.balanceRows[0].is_new).toBe(false);
+    expect(vm.balanceRows[2].is_new).toBe(true);
   });
 
   it("keeps minor-stale trades out of the plan-level warning banner", () => {
@@ -257,6 +270,7 @@ describe("rebalanceViewModel", () => {
                   gap_after_percent: "0.00",
                   status_before: "on_target",
                   status_after: "on_target",
+                  is_new: false,
                 },
               ],
               achieved_net_base: "6147.60",
@@ -367,6 +381,7 @@ describe("rebalanceViewModel", () => {
                   gap_after_percent: "0.00",
                   status_before: "on_target",
                   status_after: "on_target",
+                  is_new: false,
                 },
                 {
                   instrument: instrument(2, "BBB"),
@@ -376,6 +391,7 @@ describe("rebalanceViewModel", () => {
                   gap_after_percent: "0.00",
                   status_before: "on_target",
                   status_after: "on_target",
+                  is_new: false,
                 },
               ],
               achieved_net_base: "0.00",
@@ -429,6 +445,7 @@ describe("rebalanceViewModel", () => {
                   gap_after_percent: "0.00",
                   status_before: "on_target",
                   status_after: "on_target",
+                  is_new: false,
                 },
                 {
                   instrument: instrument(2, "BBB"),
@@ -438,6 +455,7 @@ describe("rebalanceViewModel", () => {
                   gap_after_percent: "0.00",
                   status_before: "on_target",
                   status_after: "on_target",
+                  is_new: false,
                 },
               ],
               achieved_net_base: "0.00",
@@ -492,6 +510,7 @@ describe("buildRebalanceBalanceRows", () => {
           price_base: "0.50",
           amount_base: "32.50",
           freshness: "fresh",
+          is_new: false,
         },
       ],
       untraded: [{ instrument: instrument(2, "BBB"), reason: "too_small" }],
@@ -504,6 +523,7 @@ describe("buildRebalanceBalanceRows", () => {
           gap_after_percent: "7.50",
           status_before: "above",
           status_after: "above",
+          is_new: false,
         },
         {
           instrument: instrument(2, "BBB"),
@@ -513,6 +533,7 @@ describe("buildRebalanceBalanceRows", () => {
           gap_after_percent: "7.50",
           status_before: "below",
           status_after: "above",
+          is_new: false,
         },
         {
           instrument: instrument(3, "CCC"),
@@ -522,6 +543,7 @@ describe("buildRebalanceBalanceRows", () => {
           gap_after_percent: "-7.50",
           status_before: "below",
           status_after: "below",
+          is_new: false,
         },
       ],
       achieved_net_base: "0.00",

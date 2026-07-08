@@ -73,16 +73,17 @@ pub enum MarketValueState {
 
 /// One holding's input to target derivation.
 ///
-/// Eligibility is fully determined by `conviction` and `market_value`: a holding
-/// enters the pool only with a Low/Medium/High conviction and an available,
-/// strictly positive market value. Open quantity is therefore not needed here;
-/// a non-positive value (including a zero-priced or short position) is excluded
-/// via `current_value_not_positive`.
+/// Eligibility is determined by `conviction`, `market_value`, the open
+/// quantity, and whether a strictly-positive price is available. A zero-value,
+/// zero-quantity watchlist holding can join the pool when it has conviction and
+/// a usable price; a held zero-value position stays excluded.
 #[derive(Clone, Debug)]
 pub struct ConvictionTargetInput {
     pub instrument_id: i64,
     pub conviction: ConvictionLevel,
     pub market_value: MarketValueState,
+    pub open_quantity: i64,
+    pub has_positive_price: bool,
 }
 
 /// Shared pool-membership predicate for target and rebalance planning.
@@ -92,11 +93,18 @@ pub struct ConvictionTargetInput {
 pub fn pool_membership(
     conviction: ConvictionLevel,
     market_value: MarketValueState,
+    open_quantity: i64,
+    has_positive_price: bool,
 ) -> Option<(Decimal, Decimal)> {
     let weight = conviction.weight()?;
 
     match market_value {
         MarketValueState::Available(value) if value > Decimal::ZERO => Some((weight, value)),
+        MarketValueState::Available(value)
+            if value.is_zero() && open_quantity == 0 && has_positive_price =>
+        {
+            Some((weight, value))
+        }
         _ => None,
     }
 }
@@ -150,8 +158,11 @@ pub enum TargetReason {
     ValuationUnavailable,
     /// Convicted, but price mapping is disabled so there is no valuation.
     PriceMappingDisabled,
-    /// Convicted, valuation available, but the current value is not positive.
-    CurrentValueNotPositive,
+    /// Convicted, valuation available, but the current value has collapsed to
+    /// zero or below despite a usable price.
+    CurrentValueCollapsedToZero,
+    /// Convicted, but there is no strictly-positive available price.
+    NoUsablePrice,
 }
 
 impl TargetReason {
@@ -162,7 +173,8 @@ impl TargetReason {
             Self::TargetPoolZero => "target_pool_zero",
             Self::ValuationUnavailable => "valuation_unavailable",
             Self::PriceMappingDisabled => "price_mapping_disabled",
-            Self::CurrentValueNotPositive => "current_value_not_positive",
+            Self::CurrentValueCollapsedToZero => "current_value_collapsed_to_zero",
+            Self::NoUsablePrice => "no_usable_price",
         }
     }
 }
@@ -205,13 +217,19 @@ impl ConvictionTargetOutput {
 /// Derive targets for the whole pool at once.
 ///
 /// The eligible pool is the set of Low/Medium/High holdings with an available,
-/// strictly positive current value. Each eligible holding's target is
+/// positive current value plus zero-quantity watchlist holdings that have a
+/// usable price. Each eligible holding's target is
 /// `pool_value * weight / total_weight`; its gap is `current − target`.
 pub fn derive_targets(inputs: &[ConvictionTargetInput]) -> Vec<ConvictionTargetOutput> {
     let mut pool_value = Decimal::ZERO;
     let mut total_weight = Decimal::ZERO;
     for input in inputs {
-        if let Some((weight, value)) = pool_membership(input.conviction, input.market_value) {
+        if let Some((weight, value)) = pool_membership(
+            input.conviction,
+            input.market_value,
+            input.open_quantity,
+            input.has_positive_price,
+        ) {
             pool_value += value;
             total_weight += weight;
         }
@@ -251,10 +269,20 @@ fn derive_one(
                 TargetStatus::ExcludedUnavailable,
             );
         }
+        MarketValueState::Available(value)
+            if value.is_zero() && input.open_quantity == 0 && input.has_positive_price =>
+        {
+            value
+        }
         MarketValueState::Available(value) if value <= Decimal::ZERO => {
+            let reason = if input.has_positive_price {
+                TargetReason::CurrentValueCollapsedToZero
+            } else {
+                TargetReason::NoUsablePrice
+            };
             return ConvictionTargetOutput::excluded(
                 input,
-                TargetReason::CurrentValueNotPositive,
+                reason,
                 TargetStatus::ExcludedUnavailable,
             );
         }
@@ -308,10 +336,22 @@ mod tests {
         conviction: ConvictionLevel,
         value: MarketValueState,
     ) -> ConvictionTargetInput {
+        input_with(id, conviction, value, 1, true)
+    }
+
+    fn input_with(
+        id: i64,
+        conviction: ConvictionLevel,
+        value: MarketValueState,
+        open_quantity: i64,
+        has_positive_price: bool,
+    ) -> ConvictionTargetInput {
         ConvictionTargetInput {
             instrument_id: id,
             conviction,
             market_value: value,
+            open_quantity,
+            has_positive_price,
         }
     }
 
@@ -437,18 +477,55 @@ mod tests {
     }
 
     #[test]
-    fn zero_or_negative_value_is_excluded() {
-        let outputs = derive_targets(&[
-            input(1, ConvictionLevel::Low, available(dec!(0))),
-            input(2, ConvictionLevel::Low, available(dec!(-500))),
-        ]);
-        for output in &outputs {
-            assert_eq!(output.status, TargetStatus::ExcludedUnavailable);
-            assert_eq!(
-                output.target_value,
-                TargetField::Unavailable(vec![TargetReason::CurrentValueNotPositive])
-            );
-        }
+    fn pool_membership_admits_zero_value_zero_quantity_watchlist_member() {
+        assert_eq!(
+            super::pool_membership(ConvictionLevel::High, available(dec!(0)), 0, true,),
+            Some((dec!(4), dec!(0)))
+        );
+    }
+
+    #[test]
+    fn zero_value_held_position_is_excluded_when_price_is_usable() {
+        let outputs = derive_targets(&[input_with(
+            1,
+            ConvictionLevel::Low,
+            available(dec!(0)),
+            1,
+            true,
+        )]);
+        assert_eq!(outputs[0].status, TargetStatus::ExcludedUnavailable);
+        assert_eq!(
+            outputs[0].target_value,
+            TargetField::Unavailable(vec![TargetReason::CurrentValueCollapsedToZero])
+        );
+    }
+
+    #[test]
+    fn zero_value_held_position_is_excluded_when_price_is_not_usable() {
+        let outputs = derive_targets(&[input_with(
+            1,
+            ConvictionLevel::Low,
+            available(dec!(0)),
+            1,
+            false,
+        )]);
+        assert_eq!(outputs[0].status, TargetStatus::ExcludedUnavailable);
+        assert_eq!(
+            outputs[0].target_value,
+            TargetField::Unavailable(vec![TargetReason::NoUsablePrice])
+        );
+    }
+
+    #[test]
+    fn negative_value_is_still_excluded() {
+        let outputs = derive_targets(&[input_with(
+            1,
+            ConvictionLevel::Low,
+            available(dec!(-500)),
+            1,
+            true,
+        )]);
+        assert_eq!(outputs[0].status, TargetStatus::ExcludedUnavailable);
     }
 
     #[test]
@@ -463,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn single_eligible_asset_targets_full_pool_and_is_on_target() {
+    fn single_eligible_asset_targets_full_pool_and_is_on_target_without_watchlist() {
         let outputs = derive_targets(&[
             input(1, ConvictionLevel::High, available(dec!(250000))),
             input(2, ConvictionLevel::Other, available(dec!(999999))),
@@ -471,6 +548,22 @@ mod tests {
         assert_eq!(target_value(&outputs[0].target_value), dec!(250000));
         assert_eq!(target_value(&outputs[0].target_gap), Decimal::ZERO);
         assert_eq!(outputs[0].status, TargetStatus::OnTarget);
+    }
+
+    #[test]
+    fn open_holding_and_priced_watchlist_member_split_the_pool() {
+        let outputs = derive_targets(&[
+            input_with(1, ConvictionLevel::High, available(dec!(250000)), 100, true),
+            input_with(2, ConvictionLevel::Low, available(dec!(0)), 0, true),
+        ]);
+
+        assert_eq!(target_value(&outputs[0].target_value), dec!(200000));
+        assert_eq!(target_value(&outputs[0].target_gap), dec!(50000));
+        assert_eq!(outputs[0].status, TargetStatus::Above);
+
+        assert_eq!(target_value(&outputs[1].target_value), dec!(50000));
+        assert_eq!(target_value(&outputs[1].target_gap), dec!(-50000));
+        assert_eq!(outputs[1].status, TargetStatus::Below);
     }
 
     #[test]

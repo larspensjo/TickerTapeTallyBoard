@@ -503,6 +503,19 @@ table {
   padding-bottom: var(--space-4);
 }
 
+.rebalance-instrument-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.rebalance-new-badge {
+  border-color: rgba(22, 199, 132, 0.28);
+  background: var(--up-soft);
+  color: var(--up);
+}
+
 .rebalance-controls {
   display: flex;
   flex-direction: column;
@@ -1059,6 +1072,18 @@ tbody tr:last-child td {
   gap: var(--space-2);
 }
 
+.toolbar-watchlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolbar-hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .toolbar-error {
   font-size: 0.75rem;
   font-weight: 600;
@@ -1500,6 +1525,66 @@ th.number-head .sort-button {
   margin: 0;
   color: var(--down);
   font-size: 0.8125rem;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 48px);
+  overflow-y: auto;
+  background: rgba(10, 11, 13, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.dialog-panel {
+  width: min(100%, 760px);
+  margin-top: clamp(12px, 8vh, 72px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.dialog-form {
+  padding-top: var(--space-4);
+}
+
+.holdings-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid rgba(244, 176, 0, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--text-primary);
+}
+
+.holdings-banner p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+}
+
+.holdings-table tbody tr.row-highlighted td {
+  animation: holdings-row-highlight 1.8s ease-out;
+  background: rgba(0, 82, 255, 0.11);
+}
+
+.holdings-table tbody tr.row-highlighted:hover td {
+  background: rgba(0, 82, 255, 0.15);
+}
+
+@keyframes holdings-row-highlight {
+  0% {
+    background: rgba(0, 82, 255, 0.2);
+  }
+
+  100% {
+    background: rgba(0, 82, 255, 0.11);
+  }
 }
 
 .button.outline {

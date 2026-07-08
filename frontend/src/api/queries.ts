@@ -4,18 +4,19 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { apiGet, apiSend, apiSendBytes } from "./client";
+import { apiGet, apiSend, apiSendBytes, apiSendWithStatus } from "./client";
 import { normalizeRebalanceAmount } from "./rebalanceAmount";
 import type {
   Conviction,
   DateRange,
   GainsResponse,
   HealthResponse,
-  Holding,
+  HoldingsResponse,
   ImportPreview,
   ImportResult,
   ImportSource,
   Instrument,
+  InstrumentLookupResponse,
   InstrumentType,
   PriceHistoryResponse,
   PriceStatusResponse,
@@ -50,10 +51,21 @@ export function useTransactions() {
   });
 }
 
-export function useHoldings() {
+export function lookupInstrument(query: string) {
+  const search = new URLSearchParams({ query });
+  return apiGet<InstrumentLookupResponse>(`/api/instruments/lookup?${search}`);
+}
+
+export function useHoldings(includeWatchlist = false) {
   return useQuery({
-    queryKey: ["holdings"],
-    queryFn: () => apiGet<Holding[]>("/api/holdings"),
+    queryKey: ["holdings", includeWatchlist],
+    queryFn: () => {
+      const search = new URLSearchParams();
+      if (includeWatchlist) search.set("include_watchlist", "true");
+      const qs = search.toString();
+      return apiGet<HoldingsResponse>(`/api/holdings${qs ? `?${qs}` : ""}`);
+    },
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -136,6 +148,11 @@ export interface NewInstrumentInput {
   currency: string;
 }
 
+export interface UpsertInstrumentResult {
+  status: number;
+  instrument: Instrument;
+}
+
 export interface NewTransactionInput {
   instrument_id: number;
   type: TransactionType;
@@ -157,16 +174,27 @@ function invalidatePortfolioData(
   void queryClient.invalidateQueries({ queryKey: ["gains"] });
   void queryClient.invalidateQueries({ queryKey: ["price-status"] });
   void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
+  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
 }
 
 export function useUpsertInstrument() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: NewInstrumentInput) =>
-      apiSend<Instrument>("POST", "/api/instruments", input),
+    mutationFn: async (
+      input: NewInstrumentInput,
+    ): Promise<UpsertInstrumentResult> => {
+      const response = await apiSendWithStatus<Instrument>(
+        "POST",
+        "/api/instruments",
+        input,
+      );
+      return { status: response.status, instrument: response.body };
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
+      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
     },
   });
 }
@@ -200,6 +228,7 @@ export function useUpdateInstrumentConviction() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
     },
   });
 }
@@ -218,6 +247,7 @@ export function useUpdateInstrumentConvictions() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["instruments"] });
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
     },
   });
 }
@@ -260,6 +290,7 @@ export function useRefreshPrices() {
       void queryClient.invalidateQueries({
         queryKey: ["portfolio-value-history"],
       });
+      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
     },
   });
 }

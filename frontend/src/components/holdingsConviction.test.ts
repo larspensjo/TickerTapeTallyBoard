@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Conviction, ConvictionTarget, Holding } from "../api/types";
+import type {
+  AvailabilityValue,
+  Conviction,
+  ConvictionTarget,
+  Holding,
+} from "../api/types";
 import {
   type ConvictionEdits,
   convictionEditsReducer,
@@ -9,11 +14,13 @@ import {
   gapBarGeometry,
   hasConvictionEdits,
   holdingConvictionSearchText,
+  holdingValueSortField,
   pendingConvictionChanges,
   TARGET_GAP_BAR_CLAMP_PERCENT,
   targetGapBar,
   targetGapPercentField,
   targetStatusRank,
+  watchlistTargetsHint,
 } from "./holdingsConviction";
 
 function holding(id: number, conviction: Conviction): Holding {
@@ -50,6 +57,7 @@ function holding(id: number, conviction: Conviction): Holding {
       target_gap_base: { status: "available", value: "-10.00" },
       target_gap_percent: { status: "available", value: "-10.00" },
     },
+    row_kind: "open",
   };
 }
 
@@ -218,5 +226,49 @@ describe("search text", () => {
     const text = holdingConvictionSearchText(holding(1, "Medium"));
     expect(text).toContain("Medium");
     expect(text).toContain("Below");
+  });
+});
+
+describe("holdings value sort", () => {
+  it("sorts watchlist rows as zero while leaving open holdings unchanged", () => {
+    const open = holding(1, "High");
+    const watchlistBase = holding(2, "Low");
+    const valuation = watchlistBase.valuation;
+    if (valuation == null) {
+      throw new Error("expected valuation for test fixture");
+    }
+    const watchlist: Holding = {
+      ...watchlistBase,
+      quantity: 0,
+      cost_basis_native: null,
+      average_cost_native: null,
+      base: null,
+      valuation: {
+        ...valuation,
+        market_value_base: { status: "available", value: "0.00" },
+      },
+      row_kind: "watchlist",
+    };
+
+    expect(holdingValueSortField(open)).toEqual({
+      status: "available",
+      value: "0.00",
+    } satisfies AvailabilityValue<string>);
+    expect(holdingValueSortField(watchlist)).toEqual({
+      status: "available",
+      value: "0.00",
+    } satisfies AvailabilityValue<string>);
+  });
+});
+
+describe("watchlist hint", () => {
+  it("formats the hidden watchlist count as a hint", () => {
+    expect(watchlistTargetsHint(0)).toBeNull();
+    expect(watchlistTargetsHint(1)).toBe(
+      "Targets include 1 watchlist instruments",
+    );
+    expect(watchlistTargetsHint(12)).toBe(
+      "Targets include 12 watchlist instruments",
+    );
   });
 });

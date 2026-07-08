@@ -9,7 +9,14 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { type Dispatch, useMemo, useReducer, useState } from "react";
+import {
+  type Dispatch,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { ConvictionChange } from "../api/queries";
 import type {
   AvailabilityValue,
@@ -26,9 +33,11 @@ import {
   convictionRank,
   effectiveConviction,
   holdingConvictionSearchText,
+  holdingValueSortField,
   pendingConvictionChanges,
   targetGapBar,
   targetGapPercentField,
+  watchlistTargetsHint,
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
 import {
@@ -46,6 +55,11 @@ interface HoldingsTableMeta {
   edits: ConvictionEdits;
   canEditConviction: boolean;
   dispatchEdits: Dispatch<ConvictionEditAction>;
+}
+
+export interface HoldingsTableHighlightRequest {
+  instrumentId: number;
+  token: number;
 }
 
 interface RowView {
@@ -159,19 +173,41 @@ function valuationMissingChip(holding: Holding) {
   );
 }
 
+function blankMetricCell() {
+  return <span className="status-empty" aria-hidden="true" />;
+}
+
 function costCell(holding: Holding) {
+  if (holding.row_kind === "watchlist") {
+    return blankMetricCell();
+  }
+
+  if (holding.base === null) {
+    return valuationMissingChip(holding);
+  }
+
+  const averageCostNative = holding.average_cost_native;
+  const costBasisNative = holding.cost_basis_native;
+  if (averageCostNative === null || costBasisNative === null) {
+    return valuationMissingChip(holding);
+  }
+
   const currency = holding.instrument.currency;
   return (
     <div className="metric-stack">
-      <FormattedNumber value={holding.average_cost_native} prefix={currency} />
+      <FormattedNumber value={averageCostNative} prefix={currency} />
       <span className="metric-subtle">
-        <FormattedNumber value={holding.cost_basis_native} prefix={currency} />
+        <FormattedNumber value={costBasisNative} prefix={currency} />
       </span>
     </div>
   );
 }
 
 function valueCell(holding: Holding, percentage: PortfolioPercentage) {
+  if (holding.row_kind === "watchlist") {
+    return blankMetricCell();
+  }
+
   const valuation = holding.valuation;
   if (!valuation || !isAvailable(valuation.market_value_base)) {
     return valuationMissingChip(holding);
@@ -187,6 +223,10 @@ function valueCell(holding: Holding, percentage: PortfolioPercentage) {
 }
 
 function pnlCell(holding: Holding) {
+  if (holding.row_kind === "watchlist") {
+    return blankMetricCell();
+  }
+
   const valuation = holding.valuation;
   // Gating on market_value_base availability is equivalent to gating on gain
   // availability: the backend derives unrealized_gain_base from market value
@@ -283,7 +323,7 @@ function availableNumber(
 }
 
 function holdingCostBasisBaseNumber(holding: Holding): number | null {
-  if (holding.base.status !== "available") {
+  if (holding.base === null || holding.base.status !== "available") {
     return null;
   }
 
@@ -479,22 +519,17 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       header: "Cost",
       cell: (info) => costCell(info.row.original.holding),
     }),
-    columnHelper.accessor(
-      (row) =>
-        row.holding.valuation?.market_value_base ??
-        unavailableValue("valuation_unavailable"),
-      {
-        id: "value",
-        header: "Value (SEK)",
-        sortingFn: availabilitySortRows,
-        cell: (info) =>
-          valueCell(
-            info.row.original.holding,
-            portfolioPercentages.get(info.row.original.holding.instrument.id) ??
-              unavailableValue("valuation_unavailable"),
-          ),
-      },
-    ),
+    columnHelper.accessor((row) => holdingValueSortField(row.holding), {
+      id: "value",
+      header: "Value (SEK)",
+      sortingFn: availabilitySortRows,
+      cell: (info) =>
+        valueCell(
+          info.row.original.holding,
+          portfolioPercentages.get(info.row.original.holding.instrument.id) ??
+            unavailableValue("valuation_unavailable"),
+        ),
+    }),
     columnHelper.accessor(
       (row) =>
         row.holding.valuation?.unrealized_gain_base ??
@@ -531,6 +566,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
 }
 
 function holdingSearchText(holding: Holding): string {
+  const base = holding.base;
   return [
     holding.instrument.symbol,
     holding.instrument.name,
@@ -538,11 +574,11 @@ function holdingSearchText(holding: Holding): string {
     holding.instrument.currency,
     holding.instrument.type,
     holding.quantity.toString(),
-    holding.average_cost_native,
-    holding.cost_basis_native,
-    holding.base.status,
-    ...(holding.base.status === "unavailable"
-      ? holding.base.reasons.map((reason) => reason.code)
+    holding.average_cost_native ?? "",
+    holding.cost_basis_native ?? "",
+    base?.status ?? "",
+    ...(base?.status === "unavailable"
+      ? base.reasons.map((reason) => reason.code)
       : []),
     holding.valuation?.market_value_base.status === "available"
       ? holding.valuation.market_value_base.value
@@ -563,6 +599,10 @@ export function HoldingsTable({
   holdings,
   filter,
   onFilterChange,
+  includeWatchlist = false,
+  onIncludeWatchlistChange,
+  hiddenWatchlistPoolCount = 0,
+  highlightRequest = null,
   canEditConviction = false,
   onApplyConvictions,
   isApplyingConvictions = false,
@@ -571,6 +611,10 @@ export function HoldingsTable({
   holdings: Holding[];
   filter: string;
   onFilterChange: (filter: string) => void;
+  includeWatchlist?: boolean;
+  onIncludeWatchlistChange?: (includeWatchlist: boolean) => void;
+  hiddenWatchlistPoolCount?: number;
+  highlightRequest?: HoldingsTableHighlightRequest | null;
   canEditConviction?: boolean;
   onApplyConvictions?: (changes: ConvictionChange[]) => Promise<void>;
   isApplyingConvictions?: boolean;
@@ -578,6 +622,10 @@ export function HoldingsTable({
 }) {
   const [sorting, setSorting] = useState<SortingState>(loadHoldingsSorting);
   const [edits, dispatchEdits] = useReducer(convictionEditsReducer, {});
+  const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  const [activeHighlight, setActiveHighlight] =
+    useState<HoldingsTableHighlightRequest | null>(null);
+  const lastHandledToken = useRef<number | null>(null);
   // Drop edits a background refetch has made match the saved value, so Apply
   // never fires a no-op write.
   const pendingChanges = pendingConvictionChanges(edits, holdings);
@@ -633,6 +681,38 @@ export function HoldingsTable({
   });
   const visibleRows = table.getRowModel().rows.map((row) => row.original);
   const summary = computeHoldingsSummary(visibleRows, portfolioPercentages);
+  const watchlistHint = watchlistTargetsHint(hiddenWatchlistPoolCount);
+  const highlightedRow = highlightRequest
+    ? (table
+        .getRowModel()
+        .rows.find(
+          (row) =>
+            row.original.holding.instrument.id ===
+            highlightRequest.instrumentId,
+        ) ?? null)
+    : null;
+
+  useEffect(() => {
+    if (!highlightRequest || !highlightedRow) {
+      return;
+    }
+
+    if (lastHandledToken.current === highlightRequest.token) {
+      return;
+    }
+
+    const row = rowRefs.current.get(highlightRequest.instrumentId);
+    if (!row) {
+      return;
+    }
+
+    lastHandledToken.current = highlightRequest.token;
+    setActiveHighlight(highlightRequest);
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+
+    const timer = setTimeout(() => setActiveHighlight(null), 1800);
+    return () => clearTimeout(timer);
+  }, [highlightRequest, highlightedRow]);
 
   return (
     <>
@@ -644,6 +724,23 @@ export function HoldingsTable({
           value={filter}
           onChange={(event) => onFilterChange(event.target.value)}
         />
+        {onIncludeWatchlistChange ? (
+          <div className="toolbar-watchlist">
+            <label className="toolbar-check">
+              <input
+                type="checkbox"
+                checked={includeWatchlist}
+                onChange={(event) =>
+                  onIncludeWatchlistChange(event.target.checked)
+                }
+              />
+              <span>Include watchlist</span>
+            </label>
+            {watchlistHint && !includeWatchlist ? (
+              <span className="toolbar-hint">{watchlistHint}</span>
+            ) : null}
+          </div>
+        ) : null}
         {canEditConviction ? (
           <div className="toolbar-actions">
             {applyError ? (
@@ -709,7 +806,25 @@ export function HoldingsTable({
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id}>
+              <tr
+                key={row.id}
+                ref={(element) => {
+                  if (element) {
+                    rowRefs.current.set(
+                      row.original.holding.instrument.id,
+                      element,
+                    );
+                  } else {
+                    rowRefs.current.delete(row.original.holding.instrument.id);
+                  }
+                }}
+                className={
+                  activeHighlight?.instrumentId ===
+                  row.original.holding.instrument.id
+                    ? "row-highlighted"
+                    : undefined
+                }
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}

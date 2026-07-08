@@ -170,7 +170,7 @@ function gcd(a: number, b: number): number {
 }
 
 function averageCostBase(holding: Holding | null): MoneyValue {
-  if (holding && holding.base.status === "available") {
+  if (holding?.base?.status === "available") {
     return { status: "available", value: holding.base.average_cost_base };
   }
 
