@@ -9,6 +9,8 @@ const chartMocks = vi.hoisted(() => {
   const AreaSeries = { seriesType: "Area" };
   const setData = vi.fn();
   const setMarkers = vi.fn();
+  const createPriceLine = vi.fn((options?: unknown) => ({ options }));
+  const removePriceLine = vi.fn();
   const setVisibleRange = vi.fn();
   const fitContent = vi.fn();
   const applyOptions = vi.fn();
@@ -16,7 +18,7 @@ const chartMocks = vi.hoisted(() => {
   const subscribeCrosshairMove = vi.fn();
   const timeScale = vi.fn(() => ({ setVisibleRange, fitContent }));
   const setReferenceData = vi.fn();
-  const areaSeries = { setData };
+  const areaSeries = { setData, createPriceLine, removePriceLine };
   const lineSeries = { setData: setReferenceData };
   const addAreaSeries = vi.fn((_options?: unknown) => areaSeries);
   const addLineSeries = vi.fn((_options?: unknown) => lineSeries);
@@ -40,9 +42,11 @@ const chartMocks = vi.hoisted(() => {
     addSeries,
     applyOptions,
     createChart,
+    createPriceLine,
     createSeriesMarkers,
     fitContent,
     remove,
+    removePriceLine,
     setData,
     setMarkers,
     setReferenceData,
@@ -281,5 +285,63 @@ describe("TimeSeriesChart", () => {
       { time: "2026-01-03" },
       { time: "2026-01-04", value: 1000 },
     ]);
+  });
+
+  it("manages the cost basis price line without stacking or leaking handles", () => {
+    const { rerender } = render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-06-01", value: 300 }]}
+        costBasisLine={250}
+      />,
+    );
+
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(1);
+    expect(chartMocks.createPriceLine).toHaveBeenLastCalledWith({
+      price: 250,
+      color: "#e0b15e",
+      lineStyle: 1,
+      lineWidth: 1,
+      axisLabelVisible: true,
+      title: "",
+      lineVisible: true,
+    });
+
+    const firstHandle = chartMocks.createPriceLine.mock.results[0]?.value;
+    expect(chartMocks.removePriceLine).not.toHaveBeenCalled();
+
+    rerender(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-06-01", value: 300 }]}
+        costBasisLine={275}
+      />,
+    );
+
+    expect(chartMocks.removePriceLine).toHaveBeenCalledTimes(1);
+    expect(chartMocks.removePriceLine).toHaveBeenLastCalledWith(firstHandle);
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(2);
+    expect(chartMocks.createPriceLine).toHaveBeenLastCalledWith({
+      price: 275,
+      color: "#e0b15e",
+      lineStyle: 1,
+      lineWidth: 1,
+      axisLabelVisible: true,
+      title: "",
+      lineVisible: true,
+    });
+
+    const secondHandle = chartMocks.createPriceLine.mock.results[1]?.value;
+
+    rerender(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-06-01", value: 300 }]}
+      />,
+    );
+
+    expect(chartMocks.removePriceLine).toHaveBeenCalledTimes(2);
+    expect(chartMocks.removePriceLine).toHaveBeenLastCalledWith(secondHandle);
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(2);
   });
 });

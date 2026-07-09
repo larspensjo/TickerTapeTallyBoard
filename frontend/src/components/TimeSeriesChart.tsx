@@ -5,6 +5,7 @@ import {
   createChart,
   createSeriesMarkers,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   LineSeries,
@@ -47,6 +48,7 @@ function isoFromTime(time: Time): string | null {
 
 type AreaSeriesPoint = AreaData<Time> | WhitespaceData<Time>;
 const dayMs = 24 * 60 * 60 * 1000;
+const goldLineColor = "#e0b15e";
 
 function chartDate(time: Time): Date | null {
   if (typeof time === "string") {
@@ -147,6 +149,7 @@ export function TimeSeriesChart({
   visibleStart,
   markers = [],
   referenceData,
+  costBasisLine,
   height = 240,
   lineColor = "#4f9cff",
   topColor = "rgba(79, 156, 255, 0.30)",
@@ -157,6 +160,7 @@ export function TimeSeriesChart({
   visibleStart?: string;
   markers?: ChartTradeMarker[];
   referenceData?: TimeSeriesPoint[];
+  costBasisLine?: number;
   height?: number;
   lineColor?: string;
   topColor?: string;
@@ -167,6 +171,7 @@ export function TimeSeriesChart({
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const referenceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const costPriceLineRef = useRef<IPriceLine | null>(null);
   const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
 
@@ -199,7 +204,7 @@ export function TimeSeriesChart({
       handleScroll: false,
     });
     const referenceSeries = chart.addSeries(LineSeries, {
-      color: "#e0b15e",
+      color: goldLineColor,
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
@@ -278,6 +283,44 @@ export function TimeSeriesChart({
       chartRef.current?.timeScale().fitContent();
     }
   }, [data, visibleStart, referenceData]);
+
+  useEffect(() => {
+    const previousPriceLine = costPriceLineRef.current;
+    const series = seriesRef.current;
+    const price = costBasisLine;
+
+    if (previousPriceLine) {
+      if (series) {
+        series.removePriceLine(previousPriceLine);
+      }
+      costPriceLineRef.current = null;
+    }
+
+    if (!series || typeof price !== "number" || !Number.isFinite(price)) {
+      return () => {
+        costPriceLineRef.current = null;
+      };
+    }
+
+    const priceLine = series.createPriceLine({
+      price,
+      color: goldLineColor,
+      lineStyle: LineStyle.Dotted,
+      lineWidth: 1,
+      axisLabelVisible: true,
+      title: "",
+      lineVisible: true,
+    });
+
+    costPriceLineRef.current = priceLine;
+
+    return () => {
+      costPriceLineRef.current = null;
+      if (seriesRef.current) {
+        seriesRef.current.removePriceLine(priceLine);
+      }
+    };
+  }, [costBasisLine]);
 
   useEffect(() => {
     const seriesMarkersApi = seriesMarkersRef.current;

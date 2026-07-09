@@ -24,6 +24,7 @@ import {
   canDeleteInstrument,
   convictionPanelView,
   convictionResetVisible,
+  costBasisLineValue,
   deleteInstrumentDisabledReason,
   deriveAssetData,
   headerStatus,
@@ -187,6 +188,7 @@ export function AssetView() {
           <AssetPriceChart
             query={pricesQuery}
             transactions={data.transactions}
+            costBasisLine={costBasisLineValue(data.holding)}
           />
           <div className="asset-two-col">
             <GainsWaterfall view={waterfallView(data.gain)} />
@@ -503,9 +505,11 @@ function MetricTile({
 function AssetPriceChart({
   query,
   transactions,
+  costBasisLine,
 }: {
   query: ReturnType<typeof useInstrumentPrices>;
   transactions: Transaction[];
+  costBasisLine?: number;
 }) {
   const series = useMemo(
     () => instrumentPriceSeries(query.data, transactions),
@@ -570,6 +574,7 @@ function AssetPriceChart({
         ariaLabel={`Instrument price history in ${query.data?.currency ?? "native currency"}`}
         visibleStart={visibleStart}
         markers={markers}
+        costBasisLine={costBasisLine}
       />
     </section>
   );

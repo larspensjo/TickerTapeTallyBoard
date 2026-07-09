@@ -11,6 +11,7 @@ import {
   canDeleteInstrument,
   convictionPanelView,
   convictionResetVisible,
+  costBasisLineValue,
   deleteInstrumentDisabledReason,
   findGainsRow,
   findHolding,
@@ -231,6 +232,23 @@ describe("findHolding", () => {
 
   it("returns null when not found", () => {
     expect(findHolding(holdings, 99)).toBeNull();
+  });
+});
+
+describe("costBasisLineValue", () => {
+  it("returns the parsed average cost for an available holding", () => {
+    expect(costBasisLineValue(makeHolding(1))).toBe(100);
+  });
+
+  it("returns undefined for a null holding", () => {
+    expect(costBasisLineValue(null)).toBeUndefined();
+  });
+
+  it("returns undefined when average_cost_native is null", () => {
+    const holding = makeHolding(1);
+    holding.average_cost_native = null;
+
+    expect(costBasisLineValue(holding)).toBeUndefined();
   });
 });
 
