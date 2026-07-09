@@ -156,6 +156,46 @@ async fn gains_can_include_closed_positions_with_realized_gain() {
     assert_available_status(&row["currency_gain_percent"]);
     assert_available(&row["total_return_base"], "3175.00");
     assert_available(&row["total_return_percent"], "31.68");
+    assert_available(&row["held_fee_component_base"], "0.00");
+    assert_available(&row["realized_fee_base"], "25.00");
+    assert_available(&row["realized_sell_brokerage_base"], "5.00");
+    assert_available(&row["brokerage_total_base"], "25.00");
+}
+
+#[tokio::test]
+async fn gains_serializes_brokerage_fields_even_when_cost_basis_is_unavailable() {
+    let state = AppState::for_tests().await;
+    let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
+
+    send(
+        &state,
+        "POST",
+        "/api/transactions",
+        json!({"instrument_id":instrument_id,"type":"Buy","trade_date":"2026-06-01",
+               "quantity":10,"price":"100","currency":"USD","fx_rate_to_base":null,"brokerage":"20"}),
+    )
+    .await;
+    send(
+        &state,
+        "POST",
+        "/api/transactions",
+        json!({"instrument_id":instrument_id,"type":"Sell","trade_date":"2026-06-02",
+               "quantity":10,"price":"120","currency":"USD","fx_rate_to_base":"11","brokerage":"5"}),
+    )
+    .await;
+
+    let (status, body) = send(&state, "GET", "/api/gains?include_closed=true", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["rows"].as_array().expect("rows").len(), 1);
+
+    let row = &body["rows"][0];
+    assert_eq!(row["position_status"], "closed");
+    assert_unavailable(&row["cost_basis_base"], &["missing_fx"]);
+    assert_available(&row["proceeds_base"], "13195.00");
+    assert_unavailable(&row["realized_fee_base"], &["missing_fx"]);
+    assert_available(&row["held_fee_component_base"], "0.00");
+    assert_available(&row["realized_sell_brokerage_base"], "5.00");
+    assert_available(&row["brokerage_total_base"], "25.00");
 }
 
 #[tokio::test]
@@ -247,6 +287,10 @@ async fn gains_include_closed_positions_keeps_partial_sells_in_one_open_row() {
     assert_available(&open_row["unrealized_price_effect_base"], "1308.00");
     assert_available(&open_row["unrealized_fx_effect_base"], "600.00");
     assert_available(&open_row["total_return_base"], "3175.00");
+    assert_available(&open_row["held_fee_component_base"], "12.00");
+    assert_available(&open_row["realized_fee_base"], "13.00");
+    assert_available(&open_row["realized_sell_brokerage_base"], "5.00");
+    assert_available(&open_row["brokerage_total_base"], "25.00");
 }
 
 #[tokio::test]
@@ -299,6 +343,10 @@ async fn gains_populated_portfolio_uses_cached_price_and_frankfurter_fx() {
     assert_available(&row["total_return_percent"], "32.00");
     assert_available(&row["day_change_base"], "1650.00");
     assert_available(&row["day_change_percent"], "14.28");
+    assert_available(&row["held_fee_component_base"], "0.00");
+    assert_available(&row["realized_fee_base"], "0.00");
+    assert_available(&row["realized_sell_brokerage_base"], "0.00");
+    assert_available(&row["brokerage_total_base"], "0.00");
 
     assert_available(&body["summary"]["market_value_base"], "13200.00");
     assert_available(&body["summary"]["cost_basis_base"], "10000.00");

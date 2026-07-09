@@ -418,6 +418,7 @@ pub struct ValuedHolding {
     pub quantity: i64,
     pub cost_basis_native: Decimal,
     pub cost_basis_base: Availability<Decimal>,
+    pub fee_component_base: Availability<Decimal>,
     pub price_effect_base: Availability<Decimal>,
     pub fx_effect_base: Availability<Decimal>,
     pub latest_price: Availability<PriceSnapshot>,
@@ -666,6 +667,16 @@ pub fn value_position(
         quantity: position.quantity,
         cost_basis_native: position.cost_basis_native,
         cost_basis_base,
+        fee_component_base: match &position.base {
+            BaseCostBasis::Available {
+                fee_component_base, ..
+            } => Availability::available(*fee_component_base),
+            BaseCostBasis::Unavailable { reasons } => Availability::Unavailable {
+                reasons: vec![ValuationReason::BaseCostBasisUnavailable {
+                    reasons: reasons.clone(),
+                }],
+            },
+        },
         price_effect_base,
         fx_effect_base,
         latest_price,

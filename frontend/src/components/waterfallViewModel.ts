@@ -97,6 +97,27 @@ function displaySum(a: MoneyValue, b: MoneyValue): MoneyValue {
   };
 }
 
+function combineMoney(a: MoneyValue, b: MoneyValue, op: "+" | "-"): MoneyValue {
+  if (a.status !== "available" && b.status !== "available") {
+    const reasons = [...new Set([...a.reasons, ...b.reasons])];
+    return { status: "unavailable", reasons };
+  }
+  if (a.status !== "available") return a;
+  if (b.status !== "available") return b;
+  const lhs = Number(a.value);
+  const rhs = Number(b.value);
+  const value = op === "+" ? lhs + rhs : lhs - rhs;
+  return { status: "available", value: value.toFixed(2) };
+}
+
+function moneyOrUnavailable(value: MoneyValue | undefined): MoneyValue {
+  return value ?? { status: "unavailable", reasons: ["unavailable"] };
+}
+
+function hasBrokerageBreakdown(gain: GainsRow): boolean {
+  return gain.brokerage_total_base?.status === "available";
+}
+
 function levelRow(
   key: string,
   label: string,
@@ -281,6 +302,100 @@ function computeDomain(rows: WaterfallRow[]): {
 }
 
 function openWaterfall(gain: GainsRow): WaterfallView {
+  if (hasBrokerageBreakdown(gain)) {
+    const netCostBasis = gain.cost_basis_base;
+    const heldFee = moneyOrUnavailable(gain.held_fee_component_base);
+    const grossCostBasis = combineMoney(netCostBasis, heldFee, "-");
+    const heldPriceEffect =
+      gain.unrealized_price_effect_base ?? gain.price_effect_base;
+    const grossPriceEffect = combineMoney(heldPriceEffect, heldFee, "+");
+    const fxEffect = gain.unrealized_fx_effect_base ?? gain.fx_effect_base;
+    const realizedGross = combineMoney(
+      gain.realized_gain_base,
+      moneyOrUnavailable(gain.realized_fee_base),
+      "+",
+    );
+    const brokerageCosts = combineMoney(
+      { status: "available", value: "0.00" },
+      moneyOrUnavailable(gain.brokerage_total_base),
+      "-",
+    );
+    const totalCostBasis = displaySum(
+      netCostBasis,
+      gain.realized_cost_basis_base,
+    );
+    const rows: WaterfallRow[] = [];
+    let running = toNumber(grossCostBasis) ?? 0;
+
+    rows.push(
+      levelRow("cost-basis", "Cost basis (held)", "base", grossCostBasis),
+    );
+    running = pushEffect(
+      rows,
+      "price",
+      "Price effect",
+      grossPriceEffect,
+      netCostBasis,
+      running,
+    );
+    running = pushEffect(
+      rows,
+      "fx",
+      "FX effect",
+      fxEffect,
+      netCostBasis,
+      running,
+    );
+    rows.push(
+      levelRow(
+        "market-value",
+        "Market value",
+        "subtotal",
+        gain.market_value_base,
+      ),
+    );
+    running = pushEffect(
+      rows,
+      "realized",
+      "Realized gain",
+      realizedGross,
+      gain.realized_cost_basis_base,
+      running,
+    );
+    running = pushEffect(
+      rows,
+      "brokerage",
+      "Brokerage costs",
+      brokerageCosts,
+      totalCostBasis,
+      running,
+    );
+    running = incomeRow(gain, netCostBasis, running, rows);
+
+    const totalReturn = displaySum(
+      displaySum(gain.unrealized_gain_base, gain.realized_gain_base),
+      incomeForTotalReturn(gain),
+    );
+    const stackedSegments = buildStackedSegments(
+      rows,
+      grossCostBasis,
+      totalReturn,
+      ["price", "fx", "realized", "brokerage", "income"],
+    );
+    rows.push(
+      totalRow(
+        "Total return",
+        totalReturn,
+        totalCostBasis,
+        grossCostBasis,
+        stackedSegments,
+      ),
+    );
+
+    const { minValue, maxValue } = computeDomain(rows);
+    return { mode: "open", currency: CURRENCY, rows, minValue, maxValue };
+  }
+
   const costBasis = gain.cost_basis_base;
   const priceEffect =
     gain.unrealized_price_effect_base ?? gain.price_effect_base;
@@ -345,6 +460,80 @@ function openWaterfall(gain: GainsRow): WaterfallView {
 }
 
 function closedWaterfall(gain: GainsRow): WaterfallView {
+  if (hasBrokerageBreakdown(gain)) {
+    const netCostBasis = gain.cost_basis_base;
+    const sellBrokerage = moneyOrUnavailable(gain.realized_sell_brokerage_base);
+    const realizedFee = moneyOrUnavailable(gain.realized_fee_base);
+    const feeOnSoldShares = combineMoney(realizedFee, sellBrokerage, "-");
+    const grossCostBasis = combineMoney(netCostBasis, feeOnSoldShares, "-");
+    const grossPriceEffect = combineMoney(
+      gain.price_effect_base,
+      realizedFee,
+      "+",
+    );
+    const fxEffect = gain.fx_effect_base;
+    const brokerageCosts = combineMoney(
+      { status: "available", value: "0.00" },
+      moneyOrUnavailable(gain.brokerage_total_base),
+      "-",
+    );
+    const proceedsGross = combineMoney(gain.proceeds_base, sellBrokerage, "+");
+    const rows: WaterfallRow[] = [];
+    let running = toNumber(grossCostBasis) ?? 0;
+
+    rows.push(
+      levelRow("cost-basis", "Cost basis (sold)", "base", grossCostBasis),
+    );
+    running = pushEffect(
+      rows,
+      "price",
+      "Price effect",
+      grossPriceEffect,
+      netCostBasis,
+      running,
+    );
+    running = pushEffect(
+      rows,
+      "fx",
+      "FX effect",
+      fxEffect,
+      netCostBasis,
+      running,
+    );
+    rows.push(levelRow("proceeds", "Proceeds", "subtotal", proceedsGross));
+    running = pushEffect(
+      rows,
+      "brokerage",
+      "Brokerage costs",
+      brokerageCosts,
+      netCostBasis,
+      running,
+    );
+    running = incomeRow(gain, netCostBasis, running, rows);
+    const totalReturn = displaySum(
+      gain.total_return_base,
+      incomeForTotalReturn(gain),
+    );
+    const stackedSegments = buildStackedSegments(
+      rows,
+      grossCostBasis,
+      totalReturn,
+      ["price", "fx", "brokerage", "income"],
+    );
+    rows.push(
+      totalRow(
+        "Total return",
+        totalReturn,
+        netCostBasis,
+        grossCostBasis,
+        stackedSegments,
+      ),
+    );
+
+    const { minValue, maxValue } = computeDomain(rows);
+    return { mode: "closed", currency: CURRENCY, rows, minValue, maxValue };
+  }
+
   const costBasis = gain.cost_basis_base;
   const rows: WaterfallRow[] = [];
   let running = toNumber(costBasis) ?? 0;

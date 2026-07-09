@@ -146,6 +146,7 @@ pub async fn list(
                 gain_rows.push(closed_gain_row(
                     instrument,
                     &performance.realized,
+                    performance.brokerage_total_base,
                     performance_start_date,
                     &row_income_base,
                 )?);
@@ -171,6 +172,7 @@ pub async fn list(
             instrument,
             &valued_holding,
             &performance.realized,
+            performance.brokerage_total_base,
             performance_start_date,
             &row_income_base,
         )?);

@@ -49,6 +49,7 @@ pub(super) fn open_gain_row(
     instrument: &instruments::InstrumentRow,
     valued_holding: &ValuedHolding,
     realized: &RealizedGain,
+    brokerage_total_base: Decimal,
     performance_start_date: Option<NaiveDate>,
     income_base: &Availability<Decimal>,
 ) -> Result<GainRow, ApiError> {
@@ -59,6 +60,7 @@ pub(super) fn open_gain_row(
     let realized_cost = base_amount_availability(&realized.cost_basis_base);
     let realized_price = base_amount_availability(&realized.price_effect_base);
     let realized_fx = base_amount_availability(&realized.fx_effect_base);
+    let brokerage_total = Availability::available(brokerage_total_base);
     let total_gain_ex_income = add(&valued_holding.unrealized_gain_base, &realized_gain);
     let total_gain = add(&total_gain_ex_income, income_base);
     let total_cost = add(&valued_holding.cost_basis_base, &realized_cost);
@@ -110,6 +112,14 @@ pub(super) fn open_gain_row(
         proceeds_base: AvailabilityResponse::Unavailable {
             reasons: Vec::new(),
         },
+        held_fee_component_base: serialize_availability(&valued_holding.fee_component_base, |v| {
+            money_string(*v)
+        }),
+        realized_fee_base: serialize_base_amount(&realized.fee_base),
+        realized_sell_brokerage_base: AvailabilityResponse::Available {
+            value: money_string(realized.sell_brokerage_base),
+        },
+        brokerage_total_base: serialize_availability(&brokerage_total, |v| money_string(*v)),
         unrealized_price_effect_base: serialize_availability(
             &valued_holding.price_effect_base,
             |v| money_string(*v),
@@ -144,6 +154,7 @@ pub(super) fn open_gain_row(
 pub(super) fn closed_gain_row(
     instrument: &instruments::InstrumentRow,
     realized: &RealizedGain,
+    brokerage_total_base: Decimal,
     performance_start_date: Option<NaiveDate>,
     income_base: &Availability<Decimal>,
 ) -> Result<GainRow, ApiError> {
@@ -223,6 +234,16 @@ pub(super) fn closed_gain_row(
             value: money_string(realized.proceeds_native),
         },
         proceeds_base: serialize_base_amount(&realized.proceeds_base),
+        held_fee_component_base: AvailabilityResponse::Available {
+            value: money_string(Decimal::ZERO),
+        },
+        realized_fee_base: serialize_base_amount(&realized.fee_base),
+        realized_sell_brokerage_base: AvailabilityResponse::Available {
+            value: money_string(realized.sell_brokerage_base),
+        },
+        brokerage_total_base: AvailabilityResponse::Available {
+            value: money_string(brokerage_total_base),
+        },
         unrealized_price_effect_base: serialize_base_amount(&realized.price_effect_base),
         unrealized_fx_effect_base: serialize_base_amount(&realized.fx_effect_base),
         unrealized_gain_base: serialize_availability(&gain_base, |v| money_string(*v)),

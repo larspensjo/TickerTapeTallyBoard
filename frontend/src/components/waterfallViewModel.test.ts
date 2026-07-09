@@ -55,6 +55,63 @@ function openGain(overrides: Partial<GainsRow> = {}): GainsRow {
   };
 }
 
+function grossOpenGain(overrides: Partial<GainsRow> = {}): GainsRow {
+  return openGain({
+    cost_basis_base: money("10020.00"),
+    performance_denominator_base: money("10020.00"),
+    capital_gain_base: money("2175.00"),
+    capital_gain_percent: money("21.71"),
+    currency_gain_base: money("1000.00"),
+    currency_gain_percent: money("9.98"),
+    total_return_base: money("3175.00"),
+    total_return_percent: money("31.68"),
+    market_value_base: money("11928.00"),
+    unrealized_price_effect_base: money("1308.00"),
+    unrealized_fx_effect_base: money("600.00"),
+    unrealized_gain_base: money("1908.00"),
+    unrealized_gain_percent: money("19.04"),
+    realized_gain_base: money("1267.00"),
+    realized_cost_basis_base: money("4008.00"),
+    price_effect_base: money("1308.00"),
+    fx_effect_base: money("600.00"),
+    held_fee_component_base: money("12.00"),
+    realized_fee_base: money("13.00"),
+    realized_sell_brokerage_base: money("5.00"),
+    brokerage_total_base: money("25.00"),
+    ...overrides,
+  });
+}
+
+function grossClosedGain(overrides: Partial<GainsRow> = {}): GainsRow {
+  return openGain({
+    position_status: "closed",
+    quantity: 0,
+    market_value_base: money("0.00"),
+    cost_basis_base: money("10020.00"),
+    performance_denominator_base: money("10020.00"),
+    capital_gain_base: money("2175.00"),
+    capital_gain_percent: money("21.71"),
+    currency_gain_base: money("1000.00"),
+    currency_gain_percent: money("9.98"),
+    total_return_base: money("3175.00"),
+    total_return_percent: money("31.68"),
+    proceeds_base: money("13195.00"),
+    price_effect_base: money("2175.00"),
+    fx_effect_base: money("1000.00"),
+    unrealized_price_effect_base: money("2175.00"),
+    unrealized_fx_effect_base: money("1000.00"),
+    unrealized_gain_base: money("3175.00"),
+    unrealized_gain_percent: money("31.68"),
+    realized_gain_base: money("3175.00"),
+    realized_cost_basis_base: money("10020.00"),
+    held_fee_component_base: money("0.00"),
+    realized_fee_base: money("25.00"),
+    realized_sell_brokerage_base: money("5.00"),
+    brokerage_total_base: money("25.00"),
+    ...overrides,
+  });
+}
+
 describe("waterfallView (open)", () => {
   it("builds the open ladder ending at total return = unrealized + realized", () => {
     const view = waterfallView(openGain());
@@ -100,6 +157,61 @@ describe("waterfallView (open)", () => {
     );
     const total = view.rows.find((r) => r.key === "total-return");
     expect(total?.value).toEqual({ status: "available", value: "63164.73" });
+  });
+
+  it("builds the gross open ladder with a brokerage loss step", () => {
+    const view = waterfallView(grossOpenGain());
+    expect(view.rows.map((r) => [r.key, r.kind, r.label])).toEqual([
+      ["cost-basis", "base", "Cost basis (held)"],
+      ["price", "effect", "Price effect"],
+      ["fx", "effect", "FX effect"],
+      ["market-value", "subtotal", "Market value"],
+      ["realized", "effect", "Realized gain"],
+      ["brokerage", "effect", "Brokerage costs"],
+      ["income", "placeholder", "Dividend income"],
+      ["total-return", "total", "Total return"],
+    ]);
+
+    const costBasis = view.rows.find((r) => r.key === "cost-basis");
+    const price = view.rows.find((r) => r.key === "price");
+    const realized = view.rows.find((r) => r.key === "realized");
+    const brokerage = view.rows.find((r) => r.key === "brokerage");
+    const total = view.rows.find((r) => r.key === "total-return");
+
+    expect(costBasis?.value).toEqual({
+      status: "available",
+      value: "10008.00",
+    });
+    expect(price?.value).toEqual({ status: "available", value: "1320.00" });
+    expect(realized?.value).toEqual({ status: "available", value: "1280.00" });
+    expect(brokerage?.value).toEqual({ status: "available", value: "-25.00" });
+    expect(brokerage?.direction).toBe("down");
+    expect(total?.value).toEqual({ status: "available", value: "3175.00" });
+    expect(total?.span).toEqual({ from: 10008, to: 13183 });
+
+    const segs = total?.stackedSegments;
+    expect(segs).toBeDefined();
+    expect(segs?.map((segment) => segment.key)).toEqual([
+      "stacked-base",
+      "stacked-price",
+      "stacked-fx",
+      "stacked-realized",
+      "stacked-brokerage",
+    ]);
+  });
+
+  it("falls back to the legacy net waterfall when brokerage totals are absent", () => {
+    const view = waterfallView(openGain());
+    expect(view.rows.some((row) => row.key === "brokerage")).toBe(false);
+    expect(view.rows.map((r) => [r.key, r.kind, r.label])).toEqual([
+      ["cost-basis", "base", "Cost basis (held)"],
+      ["price", "effect", "Price effect"],
+      ["fx", "effect", "FX effect"],
+      ["market-value", "subtotal", "Market value"],
+      ["realized", "effect", "Realized gain"],
+      ["income", "placeholder", "Dividend income"],
+      ["total-return", "total", "Total return"],
+    ]);
   });
 
   it("uses held price and FX effects so realized gain is added exactly once", () => {
@@ -322,6 +434,34 @@ describe("waterfallView (open)", () => {
     const total = view.rows.find((r) => r.key === "total-return");
     expect(total?.stackedSegments).toBeUndefined();
   });
+
+  it("shows brokerage even when cost basis is unavailable", () => {
+    const view = waterfallView(
+      grossOpenGain({
+        cost_basis_base: missing("missing_fx"),
+        performance_denominator_base: missing("missing_fx"),
+        unrealized_price_effect_base: missing("missing_fx"),
+        unrealized_fx_effect_base: missing("missing_fx"),
+        unrealized_gain_base: missing("missing_fx"),
+        unrealized_gain_percent: missing("missing_fx"),
+        realized_gain_base: missing("missing_fx"),
+        realized_cost_basis_base: missing("missing_fx"),
+        price_effect_base: missing("missing_fx"),
+        fx_effect_base: missing("missing_fx"),
+        held_fee_component_base: missing("missing_fx"),
+        realized_fee_base: missing("missing_fx"),
+      }),
+    );
+
+    const brokerage = view.rows.find((r) => r.key === "brokerage");
+    const costBasis = view.rows.find((r) => r.key === "cost-basis");
+    const total = view.rows.find((r) => r.key === "total-return");
+
+    expect(brokerage?.value).toEqual({ status: "available", value: "-25.00" });
+    expect(brokerage?.direction).toBe("down");
+    expect(costBasis?.value.status).toBe("unavailable");
+    expect(total?.value.status).toBe("unavailable");
+  });
 });
 
 describe("waterfallView (closed)", () => {
@@ -352,6 +492,48 @@ describe("waterfallView (closed)", () => {
     const total = view.rows.find((r) => r.key === "total-return");
     expect(total?.value).toEqual({ status: "available", value: "3175.00" });
     expect(total?.span).toEqual({ from: 10020, to: 13195 });
+  });
+
+  it("shows the gross closed proceeds subtotal without double-counting buy brokerage", () => {
+    const view = waterfallView(grossClosedGain());
+    expect(view.rows.map((r) => [r.key, r.kind, r.label])).toEqual([
+      ["cost-basis", "base", "Cost basis (sold)"],
+      ["price", "effect", "Price effect"],
+      ["fx", "effect", "FX effect"],
+      ["proceeds", "subtotal", "Proceeds"],
+      ["brokerage", "effect", "Brokerage costs"],
+      ["income", "placeholder", "Dividend income"],
+      ["total-return", "total", "Total return"],
+    ]);
+
+    const costBasis = view.rows.find((r) => r.key === "cost-basis");
+    const price = view.rows.find((r) => r.key === "price");
+    const proceeds = view.rows.find((r) => r.key === "proceeds");
+    const brokerage = view.rows.find((r) => r.key === "brokerage");
+    const total = view.rows.find((r) => r.key === "total-return");
+
+    expect(costBasis?.value).toEqual({
+      status: "available",
+      value: "10000.00",
+    });
+    expect(price?.value).toEqual({ status: "available", value: "2200.00" });
+    // Only sell brokerage belongs in gross proceeds; brokerage_total would double-count buy fees as 13220.00.
+    expect(proceeds?.value).toEqual({ status: "available", value: "13200.00" });
+    expect(proceeds?.value).not.toEqual({
+      status: "available",
+      value: "13220.00",
+    });
+    expect(brokerage?.value).toEqual({ status: "available", value: "-25.00" });
+    expect(total?.value).toEqual({ status: "available", value: "3175.00" });
+    expect(total?.span).toEqual({ from: 10000, to: 13175 });
+
+    const segs = total?.stackedSegments;
+    expect(segs?.map((segment) => segment.key)).toEqual([
+      "stacked-base",
+      "stacked-price",
+      "stacked-fx",
+      "stacked-brokerage",
+    ]);
   });
 
   it("adds available dividend income to closed total return", () => {

@@ -204,6 +204,10 @@ export interface GainsRow {
   market_value_base: MoneyValue;
   proceeds_native: MoneyValue;
   proceeds_base: MoneyValue;
+  held_fee_component_base?: MoneyValue;
+  realized_fee_base?: MoneyValue;
+  realized_sell_brokerage_base?: MoneyValue;
+  brokerage_total_base?: MoneyValue;
   unrealized_price_effect_base?: MoneyValue;
   unrealized_fx_effect_base?: MoneyValue;
   unrealized_gain_base: MoneyValue;

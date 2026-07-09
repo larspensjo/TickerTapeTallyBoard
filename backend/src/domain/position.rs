@@ -44,12 +44,15 @@ pub struct RealizedGain {
     pub price_effect_base: BaseAmount,
     pub fx_effect_base: BaseAmount,
     pub gain_base: BaseAmount,
+    pub fee_base: BaseAmount,
+    pub sell_brokerage_base: Decimal,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PositionPerformance {
     pub position: Position,
     pub realized: RealizedGain,
+    pub brokerage_total_base: Decimal,
 }
 
 impl Position {
@@ -118,6 +121,8 @@ impl RealizedGain {
             price_effect_base: BaseAmount::zero(),
             fx_effect_base: BaseAmount::zero(),
             gain_base: BaseAmount::zero(),
+            fee_base: BaseAmount::zero(),
+            sell_brokerage_base: Decimal::ZERO,
         }
     }
 }
@@ -154,6 +159,9 @@ pub fn derive_position_performance(
 
     let mut position = Position::empty();
     let mut realized = RealizedGain::zero();
+    let brokerage_total_base = transactions
+        .iter()
+        .fold(Decimal::ZERO, |total, tx| total + tx.brokerage_base);
 
     for transaction in transactions {
         if transaction.kind == TransactionKind::Sell {
@@ -162,7 +170,11 @@ pub fn derive_position_performance(
         apply(&mut position, transaction)?;
     }
 
-    Ok(PositionPerformance { position, realized })
+    Ok(PositionPerformance {
+        position,
+        realized,
+        brokerage_total_base,
+    })
 }
 
 fn accumulate_realized_gain(
@@ -190,6 +202,7 @@ fn accumulate_realized_gain(
     realized.sold_quantity += sell_qty;
     realized.proceeds_native += proceeds_native;
     realized.cost_basis_native += cost_basis_native;
+    realized.sell_brokerage_base += tx.brokerage_base;
 
     let sell_fx = match tx.fx_rate_to_base {
         Some(fx) => fx,
@@ -202,6 +215,11 @@ fn accumulate_realized_gain(
             realized.price_effect_base.mark_unavailable(reasons.clone());
             realized.fx_effect_base.mark_unavailable(reasons.clone());
             realized.gain_base.mark_unavailable(reasons);
+            realized
+                .fee_base
+                .mark_unavailable([UnavailableReason::MissingFx {
+                    transaction_id: tx.id,
+                }]);
             return Ok(());
         }
     };
@@ -218,6 +236,7 @@ fn accumulate_realized_gain(
             realized.price_effect_base.mark_unavailable(reasons.clone());
             realized.fx_effect_base.mark_unavailable(reasons.clone());
             realized.gain_base.mark_unavailable(reasons.clone());
+            realized.fee_base.mark_unavailable(reasons.clone());
             return Ok(());
         }
     };
@@ -237,6 +256,9 @@ fn accumulate_realized_gain(
     realized
         .gain_base
         .add(proceeds_base - allocated_cost_basis_base);
+    realized
+        .fee_base
+        .add(allocated_fee_component_base + tx.brokerage_base);
 
     Ok(())
 }
@@ -640,6 +662,12 @@ mod tests {
             performance.realized.gain_base,
             BaseAmount::Available(dec!(1267))
         );
+        assert_eq!(
+            performance.realized.fee_base,
+            BaseAmount::Available(dec!(13))
+        );
+        assert_eq!(performance.realized.sell_brokerage_base, dec!(5));
+        assert_eq!(performance.brokerage_total_base, dec!(25));
     }
 
     #[test]
@@ -657,6 +685,14 @@ mod tests {
                 reasons: vec![UnavailableReason::MissingFx { transaction_id: 2 }]
             }
         );
+        assert_eq!(
+            performance.realized.fee_base,
+            BaseAmount::Unavailable {
+                reasons: vec![UnavailableReason::MissingFx { transaction_id: 2 }]
+            }
+        );
+        assert_eq!(performance.realized.sell_brokerage_base, dec!(0));
+        assert_eq!(performance.brokerage_total_base, dec!(0));
     }
 
     #[test]
@@ -672,6 +708,33 @@ mod tests {
         );
         assert_eq!(
             performance.realized.gain_base,
+            BaseAmount::Unavailable {
+                reasons: vec![UnavailableReason::MissingFx { transaction_id: 1 }]
+            }
+        );
+        assert_eq!(
+            performance.realized.fee_base,
+            BaseAmount::Unavailable {
+                reasons: vec![UnavailableReason::MissingFx { transaction_id: 1 }]
+            }
+        );
+        assert_eq!(performance.realized.sell_brokerage_base, dec!(0));
+        assert_eq!(performance.brokerage_total_base, dec!(0));
+    }
+
+    #[test]
+    fn position_performance_accumulates_raw_brokerage_when_base_cost_is_missing() {
+        let mut buy = buy(1, d(2026, 6, 1), 10, dec!(100), None);
+        buy.brokerage_base = dec!(20);
+        let mut sell = sell_with_price(2, d(2026, 6, 2), 4, dec!(120), Some(dec!(11)));
+        sell.brokerage_base = dec!(5);
+
+        let performance = derive_position_performance(&[buy, sell]).expect("derives");
+
+        assert_eq!(performance.realized.sell_brokerage_base, dec!(5));
+        assert_eq!(performance.brokerage_total_base, dec!(25));
+        assert_eq!(
+            performance.realized.fee_base,
             BaseAmount::Unavailable {
                 reasons: vec![UnavailableReason::MissingFx { transaction_id: 1 }]
             }
