@@ -4,13 +4,13 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Holding, Instrument } from "../api/types";
-import {
-  HoldingsTable,
-  loadHoldingsSorting,
-  saveHoldingsSorting,
-} from "./HoldingsTable";
+import { HoldingsTable } from "./HoldingsTable";
 
 const HOLDINGS_SORTING_KEY = "holdings.sorting";
+
+function seedSorting(sorting: unknown): void {
+  localStorage.setItem(HOLDINGS_SORTING_KEY, JSON.stringify(sorting));
+}
 
 function instrument(id: number, name: string, symbol: string): Instrument {
   return {
@@ -77,43 +77,8 @@ afterEach(() => {
 });
 
 describe("holdings sorting persistence", () => {
-  it("defaults to market value descending when nothing valid is stored", () => {
-    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
-
-    localStorage.setItem(
-      HOLDINGS_SORTING_KEY,
-      JSON.stringify([{ id: "removed_column", desc: true }]),
-    );
-
-    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
-  });
-
-  it("round-trips a valid sorting selection through localStorage", () => {
-    const sorting = [{ id: "instrument", desc: false }];
-
-    saveHoldingsSorting(sorting);
-
-    expect(loadHoldingsSorting()).toEqual(sorting);
-  });
-
-  it("accepts the consolidated conviction and target sortable columns", () => {
-    for (const id of ["conviction", "target"]) {
-      const sorting = [{ id, desc: true }];
-      saveHoldingsSorting(sorting);
-      expect(loadHoldingsSorting()).toEqual(sorting);
-    }
-  });
-
-  it("rejects a retired sortable column id", () => {
-    localStorage.setItem(
-      HOLDINGS_SORTING_KEY,
-      JSON.stringify([{ id: "target_gap_base", desc: true }]),
-    );
-    expect(loadHoldingsSorting()).toEqual([{ id: "value", desc: true }]);
-  });
-
   it("applies saved sorting when the table mounts", () => {
-    saveHoldingsSorting([{ id: "instrument", desc: false }]);
+    seedSorting([{ id: "instrument", desc: false }]);
 
     renderHoldingsTable([
       holding(1, "Zulu Inc", "ZULU", "300.00"),
@@ -123,6 +88,20 @@ describe("holdings sorting persistence", () => {
 
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
       ["Alpha Corp", "Metro Ltd", "Zulu Inc"],
+    );
+  });
+
+  it("ignores a stored retired column id and falls back to value descending", () => {
+    seedSorting([{ id: "target_gap_base", desc: true }]);
+
+    renderHoldingsTable([
+      holding(1, "Zulu Inc", "ZULU", "300.00"),
+      holding(2, "Alpha Corp", "ALPHA", "100.00"),
+      holding(3, "Metro Ltd", "METRO", "200.00"),
+    ]);
+
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Zulu Inc", "Metro Ltd", "Alpha Corp"],
     );
   });
 

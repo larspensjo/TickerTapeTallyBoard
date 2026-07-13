@@ -4,7 +4,6 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
-  type OnChangeFn,
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
@@ -40,6 +39,7 @@ import {
   watchlistTargetsHint,
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
+import { usePersistentSorting } from "./persistence";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -102,62 +102,6 @@ function valuationUnavailableReasons(holding: Holding): string[] {
       ? holding.valuation.unrealized_gain_percent.reasons
       : []),
   ];
-}
-
-function storage(): Storage | null {
-  try {
-    return globalThis.localStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function defaultSorting(): SortingState {
-  return DEFAULT_SORTING.map((sort) => ({ ...sort }));
-}
-
-function isSortingState(value: unknown): value is SortingState {
-  if (!Array.isArray(value)) return false;
-
-  const seen = new Set<string>();
-  return value.every((sort) => {
-    if (typeof sort !== "object" || sort === null) return false;
-
-    const candidate = sort as Partial<SortingState[number]>;
-    if (
-      typeof candidate.id !== "string" ||
-      typeof candidate.desc !== "boolean" ||
-      !SORTABLE_COLUMN_IDS.has(candidate.id) ||
-      seen.has(candidate.id)
-    ) {
-      return false;
-    }
-
-    seen.add(candidate.id);
-    return true;
-  });
-}
-
-export function loadHoldingsSorting(): SortingState {
-  const saved = storage()?.getItem(HOLDINGS_SORTING_KEY);
-  if (!saved) return defaultSorting();
-
-  try {
-    const parsed = JSON.parse(saved);
-    return isSortingState(parsed) ? parsed : defaultSorting();
-  } catch {
-    return defaultSorting();
-  }
-}
-
-export function saveHoldingsSorting(sorting: SortingState): void {
-  if (!isSortingState(sorting)) return;
-
-  try {
-    storage()?.setItem(HOLDINGS_SORTING_KEY, JSON.stringify(sorting));
-  } catch {
-    // Ignore storage failures; sorting should still work for the current session.
-  }
 }
 
 function valuationMissingChip(holding: Holding) {
@@ -620,7 +564,11 @@ export function HoldingsTable({
   isApplyingConvictions?: boolean;
   applyError?: string | null;
 }) {
-  const [sorting, setSorting] = useState<SortingState>(loadHoldingsSorting);
+  const [sorting, handleSortingChange] = usePersistentSorting(
+    HOLDINGS_SORTING_KEY,
+    SORTABLE_COLUMN_IDS,
+    DEFAULT_SORTING,
+  );
   const [edits, dispatchEdits] = useReducer(convictionEditsReducer, {});
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
   const [activeHighlight, setActiveHighlight] =
@@ -630,13 +578,6 @@ export function HoldingsTable({
   // never fires a no-op write.
   const pendingChanges = pendingConvictionChanges(edits, holdings);
   const dirty = pendingChanges.length > 0;
-  const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
-    setSorting((current) => {
-      const next = typeof updater === "function" ? updater(current) : updater;
-      saveHoldingsSorting(next);
-      return next;
-    });
-  };
   const handleApply = () => {
     if (!onApplyConvictions || !dirty || isApplyingConvictions) return;
     onApplyConvictions(pendingChanges)

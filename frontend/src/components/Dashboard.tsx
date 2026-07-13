@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
 import type { DateRange, GainsRow } from "../api/types";
@@ -10,6 +10,7 @@ import {
   topMovers,
 } from "./dashboardSelectors";
 import { PortfolioTreemap } from "./PortfolioTreemap";
+import { isOneOf, usePersistentSetting } from "./persistence";
 import {
   filterValueHistoryPoints,
   portfolioValueSeries,
@@ -54,6 +55,18 @@ export function Dashboard({
 
 type ChartView = "value" | "gain" | "treemap";
 
+const CHART_VIEW_KEY = "dashboard.chartView";
+const CHART_VIEWS: ChartView[] = ["value", "gain", "treemap"];
+const isChartView = isOneOf(CHART_VIEWS);
+
+const ALLOCATION_DIMENSION_KEY = "dashboard.allocationDimension";
+const ALLOCATION_DIMENSIONS: AllocationDimension[] = [
+  "instrument",
+  "currency",
+  "type",
+];
+const isAllocationDimension = isOneOf(ALLOCATION_DIMENSIONS);
+
 function DashboardChartPanel({
   query,
   gainsQuery,
@@ -82,7 +95,11 @@ function DashboardChartPanel({
     () => filteredHistory.filter((point) => point.incomplete).length,
     [filteredHistory],
   );
-  const [view, setView] = useState<ChartView>("value");
+  const [view, setView] = usePersistentSetting<ChartView>(
+    CHART_VIEW_KEY,
+    isChartView,
+    "value",
+  );
 
   const isGain = view === "gain";
   const chartControls = (
@@ -96,7 +113,7 @@ function DashboardChartPanel({
       />
       <fieldset className="segmented-control">
         <legend className="sr-only">Chart view</legend>
-        {(["value", "gain", "treemap"] as ChartView[]).map((v) => (
+        {CHART_VIEWS.map((v) => (
           <button
             key={v}
             type="button"
@@ -301,7 +318,11 @@ function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
 }
 
 function AllocationPanel({ rows }: { rows: GainsRow[] }) {
-  const [dimension, setDimension] = useState<AllocationDimension>("instrument");
+  const [dimension, setDimension] = usePersistentSetting<AllocationDimension>(
+    ALLOCATION_DIMENSION_KEY,
+    isAllocationDimension,
+    "instrument",
+  );
   const { slices, excludedCount } = useMemo(
     () => allocationBreakdown(rows, dimension),
     [rows, dimension],
@@ -321,19 +342,17 @@ function AllocationPanel({ rows }: { rows: GainsRow[] }) {
         <h2>Allocation</h2>
         <fieldset className="segmented-control">
           <legend className="sr-only">Allocation dimension</legend>
-          {(["instrument", "currency", "type"] as AllocationDimension[]).map(
-            (dim) => (
-              <button
-                key={dim}
-                type="button"
-                className={dimension === dim ? "active" : undefined}
-                aria-pressed={dimension === dim}
-                onClick={() => setDimension(dim)}
-              >
-                {dim[0].toUpperCase() + dim.slice(1)}
-              </button>
-            ),
-          )}
+          {ALLOCATION_DIMENSIONS.map((dim) => (
+            <button
+              key={dim}
+              type="button"
+              className={dimension === dim ? "active" : undefined}
+              aria-pressed={dimension === dim}
+              onClick={() => setDimension(dim)}
+            >
+              {dim[0].toUpperCase() + dim.slice(1)}
+            </button>
+          ))}
         </fieldset>
       </div>
 

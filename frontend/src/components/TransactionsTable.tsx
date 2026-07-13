@@ -8,9 +8,10 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Instrument, Transaction } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
+import { usePersistentSorting } from "./persistence";
 import { FormattedNumber, formatGroupedNumber } from "./valuationDisplay";
 
 interface Row {
@@ -24,6 +25,16 @@ interface Row {
 const columnHelper = createColumnHelper<Row>();
 
 const numericColumns = new Set(["trade_date", "quantity", "price"]);
+
+const TRANSACTIONS_SORTING_KEY = "transactions.sorting";
+const TRANSACTIONS_DEFAULT_SORTING: SortingState = [];
+const TRANSACTIONS_SORTABLE_IDS = new Set([
+  "trade_date",
+  "type",
+  "instrument",
+  "quantity",
+  "price",
+]);
 
 export function TransactionsTable({
   transactions,
@@ -46,7 +57,11 @@ export function TransactionsTable({
   showToolbar?: boolean;
   showActions?: boolean;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, handleSortingChange] = usePersistentSorting(
+    TRANSACTIONS_SORTING_KEY,
+    TRANSACTIONS_SORTABLE_IDS,
+    TRANSACTIONS_DEFAULT_SORTING,
+  );
 
   const byId = useMemo(() => {
     const map = new Map<number, Instrument>();
@@ -164,7 +179,7 @@ export function TransactionsTable({
     data: rows,
     columns,
     state: { sorting, globalFilter: filter },
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

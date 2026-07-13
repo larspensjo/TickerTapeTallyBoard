@@ -8,7 +8,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type {
   AvailabilityValue,
   DateRange,
@@ -18,6 +18,7 @@ import type {
 } from "../api/types";
 import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import { InstrumentCell } from "./InstrumentCell";
+import { usePersistentSorting } from "./persistence";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -30,6 +31,21 @@ import {
 } from "./valuationDisplay";
 
 const RETURN_METHOD_KEY = "gains.returnMethod";
+
+const GAINS_SORTING_KEY = "gains.sorting";
+const GAINS_DEFAULT_SORTING: SortingState = [
+  { id: "total_return_base", desc: true },
+];
+const GAINS_SORTABLE_IDS = new Set([
+  "instrument",
+  "cost_basis_base",
+  "market_value_base",
+  "total_return_base",
+  "capital_gain_base",
+  "income_base",
+  "currency_gain_base",
+  "day_change_base",
+]);
 
 export function loadReturnMethod(): ReturnMethod {
   const v = localStorage.getItem(RETURN_METHOD_KEY);
@@ -442,9 +458,11 @@ export function GainsTable({
   returnMethod: ReturnMethod;
   onReturnMethodChange: (method: ReturnMethod) => void;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: "total_return_base", desc: true },
-  ]);
+  const [sorting, handleSortingChange] = usePersistentSorting(
+    GAINS_SORTING_KEY,
+    GAINS_SORTABLE_IDS,
+    GAINS_DEFAULT_SORTING,
+  );
 
   const tableRows = useMemo<RowView[]>(
     () =>
@@ -506,7 +524,7 @@ export function GainsTable({
     data: tableRows,
     columns,
     state: { sorting, globalFilter: filter },
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

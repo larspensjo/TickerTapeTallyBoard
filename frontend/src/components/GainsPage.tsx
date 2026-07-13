@@ -4,6 +4,9 @@ import type { DateRange } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
 import type { DatePreset } from "./DateRangeSelector";
 import { GainsTable, loadReturnMethod } from "./GainsTable";
+import { isBoolean, loadSetting, saveSetting } from "./persistence";
+
+const INCLUDE_CLOSED_POSITIONS_KEY = "gains.includeClosedPositions";
 
 export interface GainsPageState {
   includeClosedPositions: boolean;
@@ -44,7 +47,11 @@ export function GainsPage({
 }: GainsPageProps) {
   const [filter, setFilter] = useState("");
   const [state, dispatch] = useReducer(gainsPageReducer, {
-    includeClosedPositions: false,
+    includeClosedPositions: loadSetting(
+      INCLUDE_CLOSED_POSITIONS_KEY,
+      isBoolean,
+      false,
+    ),
     returnMethod: loadReturnMethod(),
   });
 
@@ -78,12 +85,17 @@ export function GainsPage({
             filter={filter}
             onFilterChange={setFilter}
             includeClosedPositions={state.includeClosedPositions}
-            onIncludeClosedPositionsChange={(includeClosedPositions) =>
+            onIncludeClosedPositionsChange={(includeClosedPositions) => {
+              saveSetting(
+                INCLUDE_CLOSED_POSITIONS_KEY,
+                includeClosedPositions,
+                isBoolean,
+              );
               dispatch({
                 type: "closedPositionsToggled",
                 includeClosedPositions,
-              })
-            }
+              });
+            }}
             dateRange={dateRange}
             selectedDatePreset={selectedDatePreset}
             onDatePresetChange={onDatePresetChange}
