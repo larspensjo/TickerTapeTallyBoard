@@ -228,6 +228,24 @@ function Resolve-DatabaseUrl {
     }
 }
 
+function Test-RepoViteCommandLine {
+    param(
+        [string]$CommandLine,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRootPath
+    )
+
+    # A null command line means we could not inspect the process; treat it as
+    # foreign rather than risk killing an unrelated application.
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return $false
+    }
+
+    $mentionsVite = $CommandLine -match "vite"
+    $insideRepo = $CommandLine.IndexOf($RepoRootPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    return ($mentionsVite -and $insideRepo)
+}
+
 function Stop-OrphanVite {
     param([int]$Port)
 
@@ -237,9 +255,17 @@ function Stop-OrphanVite {
 
     foreach ($orphanPid in $pids) {
         $proc = Get-Process -Id $orphanPid -ErrorAction SilentlyContinue
-        if ($proc -and $proc.ProcessName -eq "node") {
+        if (-not $proc -or $proc.ProcessName -ne "node") {
+            continue
+        }
+
+        $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $orphanPid" -ErrorAction SilentlyContinue).CommandLine
+        if (Test-RepoViteCommandLine -CommandLine $commandLine -RepoRootPath $RepoRoot.Path) {
             Write-Host "Stopping orphan Vite process (PID $orphanPid) on port $Port." -ForegroundColor Yellow
             & taskkill.exe /PID $orphanPid /T /F | Out-Null
+        }
+        else {
+            Write-Host "Port $Port is in use by an unrelated process (PID $orphanPid); leaving it running." -ForegroundColor Yellow
         }
     }
 }
@@ -259,8 +285,9 @@ if ($Demo) {
     }
 }
 
-# Kill any leftover Vite dev servers (e.g. orphaned by AI tooling) so the
-# preferred port is always available to this script.
+# Kill leftover Vite dev servers from this repo (e.g. orphaned by AI tooling)
+# so the preferred port is available. Unrelated processes on the port are left
+# alone; Resolve-FrontendPort falls back to the next free port instead.
 Stop-OrphanVite -Port $FrontendPort
 
 if (-not (Test-Path $BackendDir)) {
