@@ -25,6 +25,7 @@ use crate::{
 };
 
 const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
+const MAX_SYMBOL_RECOVERY_CANDIDATES: usize = 5;
 const YAHOO_PROVIDER: &str = "YAHOO";
 const FRANKFURTER_PROVIDER: &str = "FRANKFURTER";
 const SEK: &str = "SEK";
@@ -444,14 +445,43 @@ impl MarketDataService {
                 continue;
             }
 
-            let provider_symbol = target.provider_symbol.clone().expect("checked above");
+            let mapped_symbol = target.provider_symbol.clone().expect("checked above");
             match self
-                .inner
-                .price_provider
-                .daily_history(&provider_symbol, target_window.start, target_window.end)
+                .price_history_with_symbol_recovery(
+                    &target.instrument,
+                    &mapped_symbol,
+                    &target_window,
+                )
                 .await
             {
-                Ok(rows) => {
+                Ok(resolved) => {
+                    let provider_symbol = resolved.provider_symbol;
+                    let rows = resolved.rows;
+                    if !provider_symbol.eq_ignore_ascii_case(&mapped_symbol) {
+                        let now = now_iso8601();
+                        provider_symbols::upsert(
+                            pool,
+                            &provider_symbols::NewProviderSymbol {
+                                instrument_id: target.instrument.id,
+                                provider: YAHOO_PROVIDER.to_owned(),
+                                provider_symbol: provider_symbol.clone(),
+                                currency: Some(target.instrument.currency.clone()),
+                                enabled: true,
+                                created_at: now.clone(),
+                                updated_at: now,
+                            },
+                        )
+                        .await?;
+                        target.provider_symbol = Some(provider_symbol.clone());
+                        crate::engine_info!(
+                            "market data recovered changed yahoo symbol instrument_id={} isin={:?} old_symbol={} new_symbol={}",
+                            target.instrument.id,
+                            target.instrument.isin,
+                            mapped_symbol,
+                            provider_symbol
+                        );
+                    }
+
                     if let Some(row) = rows.iter().find(|row| {
                         !row.currency
                             .trim()
@@ -520,14 +550,14 @@ impl MarketDataService {
                     crate::engine_warn!(
                         "market data refresh price failure instrument_id={} symbol={} reason={} message={}",
                         target.instrument.id,
-                        provider_symbol,
+                        mapped_symbol,
                         error.reason_code(),
                         error.message()
                     );
                     items.push(RefreshItem {
                         kind: RefreshItemKind::Price,
                         instrument_id: Some(target.instrument.id),
-                        symbol_or_pair: provider_symbol,
+                        symbol_or_pair: mapped_symbol,
                         status: provider_error_status(&error),
                         reason: Some(error.reason_code().to_owned()),
                         rows_written: 0,
@@ -614,6 +644,162 @@ impl MarketDataService {
             unmapped_instruments,
             failed_items,
             items,
+        })
+    }
+
+    async fn price_history_with_symbol_recovery(
+        &self,
+        instrument: &crate::db::instruments::InstrumentRow,
+        mapped_symbol: &str,
+        window: &RefreshWindow,
+    ) -> Result<ResolvedPriceHistory, ProviderError> {
+        let initial = self
+            .inner
+            .price_provider
+            .daily_history(mapped_symbol, window.start, window.end)
+            .await;
+
+        match initial {
+            Ok(rows) => {
+                let latest_date = latest_close_date(&rows);
+                if latest_date.is_some_and(|date| date >= window.end) {
+                    return Ok(ResolvedPriceHistory::new(mapped_symbol, rows));
+                }
+
+                let Some(recovered) = self
+                    .recover_changed_yahoo_symbol(instrument, mapped_symbol, window, latest_date)
+                    .await
+                else {
+                    return Ok(ResolvedPriceHistory::new(mapped_symbol, rows));
+                };
+
+                Ok(ResolvedPriceHistory {
+                    provider_symbol: recovered.provider_symbol,
+                    rows: merge_price_histories(rows, recovered.rows),
+                })
+            }
+            Err(error) => {
+                if should_recover_symbol_after_error(&error) {
+                    if let Some(recovered) = self
+                        .recover_changed_yahoo_symbol(instrument, mapped_symbol, window, None)
+                        .await
+                    {
+                        return Ok(recovered);
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn recover_changed_yahoo_symbol(
+        &self,
+        instrument: &crate::db::instruments::InstrumentRow,
+        mapped_symbol: &str,
+        window: &RefreshWindow,
+        mapped_latest_date: Option<NaiveDate>,
+    ) -> Option<ResolvedPriceHistory> {
+        if !instrument.exchange.trim().eq_ignore_ascii_case("AVANZA") {
+            return None;
+        }
+        let name = instrument.name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let search = self.inner.symbol_search_provider.as_ref()?;
+        let mut queries = Vec::new();
+        if let Some(isin) = instrument
+            .isin
+            .as_deref()
+            .filter(|value| is_isin_like(value))
+        {
+            queries.push(isin.trim());
+        }
+        if queries
+            .first()
+            .is_none_or(|query| !query.eq_ignore_ascii_case(name))
+        {
+            queries.push(name);
+        }
+
+        let mut matches = Vec::new();
+        for query in queries {
+            match search.search(query).await {
+                Ok(found) => matches.extend(found),
+                Err(error) => {
+                    crate::engine_warn!(
+                        "market data symbol recovery search failed instrument_id={} query={:?} old_symbol={} reason={} message={}",
+                        instrument.id,
+                        query,
+                        mapped_symbol,
+                        error.reason_code(),
+                        error.message()
+                    );
+                }
+            }
+        }
+
+        let mut seen = BTreeSet::new();
+        let candidates = matches
+            .into_iter()
+            .filter(|candidate| is_plausible_symbol_recovery(instrument, candidate))
+            .filter(|candidate| {
+                !candidate
+                    .provider_symbol
+                    .eq_ignore_ascii_case(mapped_symbol)
+            })
+            .filter(|candidate| seen.insert(candidate.provider_symbol.to_ascii_uppercase()))
+            .take(MAX_SYMBOL_RECOVERY_CANDIDATES)
+            .collect::<Vec<_>>();
+
+        let mut viable = Vec::new();
+        for candidate in candidates {
+            let rows = match self
+                .inner
+                .price_provider
+                .daily_history(&candidate.provider_symbol, window.start, window.end)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(_) => continue,
+            };
+            if rows.is_empty()
+                || rows.iter().any(|row| {
+                    !row.currency
+                        .trim()
+                        .eq_ignore_ascii_case(instrument.currency.trim())
+                })
+            {
+                continue;
+            }
+            let Some(latest_date) = latest_close_date(&rows) else {
+                continue;
+            };
+            if mapped_latest_date.is_some_and(|mapped_date| latest_date <= mapped_date) {
+                continue;
+            }
+            viable.push((latest_date, candidate.provider_symbol, rows));
+        }
+
+        let newest_date = viable.iter().map(|(date, _, _)| *date).max()?;
+        let mut newest = viable
+            .into_iter()
+            .filter(|(date, _, _)| *date == newest_date);
+        let selected = newest.next()?;
+        if newest.next().is_some() {
+            crate::engine_warn!(
+                "market data symbol recovery ambiguous instrument_id={} name={:?} old_symbol={} candidate_date={}",
+                instrument.id,
+                name,
+                mapped_symbol,
+                newest_date
+            );
+            return None;
+        }
+
+        Some(ResolvedPriceHistory {
+            provider_symbol: selected.1,
+            rows: selected.2,
         })
     }
 
@@ -1026,6 +1212,20 @@ struct RefreshWindow {
     end: NaiveDate,
 }
 
+struct ResolvedPriceHistory {
+    provider_symbol: String,
+    rows: Vec<crate::providers::DailyClose>,
+}
+
+impl ResolvedPriceHistory {
+    fn new(provider_symbol: &str, rows: Vec<crate::providers::DailyClose>) -> Self {
+        Self {
+            provider_symbol: provider_symbol.to_owned(),
+            rows,
+        }
+    }
+}
+
 struct RefreshTarget {
     instrument: crate::db::instruments::InstrumentRow,
     currency: String,
@@ -1097,6 +1297,30 @@ fn provider_error_status(error: &ProviderError) -> RefreshItemStatus {
             RefreshItemStatus::Failed
         }
     }
+}
+
+fn should_recover_symbol_after_error(error: &ProviderError) -> bool {
+    matches!(
+        error.reason(),
+        ProviderMissingReason::SymbolUnmapped
+            | ProviderMissingReason::NotListed
+            | ProviderMissingReason::NoDataInRange
+    )
+}
+
+fn latest_close_date(rows: &[crate::providers::DailyClose]) -> Option<NaiveDate> {
+    rows.iter().map(|row| row.date).max()
+}
+
+fn merge_price_histories(
+    existing: Vec<crate::providers::DailyClose>,
+    replacement: Vec<crate::providers::DailyClose>,
+) -> Vec<crate::providers::DailyClose> {
+    let mut by_date = BTreeMap::new();
+    for row in existing.into_iter().chain(replacement) {
+        by_date.insert(row.date, row);
+    }
+    by_date.into_values().collect()
 }
 
 async fn refresh_window(
@@ -1198,6 +1422,41 @@ fn is_us_exchange(exchange: &str) -> bool {
         exchange.trim().to_ascii_uppercase().as_str(),
         "NMS" | "NYQ" | "ASE" | "NGM" | "NCM" | "PCX" | "NASDAQ" | "NYSE" | "NYSEARCA"
     )
+}
+
+fn is_plausible_symbol_recovery(
+    instrument: &crate::db::instruments::InstrumentRow,
+    candidate: &SymbolSearchMatch,
+) -> bool {
+    if !is_supported_yahoo_quote(candidate) {
+        return false;
+    }
+    let Some(candidate_name) = candidate.name.as_deref() else {
+        return false;
+    };
+    if normalized_security_name(candidate_name) != normalized_security_name(&instrument.name) {
+        return false;
+    }
+
+    if instrument
+        .isin
+        .as_deref()
+        .is_some_and(|isin| isin.trim().starts_with("US"))
+        && instrument.currency.trim().eq_ignore_ascii_case("USD")
+    {
+        return !candidate.provider_symbol.contains('.')
+            && candidate.exchange.as_deref().is_some_and(is_us_exchange);
+    }
+
+    true
+}
+
+fn normalized_security_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn is_isin_like(value: &str) -> bool {
@@ -1753,25 +2012,26 @@ mod tests {
 
     #[tokio::test]
     async fn avanza_known_isins_seed_yahoo_mappings_without_search() {
+        let today = Utc::now().date_naive();
         let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
         price_provider.push_response(Ok(vec![DailyClose {
             provider: MarketDataProvider::Yahoo,
             provider_symbol: "IQQK.DE".to_owned(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            date: today,
             close: dec!(115),
             currency: "EUR".to_owned(),
         }]));
         price_provider.push_response(Ok(vec![DailyClose {
             provider: MarketDataProvider::Yahoo,
             provider_symbol: "GOOGL".to_owned(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            date: today,
             close: dec!(245),
             currency: "USD".to_owned(),
         }]));
         price_provider.push_response(Ok(vec![DailyClose {
             provider: MarketDataProvider::Yahoo,
             provider_symbol: "TSM".to_owned(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            date: today,
             close: dec!(243),
             currency: "USD".to_owned(),
         }]));
@@ -1781,14 +2041,14 @@ mod tests {
             provider: FxProvider::Frankfurter,
             base: "EUR".to_owned(),
             quote: "SEK".to_owned(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            date: today,
             rate: dec!(11),
         }]));
         fx_provider.push_response(Ok(vec![FxRate {
             provider: FxProvider::Frankfurter,
             base: "USD".to_owned(),
             quote: "SEK".to_owned(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            date: today,
             rate: dec!(10),
         }]));
 
@@ -1867,6 +2127,208 @@ mod tests {
             assert!(mapping.enabled);
             assert_eq!(mapping.provider_symbol, expected_symbol);
         }
+    }
+
+    #[tokio::test]
+    async fn stale_avanza_symbol_is_replaced_only_after_newer_candidate_is_verified() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "SKHYV".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
+            close: dec!(168),
+            currency: "USD".to_owned(),
+        }]));
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "SKHY".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 7, 13).expect("date"),
+            close: dec!(170),
+            currency: "USD".to_owned(),
+        }]));
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "USD".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 7, 13).expect("date"),
+            rate: dec!(9.65),
+        }]));
+        let symbol_search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+        symbol_search.push_response(Ok(vec![SymbolSearchMatch {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "SKHYV".to_owned(),
+            quote_type: Some("EQUITY".to_owned()),
+            exchange: Some("NGM".to_owned()),
+            name: Some("SK hynix Inc.".to_owned()),
+        }]));
+        symbol_search.push_response(Ok(vec![
+            SymbolSearchMatch {
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: "SKHYV".to_owned(),
+                quote_type: Some("EQUITY".to_owned()),
+                exchange: Some("NGM".to_owned()),
+                name: Some("SK hynix Inc.".to_owned()),
+            },
+            SymbolSearchMatch {
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: "SKHY".to_owned(),
+                quote_type: Some("EQUITY".to_owned()),
+                exchange: Some("NGM".to_owned()),
+                name: Some("SK hynix Inc.".to_owned()),
+            },
+        ]));
+
+        let pool = db::memory_pool().await.expect("memory pool");
+        let service = MarketDataService::with_symbol_search_providers(
+            price_provider.clone(),
+            fx_provider,
+            symbol_search.clone(),
+        );
+        let (instrument, _) = instruments::upsert(
+            &pool,
+            &crate::db::instruments::NewInstrument {
+                symbol: "US78392B2060".to_owned(),
+                exchange: "AVANZA".to_owned(),
+                name: "SK Hynix Inc".to_owned(),
+                kind: "STOCK".to_owned(),
+                currency: "USD".to_owned(),
+                isin: Some("US78392B2060".to_owned()),
+            },
+        )
+        .await
+        .expect("instrument should insert");
+        let sk_hynix = instrument.id;
+        map_yahoo_symbol(&pool, sk_hynix, "SKHYV", true).await;
+        buy(
+            &pool,
+            sk_hynix,
+            "2026-07-10",
+            10,
+            "168",
+            "USD",
+            Some("9.65"),
+        )
+        .await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 2);
+        assert_eq!(price_provider.calls()[0].symbol, "SKHYV");
+        assert_eq!(price_provider.calls()[1].symbol, "SKHY");
+        assert_eq!(symbol_search.calls()[0].query, "US78392B2060");
+        assert_eq!(symbol_search.calls()[1].query, "SK Hynix Inc");
+        let mapping =
+            provider_symbols::find_by_instrument_provider(&pool, sk_hynix, YAHOO_PROVIDER)
+                .await
+                .expect("mapping lookup should succeed")
+                .expect("mapping should exist");
+        assert!(mapping.enabled);
+        assert_eq!(mapping.provider_symbol, "SKHY");
+        assert_eq!(mapping.currency.as_deref(), Some("USD"));
+    }
+
+    #[tokio::test]
+    async fn stale_avanza_symbol_is_preserved_when_candidate_is_not_newer() {
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        for symbol in ["OLD", "POSSIBLE"] {
+            price_provider.push_response(Ok(vec![DailyClose {
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: symbol.to_owned(),
+                date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
+                close: dec!(168),
+                currency: "USD".to_owned(),
+            }]));
+        }
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        fx_provider.push_response(Ok(vec![FxRate {
+            provider: FxProvider::Frankfurter,
+            base: "USD".to_owned(),
+            quote: "SEK".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 7, 13).expect("date"),
+            rate: dec!(9.65),
+        }]));
+        let symbol_search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+        symbol_search.push_response(Ok(vec![SymbolSearchMatch {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "OLD".to_owned(),
+            quote_type: Some("EQUITY".to_owned()),
+            exchange: Some("NGM".to_owned()),
+            name: Some("Example Inc.".to_owned()),
+        }]));
+        symbol_search.push_response(Ok(vec![SymbolSearchMatch {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "POSSIBLE".to_owned(),
+            quote_type: Some("EQUITY".to_owned()),
+            exchange: Some("NGM".to_owned()),
+            name: Some("Example Inc.".to_owned()),
+        }]));
+
+        let pool = db::memory_pool().await.expect("memory pool");
+        let service = MarketDataService::with_symbol_search_providers(
+            price_provider.clone(),
+            fx_provider,
+            symbol_search,
+        );
+        let (instrument, _) = instruments::upsert(
+            &pool,
+            &crate::db::instruments::NewInstrument {
+                symbol: "US0000000001".to_owned(),
+                exchange: "AVANZA".to_owned(),
+                name: "Example Inc".to_owned(),
+                kind: "STOCK".to_owned(),
+                currency: "USD".to_owned(),
+                isin: Some("US0000000001".to_owned()),
+            },
+        )
+        .await
+        .expect("instrument should insert");
+        map_yahoo_symbol(&pool, instrument.id, "OLD", true).await;
+        buy(
+            &pool,
+            instrument.id,
+            "2026-07-10",
+            10,
+            "168",
+            "USD",
+            Some("9.65"),
+        )
+        .await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.prices_written, 1);
+        assert_eq!(price_provider.calls().len(), 2);
+        let mapping =
+            provider_symbols::find_by_instrument_provider(&pool, instrument.id, YAHOO_PROVIDER)
+                .await
+                .expect("mapping lookup should succeed")
+                .expect("mapping should exist");
+        assert_eq!(mapping.provider_symbol, "OLD");
     }
 
     #[tokio::test]
