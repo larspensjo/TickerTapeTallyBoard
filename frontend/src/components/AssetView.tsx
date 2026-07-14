@@ -174,12 +174,6 @@ export function AssetView() {
         onDelete={handleDeleteInstrument}
       />
 
-      <AssetConvictionPanel
-        key={instrument.id}
-        instrument={instrument}
-        holding={holding}
-      />
-
       {data.kind === "position" ? (
         <>
           <AssetMetricTiles
@@ -196,7 +190,13 @@ export function AssetView() {
               title="Gains breakdown"
               className="panel asset-panel"
             />
-            <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
+            <AssetDataMapping
+              key={instrument.id}
+              instrument={instrument}
+              holding={data.holding}
+              gain={data.gain}
+              priceStatus={data.priceStatus}
+            />
             <AssetSplits events={splits} />
           </div>
         </>
@@ -206,7 +206,13 @@ export function AssetView() {
             query={pricesQuery}
             transactions={data.transactions}
           />
-          <AssetDataMapping gain={null} priceStatus={data.priceStatus} />
+          <AssetDataMapping
+            key={instrument.id}
+            instrument={instrument}
+            holding={null}
+            gain={null}
+            priceStatus={data.priceStatus}
+          />
           <AssetSplits events={splits} />
         </>
       )}
@@ -284,7 +290,7 @@ function AssetHeader({
   );
 }
 
-function AssetConvictionPanel({
+function AssetConvictionSection({
   instrument,
   holding,
 }: {
@@ -295,7 +301,7 @@ function AssetConvictionPanel({
   const save = useUpdateInstrumentConviction();
   const { conviction, target } = convictionPanelView(instrument, holding);
 
-  // The panel remounts per instrument id (key at the call site), so this
+  // The merged details panel remounts per instrument id (key at the call site), so this
   // captures the navigation-time conviction once and keeps it across saves as
   // the reset baseline.
   const [baseline] = useState<Conviction>(conviction);
@@ -308,11 +314,7 @@ function AssetConvictionPanel({
     save.isPending && save.variables ? save.variables.conviction : conviction;
 
   return (
-    <section
-      className="panel asset-panel asset-conviction"
-      aria-label="Conviction"
-    >
-      <h2>Conviction</h2>
+    <>
       <div className="conviction-controls">
         <label className="conviction-field">
           <span className="conviction-field-label">Conviction</span>
@@ -357,7 +359,7 @@ function AssetConvictionPanel({
         </p>
       ) : null}
       <AssetConvictionTarget target={target} />
-    </section>
+    </>
   );
 }
 
@@ -702,9 +704,13 @@ function AssetSplits({ events }: { events: SplitEvent[] }) {
 }
 
 function AssetDataMapping({
+  instrument,
+  holding,
   gain,
   priceStatus,
 }: {
+  instrument: Instrument;
+  holding: Holding | null;
   gain: GainsRow | null;
   priceStatus: PriceStatusInstrument | null;
 }) {
@@ -720,6 +726,10 @@ function AssetDataMapping({
         ) : null}
         <DataRow label="Provider">{providerContent(priceStatus)}</DataRow>
       </dl>
+      <div className="asset-panel-section">
+        <h3>Conviction</h3>
+        <AssetConvictionSection instrument={instrument} holding={holding} />
+      </div>
     </section>
   );
 }

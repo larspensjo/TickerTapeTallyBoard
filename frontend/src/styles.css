@@ -2055,6 +2055,26 @@ th.number-head .sort-button {
   padding: var(--space-4);
 }
 
+.asset-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+
+.asset-panel-section h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.asset-panel-section .conviction-controls {
+  margin-bottom: 0;
+}
+
 .breakdown-list,
 .data-list {
   display: flex;
