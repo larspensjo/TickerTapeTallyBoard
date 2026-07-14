@@ -65,12 +65,6 @@ export function GainsPage({
   return (
     <section className="board-grid single">
       <article className="panel ledger-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Portfolio</p>
-            <h1>Gains</h1>
-          </div>
-        </div>
         <AsyncBoundary
           isPending={gainsQuery.isPending}
           isError={gainsQuery.isError}

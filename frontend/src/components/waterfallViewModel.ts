@@ -1,4 +1,9 @@
-import type { GainsRow, MoneyValue, PercentValue } from "../api/types";
+import type {
+  GainsRow,
+  MoneyValue,
+  PercentValue,
+  PortfolioWaterfall,
+} from "../api/types";
 
 export type WaterfallKind =
   | "base"
@@ -148,19 +153,24 @@ function placeholderRow(key: string, label: string): WaterfallRow {
   };
 }
 
+function isIncomeNotTracked(value: MoneyValue): boolean {
+  return (
+    value.status === "unavailable" &&
+    value.reasons.includes("income_not_tracked")
+  );
+}
+
 // Pushes an income row or a placeholder when income is not tracked.
 // When income is tracked (available or unavailable for a reason other than income_not_tracked),
 // delegates to pushEffect and returns the updated running total.
 function incomeRow(
-  gain: GainsRow,
+  income: MoneyValue,
+  incomeNotTracked: boolean,
   costBasis: MoneyValue,
   running: number,
   rows: WaterfallRow[],
 ): number {
-  if (
-    gain.income_base.status === "unavailable" &&
-    gain.income_base.reasons.includes("income_not_tracked")
-  ) {
+  if (incomeNotTracked) {
     rows.push(placeholderRow("income", "Dividend income"));
     return running;
   }
@@ -168,21 +178,20 @@ function incomeRow(
     rows,
     "income",
     "Dividend income",
-    gain.income_base,
+    income,
     costBasis,
     running,
   );
 }
 
-function incomeForTotalReturn(gain: GainsRow): MoneyValue {
-  if (
-    gain.income_base.status === "unavailable" &&
-    gain.income_base.reasons.includes("income_not_tracked")
-  ) {
+function incomeForTotalReturn(
+  income: MoneyValue,
+  incomeNotTracked: boolean,
+): MoneyValue {
+  if (incomeNotTracked) {
     return { status: "available", value: "0.00" };
   }
-
-  return gain.income_base;
+  return income;
 }
 
 // Pushes an effect row, advances the running total, and returns the new running total.
@@ -279,6 +288,124 @@ function buildStackedSegments(
   return segments;
 }
 
+interface GrossOpenWaterfallInput {
+  costBasis: MoneyValue;
+  heldFeeComponent: MoneyValue;
+  priceEffect: MoneyValue;
+  fxEffect: MoneyValue;
+  marketValue: MoneyValue;
+  unrealizedGain: MoneyValue;
+  realizedGain: MoneyValue;
+  realizedFee: MoneyValue;
+  realizedCostBasis: MoneyValue;
+  brokerageTotal: MoneyValue;
+  income: MoneyValue;
+  incomeNotTracked: boolean;
+}
+
+function buildGrossOpenWaterfallView(
+  input: GrossOpenWaterfallInput,
+): WaterfallView {
+  const grossCostBasis = combineMoney(
+    input.costBasis,
+    input.heldFeeComponent,
+    "-",
+  );
+  const grossPriceEffect = combineMoney(
+    input.priceEffect,
+    input.heldFeeComponent,
+    "+",
+  );
+  const realizedGross = combineMoney(
+    input.realizedGain,
+    input.realizedFee,
+    "+",
+  );
+  const brokerageCosts = combineMoney(
+    { status: "available", value: "0.00" },
+    input.brokerageTotal,
+    "-",
+  );
+  const totalCostBasis = displaySum(input.costBasis, input.realizedCostBasis);
+  const totalReturn = displaySum(
+    displaySum(input.unrealizedGain, input.realizedGain),
+    incomeForTotalReturn(input.income, input.incomeNotTracked),
+  );
+  const rows: WaterfallRow[] = [];
+  let running = toNumber(grossCostBasis) ?? 0;
+
+  rows.push(
+    levelRow("cost-basis", "Cost basis (held)", "base", grossCostBasis),
+  );
+  running = pushEffect(
+    rows,
+    "price",
+    "Price effect",
+    grossPriceEffect,
+    input.costBasis,
+    running,
+  );
+  running = pushEffect(
+    rows,
+    "fx",
+    "FX effect",
+    input.fxEffect,
+    input.costBasis,
+    running,
+  );
+  rows.push(
+    levelRow("market-value", "Market value", "subtotal", input.marketValue),
+  );
+  running = pushEffect(
+    rows,
+    "realized",
+    "Realized gain",
+    realizedGross,
+    input.realizedCostBasis,
+    running,
+  );
+  running = pushEffect(
+    rows,
+    "brokerage",
+    "Brokerage costs",
+    brokerageCosts,
+    totalCostBasis,
+    running,
+  );
+  running = incomeRow(
+    input.income,
+    input.incomeNotTracked,
+    input.costBasis,
+    running,
+    rows,
+  );
+
+  const stackedSegments = buildStackedSegments(
+    rows,
+    grossCostBasis,
+    totalReturn,
+    [
+      "price",
+      "fx",
+      "realized",
+      "brokerage",
+      ...(input.incomeNotTracked ? [] : ["income"]),
+    ],
+  );
+  rows.push(
+    totalRow(
+      "Total return",
+      totalReturn,
+      totalCostBasis,
+      grossCostBasis,
+      stackedSegments,
+    ),
+  );
+
+  const { minValue, maxValue } = computeDomain(rows);
+  return { mode: "open", currency: CURRENCY, rows, minValue, maxValue };
+}
+
 // Normalized geometry domain. Tracks both a minimum and a maximum so a span that crosses
 // below zero (a realized loss larger than the held cost basis) still renders in-track
 // (review finding #4). `minValue` is clamped at 0 or below so the baseline stays anchored.
@@ -303,97 +430,20 @@ function computeDomain(rows: WaterfallRow[]): {
 
 function openWaterfall(gain: GainsRow): WaterfallView {
   if (hasBrokerageBreakdown(gain)) {
-    const netCostBasis = gain.cost_basis_base;
-    const heldFee = moneyOrUnavailable(gain.held_fee_component_base);
-    const grossCostBasis = combineMoney(netCostBasis, heldFee, "-");
-    const heldPriceEffect =
-      gain.unrealized_price_effect_base ?? gain.price_effect_base;
-    const grossPriceEffect = combineMoney(heldPriceEffect, heldFee, "+");
-    const fxEffect = gain.unrealized_fx_effect_base ?? gain.fx_effect_base;
-    const realizedGross = combineMoney(
-      gain.realized_gain_base,
-      moneyOrUnavailable(gain.realized_fee_base),
-      "+",
-    );
-    const brokerageCosts = combineMoney(
-      { status: "available", value: "0.00" },
-      moneyOrUnavailable(gain.brokerage_total_base),
-      "-",
-    );
-    const totalCostBasis = displaySum(
-      netCostBasis,
-      gain.realized_cost_basis_base,
-    );
-    const rows: WaterfallRow[] = [];
-    let running = toNumber(grossCostBasis) ?? 0;
-
-    rows.push(
-      levelRow("cost-basis", "Cost basis (held)", "base", grossCostBasis),
-    );
-    running = pushEffect(
-      rows,
-      "price",
-      "Price effect",
-      grossPriceEffect,
-      netCostBasis,
-      running,
-    );
-    running = pushEffect(
-      rows,
-      "fx",
-      "FX effect",
-      fxEffect,
-      netCostBasis,
-      running,
-    );
-    rows.push(
-      levelRow(
-        "market-value",
-        "Market value",
-        "subtotal",
-        gain.market_value_base,
-      ),
-    );
-    running = pushEffect(
-      rows,
-      "realized",
-      "Realized gain",
-      realizedGross,
-      gain.realized_cost_basis_base,
-      running,
-    );
-    running = pushEffect(
-      rows,
-      "brokerage",
-      "Brokerage costs",
-      brokerageCosts,
-      totalCostBasis,
-      running,
-    );
-    running = incomeRow(gain, netCostBasis, running, rows);
-
-    const totalReturn = displaySum(
-      displaySum(gain.unrealized_gain_base, gain.realized_gain_base),
-      incomeForTotalReturn(gain),
-    );
-    const stackedSegments = buildStackedSegments(
-      rows,
-      grossCostBasis,
-      totalReturn,
-      ["price", "fx", "realized", "brokerage", "income"],
-    );
-    rows.push(
-      totalRow(
-        "Total return",
-        totalReturn,
-        totalCostBasis,
-        grossCostBasis,
-        stackedSegments,
-      ),
-    );
-
-    const { minValue, maxValue } = computeDomain(rows);
-    return { mode: "open", currency: CURRENCY, rows, minValue, maxValue };
+    return buildGrossOpenWaterfallView({
+      costBasis: gain.cost_basis_base,
+      heldFeeComponent: moneyOrUnavailable(gain.held_fee_component_base),
+      priceEffect: gain.unrealized_price_effect_base ?? gain.price_effect_base,
+      fxEffect: gain.unrealized_fx_effect_base ?? gain.fx_effect_base,
+      marketValue: gain.market_value_base,
+      unrealizedGain: gain.unrealized_gain_base,
+      realizedGain: gain.realized_gain_base,
+      realizedFee: moneyOrUnavailable(gain.realized_fee_base),
+      realizedCostBasis: gain.realized_cost_basis_base,
+      brokerageTotal: moneyOrUnavailable(gain.brokerage_total_base),
+      income: gain.income_base,
+      incomeNotTracked: isIncomeNotTracked(gain.income_base),
+    });
   }
 
   const costBasis = gain.cost_basis_base;
@@ -430,11 +480,20 @@ function openWaterfall(gain: GainsRow): WaterfallView {
     gain.realized_cost_basis_base,
     running,
   );
-  running = incomeRow(gain, costBasis, running, rows);
+  running = incomeRow(
+    gain.income_base,
+    isIncomeNotTracked(gain.income_base),
+    costBasis,
+    running,
+    rows,
+  );
 
   const totalReturn = displaySum(
     displaySum(gain.unrealized_gain_base, gain.realized_gain_base),
-    incomeForTotalReturn(gain),
+    incomeForTotalReturn(
+      gain.income_base,
+      isIncomeNotTracked(gain.income_base),
+    ),
   );
   // Total-return % is vs total capital deployed = held + sold cost basis; the delta bar
   // still floats from the held cost basis baseline.
@@ -509,10 +568,19 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
       netCostBasis,
       running,
     );
-    running = incomeRow(gain, netCostBasis, running, rows);
+    running = incomeRow(
+      gain.income_base,
+      isIncomeNotTracked(gain.income_base),
+      netCostBasis,
+      running,
+      rows,
+    );
     const totalReturn = displaySum(
       gain.total_return_base,
-      incomeForTotalReturn(gain),
+      incomeForTotalReturn(
+        gain.income_base,
+        isIncomeNotTracked(gain.income_base),
+      ),
     );
     const stackedSegments = buildStackedSegments(
       rows,
@@ -556,10 +624,19 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
     running,
   );
   rows.push(levelRow("proceeds", "Proceeds", "subtotal", gain.proceeds_base));
-  incomeRow(gain, costBasis, running, rows);
+  incomeRow(
+    gain.income_base,
+    isIncomeNotTracked(gain.income_base),
+    costBasis,
+    running,
+    rows,
+  );
   const totalReturn = displaySum(
     gain.total_return_base,
-    incomeForTotalReturn(gain),
+    incomeForTotalReturn(
+      gain.income_base,
+      isIncomeNotTracked(gain.income_base),
+    ),
   );
   // Closed: cost_basis_base already represents the full sold cost basis, so it serves as
   // both the denominator and the baseline (do not re-add realized_cost_basis_base).
@@ -580,6 +657,25 @@ function closedWaterfall(gain: GainsRow): WaterfallView {
 
   const { minValue, maxValue } = computeDomain(rows);
   return { mode: "closed", currency: CURRENCY, rows, minValue, maxValue };
+}
+
+export function portfolioWaterfallView(
+  block: PortfolioWaterfall,
+): WaterfallView {
+  return buildGrossOpenWaterfallView({
+    costBasis: block.cost_basis_base,
+    heldFeeComponent: block.held_fee_component_base,
+    priceEffect: block.price_effect_base,
+    fxEffect: block.fx_effect_base,
+    marketValue: block.market_value_base,
+    unrealizedGain: block.unrealized_gain_base,
+    realizedGain: block.realized_gain_base,
+    realizedFee: block.realized_fee_base,
+    realizedCostBasis: block.realized_cost_basis_base,
+    brokerageTotal: block.brokerage_total_base,
+    income: block.income_base,
+    incomeNotTracked: block.income_not_tracked,
+  });
 }
 
 export function waterfallView(gain: GainsRow): WaterfallView {

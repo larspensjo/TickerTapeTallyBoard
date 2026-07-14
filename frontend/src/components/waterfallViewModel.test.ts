@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GainsRow, MoneyValue } from "../api/types";
-import { waterfallView } from "./waterfallViewModel";
+import type { GainsRow, MoneyValue, PortfolioWaterfall } from "../api/types";
+import { portfolioWaterfallView, waterfallView } from "./waterfallViewModel";
 
 const money = (value: string): MoneyValue => ({ status: "available", value });
 const missing = (...reasons: string[]): MoneyValue => ({
@@ -110,6 +110,28 @@ function grossClosedGain(overrides: Partial<GainsRow> = {}): GainsRow {
     brokerage_total_base: money("25.00"),
     ...overrides,
   });
+}
+
+function portfolioBlock(
+  overrides: Partial<PortfolioWaterfall> = {},
+): PortfolioWaterfall {
+  return {
+    cost_basis_base: money("10020.00"),
+    held_fee_component_base: money("12.00"),
+    price_effect_base: money("1308.00"),
+    fx_effect_base: money("600.00"),
+    market_value_base: money("11928.00"),
+    realized_gain_base: money("1317.00"),
+    realized_fee_base: money("13.00"),
+    realized_cost_basis_base: money("4108.00"),
+    brokerage_total_base: money("25.00"),
+    income_base: money("0.00"),
+    unrealized_gain_base: money("1908.00"),
+    total_return_base: money("3225.00"),
+    income_not_tracked: false,
+    excluded_rows: 0,
+    ...overrides,
+  };
 }
 
 describe("waterfallView (open)", () => {
@@ -461,6 +483,65 @@ describe("waterfallView (open)", () => {
     expect(brokerage?.direction).toBe("down");
     expect(costBasis?.value.status).toBe("unavailable");
     expect(total?.value.status).toBe("unavailable");
+  });
+});
+
+describe("portfolioWaterfallView", () => {
+  it("reconciles the gross ladder from cost basis through total return", () => {
+    const view = portfolioWaterfallView(portfolioBlock());
+    const costBasis = view.rows.find((r) => r.key === "cost-basis");
+    const price = view.rows.find((r) => r.key === "price");
+    const fx = view.rows.find((r) => r.key === "fx");
+    const marketValue = view.rows.find((r) => r.key === "market-value");
+    const realized = view.rows.find((r) => r.key === "realized");
+    const brokerage = view.rows.find((r) => r.key === "brokerage");
+    const income = view.rows.find((r) => r.key === "income");
+    const total = view.rows.find((r) => r.key === "total-return");
+
+    expect(costBasis?.value).toEqual({
+      status: "available",
+      value: "10008.00",
+    });
+    expect(price?.span).toEqual({ from: 10008, to: 11328 });
+    expect(fx?.span).toEqual({ from: 11328, to: 11928 });
+    expect(marketValue?.value).toEqual({
+      status: "available",
+      value: "11928.00",
+    });
+    expect(realized?.span).toEqual({ from: 11928, to: 13258 });
+    expect(brokerage?.span).toEqual({ from: 13258, to: 13233 });
+    expect(income?.value).toEqual({ status: "available", value: "0.00" });
+    expect(total?.span).toEqual({ from: 10008, to: 13233 });
+    expect(total?.value).toEqual({ status: "available", value: "3225.00" });
+  });
+
+  it("renders unavailable aggregate steps as a hatch bar without NaN geometry", () => {
+    const view = portfolioWaterfallView(
+      portfolioBlock({ fx_effect_base: missing("missing_fx") }),
+    );
+    const fx = view.rows.find((r) => r.key === "fx");
+    expect(fx?.span).toBeNull();
+    expect(fx?.direction).toBeNull();
+    expect(fx?.percent).toEqual({
+      status: "unavailable",
+      reasons: ["missing_fx"],
+    });
+  });
+
+  it("renders a not-tracked income placeholder instead of a zero-valued step", () => {
+    const view = portfolioWaterfallView(
+      portfolioBlock({
+        income_base: money("0.00"),
+        income_not_tracked: true,
+      }),
+    );
+    const income = view.rows.find((r) => r.key === "income");
+    expect(income?.kind).toBe("placeholder");
+    expect(income?.span).toBeNull();
+    expect(income?.value).toEqual({
+      status: "unavailable",
+      reasons: ["income_not_tracked"],
+    });
   });
 });
 

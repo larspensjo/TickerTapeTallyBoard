@@ -541,11 +541,6 @@ export function GainsTable({
           totals={totals}
           percentageMethod={percentageMethod}
           displayPercentKind={displayPercentKind}
-          returnMethod={returnMethod}
-          onReturnMethodChange={(m) => {
-            saveReturnMethod(m);
-            onReturnMethodChange(m);
-          }}
         />
       ) : null}
       <div className="table-toolbar">
@@ -556,6 +551,20 @@ export function GainsTable({
           onDateRangeChange={onDateRangeChange}
           ariaLabel="Gains date range"
         />
+        <select
+          className="method-select"
+          value={returnMethod}
+          onChange={(e) => {
+            const method = e.target.value as ReturnMethod;
+            saveReturnMethod(method);
+            onReturnMethodChange(method);
+          }}
+          aria-label="Return method"
+        >
+          <option value="xirr">Money-weighted (XIRR)</option>
+          <option value="simple">Simple</option>
+          <option value="modified_dietz">Modified Dietz (legacy)</option>
+        </select>
         <input
           className="filter-input"
           type="search"
@@ -687,100 +696,83 @@ export function GainsTable({
   );
 }
 
-function totalReturnLabel(
+export function totalReturnLabel(
   percentageMethod: "money_weighted" | "simple" | "modified_dietz" | undefined,
   displayPercentKind: string,
 ): { label: string; title?: string; note?: string } {
   if (percentageMethod === "money_weighted") {
     return {
-      label: "Total return including closed positions (money-weighted)",
-      title: "Cumulative period return, including dividend income",
+      label: "Total return",
+      title: "Total return including closed positions (money-weighted)",
     };
   }
   if (percentageMethod === "simple") {
     return {
-      label: "Total return (simple)",
-      title: "Gain ÷ capital deployed",
+      label: "Total return",
+      title: "Total return (simple)",
     };
   }
   if (percentageMethod === "modified_dietz") {
-    const label =
-      displayPercentKind === "annualised"
-        ? "Annualised return"
-        : "Performance return";
-    return { label, note: "legacy / comparison only" };
+    return {
+      label: "Total return",
+      title:
+        displayPercentKind === "annualised"
+          ? "Annualised return (Modified Dietz legacy)"
+          : "Performance return (Modified Dietz legacy)",
+      note: "legacy / comparison only",
+    };
   }
-  return { label: "Performance return" };
+  return { label: "Total return", title: "Performance return" };
 }
 
 function GainsTotalsBand({
   totals,
   percentageMethod,
   displayPercentKind,
-  returnMethod,
-  onReturnMethodChange,
 }: {
   totals: GainsTotals;
   percentageMethod?: "money_weighted" | "simple" | "modified_dietz";
   displayPercentKind: string;
-  returnMethod: ReturnMethod;
-  onReturnMethodChange: (method: ReturnMethod) => void;
 }) {
   const componentTitle =
     percentageMethod === "modified_dietz" && displayPercentKind === "annualised"
       ? "Holding-period percentage; total return is annualised."
       : undefined;
-  const { label, title, note } = totalReturnLabel(
-    percentageMethod,
-    displayPercentKind,
-  );
+  const { title } = totalReturnLabel(percentageMethod, displayPercentKind);
   return (
     <section className="gains-totals" aria-label="Gains totals">
-      <div className="gains-totals-header">
-        <span className="gains-totals-method" title={title}>
-          {label}
-          {note ? <span className="gains-totals-note"> — {note}</span> : null}
-        </span>
-        <select
-          className="method-select"
-          value={returnMethod}
-          onChange={(e) => onReturnMethodChange(e.target.value as ReturnMethod)}
-          aria-label="Return method"
-        >
-          <option value="xirr">Money-weighted (XIRR)</option>
-          <option value="simple">Simple</option>
-          <option value="modified_dietz">Modified Dietz (legacy)</option>
-        </select>
+      <div className="gains-totals-row">
+        <div className="gains-totals-grid">
+          <GainsTotalMetric
+            label="Capital gain"
+            percent={totals.capital_gain_percent}
+            amount={totals.capital_gain_base}
+            title={componentTitle}
+          />
+          <GainsTotalMetric
+            label="Income"
+            percent={totals.income_percent}
+            amount={totals.income_base}
+            unavailableLabel="Not tracked"
+          />
+          <GainsTotalMetric
+            label="Currency gain"
+            percent={totals.currency_gain_percent}
+            amount={totals.currency_gain_base}
+            title={componentTitle}
+          />
+          <GainsTotalMetric
+            label="Total return"
+            percent={totals.total_return_percent}
+            amount={totals.total_return_base}
+            title={title}
+          />
+        </div>
         {totals.excluded_rows > 0 ? (
-          <span className="status-chip warning gains-totals-warning">
+          <span className="status-chip warning compact gains-totals-warning">
             {formatGroupedNumber(totals.excluded_rows)} incomplete
           </span>
         ) : null}
-      </div>
-      <div className="gains-totals-grid">
-        <GainsTotalMetric
-          label="Capital gain"
-          percent={totals.capital_gain_percent}
-          amount={totals.capital_gain_base}
-          title={componentTitle}
-        />
-        <GainsTotalMetric
-          label="Income"
-          percent={totals.income_percent}
-          amount={totals.income_base}
-          unavailableLabel="Not tracked"
-        />
-        <GainsTotalMetric
-          label="Currency gain"
-          percent={totals.currency_gain_percent}
-          amount={totals.currency_gain_base}
-          title={componentTitle}
-        />
-        <GainsTotalMetric
-          label="Total return"
-          percent={totals.total_return_percent}
-          amount={totals.total_return_base}
-        />
       </div>
     </section>
   );

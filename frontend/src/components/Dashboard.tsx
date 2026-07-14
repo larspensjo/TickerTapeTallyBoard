@@ -3,12 +3,8 @@ import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
 import type { DateRange, GainsRow } from "../api/types";
 import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
-import {
-  type AllocationDimension,
-  allocationBreakdown,
-  type MoverRow,
-  topMovers,
-} from "./dashboardSelectors";
+import { type MoverRow, topMovers } from "./dashboardSelectors";
+import { GainsWaterfall } from "./GainsWaterfall";
 import { PortfolioTreemap } from "./PortfolioTreemap";
 import { isOneOf, usePersistentSetting } from "./persistence";
 import {
@@ -17,6 +13,7 @@ import {
 } from "./portfolioValueViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { formatGroupedNumber } from "./valuationDisplay";
+import { portfolioWaterfallView } from "./waterfallViewModel";
 
 export interface DashboardProps {
   dateRange: DateRange;
@@ -47,8 +44,10 @@ export function Dashboard({
         onDatePresetChange={onDatePresetChange}
         onDateRangeChange={onDateRangeChange}
       />
-      <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
-      <AllocationPanel rows={gainsQuery.data?.rows ?? []} />
+      <div className="dashboard-row">
+        <TopMoversPanel rows={gainsQuery.data?.rows ?? []} />
+        <PortfolioWaterfallPanel gainsQuery={gainsQuery} />
+      </div>
     </section>
   );
 }
@@ -58,14 +57,6 @@ type ChartView = "value" | "gain" | "treemap";
 const CHART_VIEW_KEY = "dashboard.chartView";
 const CHART_VIEWS: ChartView[] = ["value", "gain", "treemap"];
 const isChartView = isOneOf(CHART_VIEWS);
-
-const ALLOCATION_DIMENSION_KEY = "dashboard.allocationDimension";
-const ALLOCATION_DIMENSIONS: AllocationDimension[] = [
-  "instrument",
-  "currency",
-  "type",
-];
-const isAllocationDimension = isOneOf(ALLOCATION_DIMENSIONS);
 
 function DashboardChartPanel({
   query,
@@ -276,6 +267,92 @@ function TopMoversPanel({ rows }: { rows: GainsRow[] }) {
   );
 }
 
+function PortfolioWaterfallPanel({
+  gainsQuery,
+}: {
+  gainsQuery: ReturnType<typeof useGains>;
+}) {
+  if (gainsQuery.isPending) {
+    return (
+      <section
+        className="panel dashboard-waterfall"
+        aria-label="Portfolio gains breakdown"
+      >
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>Portfolio gains breakdown</h2>
+          </div>
+        </div>
+        <div className="chart-band">
+          <div className="skeleton-bar" />
+        </div>
+      </section>
+    );
+  }
+
+  if (gainsQuery.isError) {
+    return (
+      <section
+        className="panel dashboard-waterfall"
+        aria-label="Portfolio gains breakdown"
+      >
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>Portfolio gains breakdown</h2>
+          </div>
+        </div>
+        <div className="chart-band error">
+          <p className="down">Could not load portfolio gains.</p>
+          <button
+            type="button"
+            className="button outline"
+            onClick={() => void gainsQuery.refetch()}
+          >
+            Retry
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const data = gainsQuery.data;
+  if (data?.portfolio_waterfall.total_return_base.status !== "available") {
+    return (
+      <section
+        className="panel dashboard-waterfall"
+        aria-label="Portfolio gains breakdown"
+      >
+        <div className="chart-meta">
+          <div className="chart-meta-title">
+            <h2>Portfolio gains breakdown</h2>
+          </div>
+        </div>
+        <p className="board-state muted">
+          No valued holdings in this interval.
+        </p>
+      </section>
+    );
+  }
+
+  const view = portfolioWaterfallView(data.portfolio_waterfall);
+  const excludedRows = data.portfolio_waterfall.excluded_rows;
+  const headerRight =
+    excludedRows > 0 ? (
+      <span className="status-chip warning compact">
+        {formatGroupedNumber(excludedRows)} incomplete
+      </span>
+    ) : undefined;
+
+  return (
+    <GainsWaterfall
+      view={view}
+      title="Portfolio gains breakdown"
+      className="panel dashboard-waterfall"
+      headerRight={headerRight}
+    />
+  );
+}
+
 function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
   return (
     <div className="mover-list">
@@ -314,102 +391,5 @@ function MoverList({ title, movers }: { title: string; movers: MoverRow[] }) {
         </ul>
       )}
     </div>
-  );
-}
-
-function AllocationPanel({ rows }: { rows: GainsRow[] }) {
-  const [dimension, setDimension] = usePersistentSetting<AllocationDimension>(
-    ALLOCATION_DIMENSION_KEY,
-    isAllocationDimension,
-    "instrument",
-  );
-  const { slices, excludedCount } = useMemo(
-    () => allocationBreakdown(rows, dimension),
-    [rows, dimension],
-  );
-  const palette = [
-    "var(--chart-1)",
-    "var(--chart-2)",
-    "var(--chart-3)",
-    "var(--chart-4)",
-    "var(--chart-5)",
-    "var(--chart-6)",
-  ];
-
-  return (
-    <section className="panel allocation-panel" aria-label="Allocation">
-      <div className="panel-header">
-        <h2>Allocation</h2>
-        <fieldset className="segmented-control">
-          <legend className="sr-only">Allocation dimension</legend>
-          {ALLOCATION_DIMENSIONS.map((dim) => (
-            <button
-              key={dim}
-              type="button"
-              className={dimension === dim ? "active" : undefined}
-              aria-pressed={dimension === dim}
-              onClick={() => setDimension(dim)}
-            >
-              {dim[0].toUpperCase() + dim.slice(1)}
-            </button>
-          ))}
-        </fieldset>
-      </div>
-
-      {slices.length === 0 ? (
-        <p className="board-state muted">No valued holdings to allocate.</p>
-      ) : (
-        <div className="allocation-body">
-          <div
-            className="allocation-bar"
-            role="img"
-            aria-label="Allocation segments"
-          >
-            {slices.map((slice, index) => (
-              <span
-                key={slice.key}
-                className="allocation-segment"
-                style={{
-                  width: `${slice.weightPercent}%`,
-                  background: palette[index % palette.length],
-                }}
-                title={`${slice.label} ${slice.weightPercent.toFixed(1)}%`}
-              />
-            ))}
-          </div>
-          <table className="allocation-table">
-            <tbody>
-              {slices.map((slice, index) => (
-                <tr key={slice.key}>
-                  <td>
-                    <span
-                      className="allocation-swatch"
-                      style={{ background: palette[index % palette.length] }}
-                    />
-                    <span className="allocation-label">
-                      {slice.label}
-                      {slice.secondary ? (
-                        <span className="allocation-isin">
-                          {slice.secondary}
-                        </span>
-                      ) : null}
-                    </span>
-                  </td>
-                  <td className="number">
-                    SEK {formatGroupedNumber(slice.valueBase.toFixed(2))}
-                  </td>
-                  <td className="number">{slice.weightPercent.toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {excludedCount > 0 ? (
-            <span className="status-chip warning compact">
-              {excludedCount} excluded (no market value)
-            </span>
-          ) : null}
-        </div>
-      )}
-    </section>
   );
 }

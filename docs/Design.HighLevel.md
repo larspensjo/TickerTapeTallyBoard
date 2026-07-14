@@ -109,12 +109,11 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - Backfill historical prices for charting.
 - **Deliverable:** live (EOD) portfolio valuation in SEK.
 
-### Phase 4 — Charts & dashboard ✅ Done (2026-06-22)
+### Phase 4 — Charts & dashboard ✅ Done (2026-07-14)
 - Value-history and per-instrument price-history APIs ✅ Done (2026-06-22).
 - Per-instrument price chart ✅ Done (2026-06-22).
 - Portfolio value-over-time chart (Lightweight Charts) ✅ Done (2026-06-22).
-- Allocation breakdown by instrument, currency, and type ✅ Done (2026-06-22).
-- Dashboard landing page with total value, day/unrealized change, top movers, and allocation ✅ Done (2026-06-22).
+- Dashboard landing page with total value, day/unrealized change, top movers, and portfolio gains waterfall ✅ Done (2026-07-14).
 - **Deliverable:** v1 feature-complete.
 
 ### Phase 5 — Hardening & deployment (~0.5–1 week)

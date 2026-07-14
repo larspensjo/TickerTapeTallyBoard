@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { SummaryAvailabilityValue } from "./valuationDisplay";
 import type {
   StackedSegment,
@@ -124,13 +125,28 @@ function PercentCell({ row }: { row: WaterfallRow }) {
   );
 }
 
-export function GainsWaterfall({ view }: { view: WaterfallView }) {
+export function GainsWaterfall({
+  view,
+  title = "Gains breakdown",
+  className = "panel asset-panel",
+  headerRight,
+}: {
+  view: WaterfallView;
+  title?: string;
+  className?: string;
+  headerRight?: ReactNode;
+}) {
+  const rootClassName = [className, "gains-waterfall"]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <section
-      className="panel asset-panel gains-waterfall"
-      aria-label="Gains breakdown"
-    >
-      <h2>Gains breakdown</h2>
+    <section className={rootClassName} aria-label={title}>
+      <div className="gains-waterfall-header">
+        <h2>{title}</h2>
+        {headerRight ? (
+          <div className="gains-waterfall-header-right">{headerRight}</div>
+        ) : null}
+      </div>
       <div className="wf-head">
         <span className="wf-col-amount">{view.currency}</span>
         <span className="wf-col-pct">% of cost</span>

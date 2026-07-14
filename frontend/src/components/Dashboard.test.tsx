@@ -71,6 +71,46 @@ function openRow(symbol: string, value: string): GainsRow {
   };
 }
 
+function portfolioWaterfall() {
+  const money = { status: "available", value: "0.00" } as const;
+  return {
+    cost_basis_base: money,
+    held_fee_component_base: money,
+    price_effect_base: money,
+    fx_effect_base: money,
+    market_value_base: money,
+    realized_gain_base: money,
+    realized_fee_base: money,
+    realized_cost_basis_base: money,
+    brokerage_total_base: money,
+    income_base: money,
+    unrealized_gain_base: money,
+    total_return_base: money,
+    income_not_tracked: true,
+    excluded_rows: 0,
+  };
+}
+
+function unavailablePortfolioWaterfall() {
+  const money = { status: "unavailable", reasons: ["missing_price"] } as const;
+  return {
+    cost_basis_base: money,
+    held_fee_component_base: money,
+    price_effect_base: money,
+    fx_effect_base: money,
+    market_value_base: money,
+    realized_gain_base: money,
+    realized_fee_base: money,
+    realized_cost_basis_base: money,
+    brokerage_total_base: money,
+    income_base: money,
+    unrealized_gain_base: money,
+    total_return_base: money,
+    income_not_tracked: false,
+    excluded_rows: 1,
+  };
+}
+
 function renderDashboard() {
   return render(
     <MemoryRouter>
@@ -105,7 +145,10 @@ describe("Dashboard chart panel", () => {
       refetch: vi.fn(),
     });
     useGains.mockReturnValue({
-      data: { rows: [openRow("MSFT", "5000.00")] },
+      data: {
+        rows: [openRow("MSFT", "5000.00")],
+        portfolio_waterfall: portfolioWaterfall(),
+      },
       isPending: false,
       isError: false,
     });
@@ -125,5 +168,59 @@ describe("Dashboard chart panel", () => {
     expect(
       screen.queryByText("No valued open holdings to display."),
     ).toBeNull();
+  });
+
+  it("shows the portfolio waterfall when closed activity leaves no open rows", () => {
+    usePortfolioValueHistory.mockReturnValue({
+      data: { points: [] },
+      isPending: false,
+      isError: false,
+    });
+    useGains.mockReturnValue({
+      data: {
+        rows: [],
+        portfolio_waterfall: {
+          ...portfolioWaterfall(),
+          realized_gain_base: { status: "available", value: "250.00" },
+          realized_cost_basis_base: { status: "available", value: "1000.00" },
+          total_return_base: { status: "available", value: "250.00" },
+        },
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    renderDashboard();
+
+    expect(
+      screen.getByRole("heading", { name: "Portfolio gains breakdown" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Realized gain")).toBeTruthy();
+    expect(
+      screen.queryByText("No valued holdings in this interval."),
+    ).toBeNull();
+  });
+
+  it("shows the portfolio waterfall empty state when the aggregate block is unavailable", () => {
+    usePortfolioValueHistory.mockReturnValue({
+      data: { points: [] },
+      isPending: false,
+      isError: false,
+    });
+    useGains.mockReturnValue({
+      data: {
+        rows: [openRow("MSFT", "5000.00")],
+        portfolio_waterfall: unavailablePortfolioWaterfall(),
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    renderDashboard();
+
+    expect(
+      screen.getByText("No valued holdings in this interval."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Realized gain")).toBeNull();
   });
 });

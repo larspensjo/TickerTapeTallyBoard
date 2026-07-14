@@ -29,6 +29,7 @@ pub struct GainsResponse {
     pub summary: SummaryResponse,
     pub totals: TotalsResponse,
     pub rows: Vec<GainRow>,
+    pub portfolio_waterfall: PortfolioWaterfallResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +55,24 @@ pub struct TotalsResponse {
     pub currency_gain_percent: AvailabilityResponse,
     pub total_return_base: AvailabilityResponse,
     pub total_return_percent: AvailabilityResponse,
+    pub excluded_rows: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PortfolioWaterfallResponse {
+    pub cost_basis_base: AvailabilityResponse,
+    pub held_fee_component_base: AvailabilityResponse,
+    pub price_effect_base: AvailabilityResponse,
+    pub fx_effect_base: AvailabilityResponse,
+    pub market_value_base: AvailabilityResponse,
+    pub realized_gain_base: AvailabilityResponse,
+    pub realized_fee_base: AvailabilityResponse,
+    pub realized_cost_basis_base: AvailabilityResponse,
+    pub brokerage_total_base: AvailabilityResponse,
+    pub income_base: AvailabilityResponse,
+    pub unrealized_gain_base: AvailabilityResponse,
+    pub total_return_base: AvailabilityResponse,
+    pub income_not_tracked: bool,
     pub excluded_rows: usize,
 }
 

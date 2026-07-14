@@ -20,6 +20,9 @@ use crate::state::AppState;
 mod performance;
 use performance::{parse_method, PerformanceAccumulator, ReturnMethod};
 
+mod waterfall;
+use waterfall::{IncomeInput, PortfolioWaterfallAccumulator};
+
 mod rows;
 use rows::{closed_gain_row, open_gain_row, serialize_reasons};
 
@@ -91,6 +94,7 @@ pub async fn list(
     let mut valued_holdings = Vec::new();
     let mut gain_rows = Vec::new();
     let mut perf_accum = PerformanceAccumulator::default();
+    let mut portfolio_waterfall_accum = PortfolioWaterfallAccumulator::default();
 
     for instrument in &instruments_list {
         let ledger = ledgers.remove(&instrument.id).unwrap_or_default();
@@ -142,6 +146,11 @@ pub async fn list(
         }
 
         if performance.position.quantity == 0 {
+            portfolio_waterfall_accum.add_closed(
+                &performance.realized,
+                performance.brokerage_total_base,
+                income_input(&row_income_base),
+            );
             if query.include_closed && performance.realized.sold_quantity > 0 {
                 gain_rows.push(closed_gain_row(
                     instrument,
@@ -167,6 +176,12 @@ pub async fn list(
         );
 
         valued_holdings.push(valued_holding.clone());
+        portfolio_waterfall_accum.add_open(
+            &valued_holding,
+            &performance.realized,
+            performance.brokerage_total_base,
+            income_input(&row_income_base),
+        );
 
         gain_rows.push(open_gain_row(
             instrument,
@@ -196,6 +211,7 @@ pub async fn list(
         total_return_percent,
         display_percent_kind,
     ) = perf_accum.into_percents(report_start_date, end_date, method);
+    let portfolio_waterfall = portfolio_waterfall_accum.into_response();
 
     let percentage_method = match method {
         ReturnMethod::Xirr => "money_weighted",
@@ -264,7 +280,16 @@ pub async fn list(
             excluded_rows: perf_excluded_rows,
         },
         rows: gain_rows,
+        portfolio_waterfall,
     }))
+}
+
+fn income_input(value: &Availability<Decimal>) -> IncomeInput {
+    match value {
+        Availability::Available(v) => IncomeInput::Available(*v),
+        Availability::Unavailable { reasons } if reasons.is_empty() => IncomeInput::NotTracked,
+        Availability::Unavailable { reasons } => IncomeInput::Unavailable(reasons.clone()),
+    }
 }
 
 fn perf_amount_response(

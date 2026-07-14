@@ -52,12 +52,25 @@ const view: WaterfallView = {
 
 describe("GainsWaterfall", () => {
   it("renders each row label, the currency header, and the income placeholder", () => {
-    render(<GainsWaterfall view={view} />);
+    render(
+      <GainsWaterfall
+        view={view}
+        title="Portfolio gains breakdown"
+        className="panel dashboard-waterfall"
+        headerRight={
+          <span className="status-chip warning compact">1 incomplete</span>
+        }
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Portfolio gains breakdown" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Cost basis (held)")).toBeInTheDocument();
     expect(screen.getByText("Dividend income")).toBeInTheDocument();
     expect(screen.getByText("Total return")).toBeInTheDocument();
     expect(screen.getByText("SEK")).toBeInTheDocument();
     expect(screen.getByText("% of cost")).toBeInTheDocument();
+    expect(screen.getByText("1 incomplete")).toBeInTheDocument();
     // Income placeholder is a calm "not tracked" note, not a warning chip.
     expect(screen.getByText("Not tracked yet")).toBeInTheDocument();
   });

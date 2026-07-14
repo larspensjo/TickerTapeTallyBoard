@@ -191,7 +191,11 @@ export function AssetView() {
             costBasisLine={costBasisLineValue(data.holding)}
           />
           <div className="asset-two-col">
-            <GainsWaterfall view={waterfallView(data.gain)} />
+            <GainsWaterfall
+              view={waterfallView(data.gain)}
+              title="Gains breakdown"
+              className="panel asset-panel"
+            />
             <AssetDataMapping gain={data.gain} priceStatus={data.priceStatus} />
             <AssetSplits events={splits} />
           </div>

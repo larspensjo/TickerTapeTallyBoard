@@ -182,6 +182,23 @@ export interface GainsTotals {
   excluded_rows: number;
 }
 
+export interface PortfolioWaterfall {
+  cost_basis_base: MoneyValue;
+  held_fee_component_base: MoneyValue;
+  price_effect_base: MoneyValue;
+  fx_effect_base: MoneyValue;
+  market_value_base: MoneyValue;
+  realized_gain_base: MoneyValue;
+  realized_fee_base: MoneyValue;
+  realized_cost_basis_base: MoneyValue;
+  brokerage_total_base: MoneyValue;
+  income_base: MoneyValue;
+  unrealized_gain_base: MoneyValue;
+  total_return_base: MoneyValue;
+  income_not_tracked: boolean;
+  excluded_rows: number;
+}
+
 export interface GainsRow {
   instrument: Instrument;
   quantity: number;
@@ -239,6 +256,7 @@ export interface GainsResponse {
   summary: GainsSummary;
   totals: GainsTotals;
   rows: GainsRow[];
+  portfolio_waterfall: PortfolioWaterfall;
   report_period: ReportPeriod;
   percentage_method: "money_weighted" | "simple" | "modified_dietz";
   display_percent_kind: string;
