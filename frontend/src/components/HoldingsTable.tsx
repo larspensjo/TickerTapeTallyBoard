@@ -7,10 +7,11 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleHelp } from "lucide-react";
 import {
   type Dispatch,
   useEffect,
+  useId,
   useMemo,
   useReducer,
   useRef,
@@ -81,6 +82,47 @@ const SORTABLE_COLUMN_IDS = new Set([
   "target",
 ]);
 
+interface HoldingsColumnHeader {
+  label: string;
+  description: string;
+}
+
+const HOLDINGS_COLUMN_HEADERS: Record<string, HoldingsColumnHeader> = {
+  instrument: {
+    label: "Instrument",
+    description: "The instrument name, identifier, and trading venue.",
+  },
+  quantity: {
+    label: "Qty",
+    description: "The number of shares or units currently held.",
+  },
+  cost: {
+    label: "Cost",
+    description:
+      "Average purchase price per unit (top) and total purchase cost (bottom), both in the instrument's trading currency.",
+  },
+  value: {
+    label: "Value (SEK)",
+    description:
+      "Current market value in SEK (top) and the holding's share of the portfolio (bottom).",
+  },
+  pnl: {
+    label: "P&L (SEK)",
+    description:
+      "Unrealized profit or loss in SEK: current market value minus cost basis, including brokerage fees and currency effects (top), with the return on cost basis below.",
+  },
+  conviction: {
+    label: "Conviction (SEK)",
+    description:
+      "Your relative target preference. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The derived target value in SEK appears below.",
+  },
+  target: {
+    label: "Target gap",
+    description:
+      "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target.",
+  },
+};
+
 interface HoldingsSummary {
   marketValueBase: AvailabilityValue<string>;
   portfolioPercentage: PortfolioPercentage;
@@ -139,12 +181,24 @@ function costCell(holding: Holding) {
   const currency = holding.instrument.currency;
   return (
     <div className="metric-stack">
-      <FormattedNumber value={averageCostNative} prefix={currency} />
+      <span className="number">
+        <FormattedNumber value={averageCostNative} prefix={currency} />
+      </span>
       <span className="metric-subtle">
         <FormattedNumber value={costBasisNative} prefix={currency} />
       </span>
     </div>
   );
+}
+
+function holdingCostSortField(holding: Holding): AvailabilityValue<string> {
+  if (holding.row_kind === "watchlist") {
+    return { status: "available", value: "0.00" };
+  }
+
+  return holding.cost_basis_native === null
+    ? unavailableValue("cost_basis_unavailable")
+    : { status: "available", value: holding.cost_basis_native };
 }
 
 function valueCell(holding: Holding, percentage: PortfolioPercentage) {
@@ -184,7 +238,6 @@ function pnlCell(holding: Holding) {
     <div className="metric-stack">
       <AvailabilityValueCell
         value={valuation.unrealized_gain_base}
-        prefix="SEK "
         tone="signed"
         unavailableLabel="Missing"
       />
@@ -403,7 +456,7 @@ function convictionCell(holding: Holding, meta: HoldingsTableMeta) {
       </select>
       {targetValue.status === "available" ? (
         <span className="metric-subtle">
-          <FormattedNumber value={targetValue.value} prefix="SEK " />
+          <FormattedNumber value={targetValue.value} />
         </span>
       ) : null}
     </div>
@@ -439,7 +492,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
   return [
     columnHelper.accessor((row) => row.holding.instrument.name, {
       id: "instrument",
-      header: "Instrument",
+      header: HOLDINGS_COLUMN_HEADERS.instrument.label,
       cell: (info) => {
         const { id, symbol, name, exchange } =
           info.row.original.holding.instrument;
@@ -455,17 +508,18 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
     }),
     columnHelper.accessor((row) => row.holding.quantity, {
       id: "quantity",
-      header: "Qty",
+      header: HOLDINGS_COLUMN_HEADERS.quantity.label,
       cell: (info) => formatGroupedNumber(info.getValue()),
     }),
-    columnHelper.accessor((row) => row.holding.average_cost_native, {
+    columnHelper.accessor((row) => holdingCostSortField(row.holding), {
       id: "cost",
-      header: "Cost",
+      header: HOLDINGS_COLUMN_HEADERS.cost.label,
+      sortingFn: availabilitySortRows,
       cell: (info) => costCell(info.row.original.holding),
     }),
     columnHelper.accessor((row) => holdingValueSortField(row.holding), {
       id: "value",
-      header: "Value (SEK)",
+      header: HOLDINGS_COLUMN_HEADERS.value.label,
       sortingFn: availabilitySortRows,
       cell: (info) =>
         valueCell(
@@ -480,7 +534,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
         unavailableValue("valuation_unavailable"),
       {
         id: "pnl",
-        header: "P&L",
+        header: HOLDINGS_COLUMN_HEADERS.pnl.label,
         sortingFn: availabilitySortRows,
         cell: (info) => pnlCell(info.row.original.holding),
       },
@@ -489,7 +543,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       (row) => convictionRank(row.holding.instrument.conviction),
       {
         id: "conviction",
-        header: "Conviction",
+        header: HOLDINGS_COLUMN_HEADERS.conviction.label,
         cell: (info) =>
           convictionCell(
             info.row.original.holding,
@@ -501,7 +555,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       (row) => targetGapPercentField(row.holding.conviction_target),
       {
         id: "target",
-        header: "Target gap",
+        header: HOLDINGS_COLUMN_HEADERS.target.label,
         sortingFn: availabilitySortRows,
         cell: (info) => targetCell(info.row.original.holding.conviction_target),
       },
@@ -569,6 +623,7 @@ export function HoldingsTable({
     SORTABLE_COLUMN_IDS,
     DEFAULT_SORTING,
   );
+  const columnHelpId = useId();
   const [edits, dispatchEdits] = useReducer(convictionEditsReducer, {});
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
   const [activeHighlight, setActiveHighlight] =
@@ -715,6 +770,11 @@ export function HoldingsTable({
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
+                  const columnHeader =
+                    HOLDINGS_COLUMN_HEADERS[header.column.id];
+                  const descriptionId = columnHeader
+                    ? `${columnHelpId}-${header.column.id}`
+                    : undefined;
                   return (
                     <th
                       key={header.id}
@@ -727,18 +787,32 @@ export function HoldingsTable({
                       <button
                         type="button"
                         className="sort-button"
+                        title={columnHeader?.description}
+                        aria-describedby={descriptionId}
                         onClick={header.column.getToggleSortingHandler()}
                       >
                         {flexRender(
                           header.column.columnDef.header,
                           header.getContext(),
                         )}
+                        {columnHeader ? (
+                          <CircleHelp
+                            className="column-help-icon"
+                            aria-hidden="true"
+                            size={12}
+                          />
+                        ) : null}
                         {sorted === "asc" ? (
                           <ChevronUp aria-hidden="true" size={12} />
                         ) : sorted === "desc" ? (
                           <ChevronDown aria-hidden="true" size={12} />
                         ) : null}
                       </button>
+                      {columnHeader ? (
+                        <span id={descriptionId} className="sr-only">
+                          {columnHeader.description}
+                        </span>
+                      ) : null}
                     </th>
                   );
                 })}

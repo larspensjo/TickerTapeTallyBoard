@@ -117,6 +117,27 @@ describe("holdings sorting persistence", () => {
       JSON.parse(localStorage.getItem(HOLDINGS_SORTING_KEY) ?? "null"),
     ).toEqual([{ id: "instrument", desc: false }]);
   });
+
+  it("sorts Cost by total purchase cost instead of average unit cost", () => {
+    const largeTotal: Holding = {
+      ...holding(1, "Large Total", "LARGE", "1000.00"),
+      average_cost_native: "10.00",
+      cost_basis_native: "1000.00",
+    };
+    const smallTotal: Holding = {
+      ...holding(2, "Small Total", "SMALL", "200.00"),
+      average_cost_native: "200.00",
+      cost_basis_native: "200.00",
+    };
+
+    renderHoldingsTable([largeTotal, smallTotal]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cost" }));
+
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Large Total", "Small Total"],
+    );
+  });
 });
 
 describe("holdings consolidated columns", () => {
@@ -128,8 +149,8 @@ describe("holdings consolidated columns", () => {
       "Qty",
       "Cost",
       "Value (SEK)",
-      "P&L",
-      "Conviction",
+      "P&L (SEK)",
+      "Conviction (SEK)",
       "Target gap",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
@@ -147,9 +168,51 @@ describe("holdings consolidated columns", () => {
     }
   });
 
+  it("explains every consolidated column with an accessible tooltip", () => {
+    renderHoldingsTable([holding(1, "Alpha Corp", "ALPHA", "100.00")]);
+
+    const descriptions = new Map([
+      ["Instrument", "The instrument name, identifier, and trading venue."],
+      ["Qty", "The number of shares or units currently held."],
+      [
+        "Cost",
+        "Average purchase price per unit (top) and total purchase cost (bottom), both in the instrument's trading currency.",
+      ],
+      [
+        "Value (SEK)",
+        "Current market value in SEK (top) and the holding's share of the portfolio (bottom).",
+      ],
+      [
+        "P&L (SEK)",
+        "Unrealized profit or loss in SEK: current market value minus cost basis, including brokerage fees and currency effects (top), with the return on cost basis below.",
+      ],
+      [
+        "Conviction (SEK)",
+        "Your relative target preference. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The derived target value in SEK appears below.",
+      ],
+      [
+        "Target gap",
+        "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target.",
+      ],
+    ]);
+
+    for (const [name, description] of descriptions) {
+      const header = screen.getByRole("button", { name });
+      expect(header).toHaveAttribute("title", description);
+      expect(header).toHaveAccessibleDescription(description);
+    }
+  });
+
   it("still renders regrouped sub-content (portfolio % and target details)", () => {
+    const baseHolding = holding(1, "Alpha Corp", "ALPHA", "1000.00");
     const held: Holding = {
-      ...holding(1, "Alpha Corp", "ALPHA", "1000.00"),
+      ...baseHolding,
+      valuation: {
+        market_value_base: { status: "available", value: "1000.00" },
+        unrealized_gain_base: { status: "available", value: "123.45" },
+        unrealized_gain_percent: { status: "available", value: "14.08" },
+        day_change_base: { status: "available", value: "0.00" },
+      },
       conviction_target: {
         conviction: "High",
         status: "below",
@@ -165,12 +228,36 @@ describe("holdings consolidated columns", () => {
     expect(screen.getAllByText("100.0%").length).toBeGreaterThan(0);
     // Target value moved under the conviction selector.
     expect(screen.getByText("2,000.00")).toBeTruthy();
+    const holdingRow = screen
+      .getByRole("link", { name: "Alpha Corp" })
+      .closest("tr");
+    expect(holdingRow).toHaveTextContent("123.45");
+    // SEK belongs to the two headers, not to each row's P&L/target values.
+    expect(holdingRow).not.toHaveTextContent("SEK");
     // The gap bar carries the full detail in its accessible label / tooltip.
     expect(
       screen.getByRole("img", {
         name: "Target SEK 2,000.00\nGap SEK -1,000.00 (-50.0%)\nBelow",
       }),
     ).toBeTruthy();
+  });
+
+  it("keeps the average-cost currency and amount on one line", () => {
+    const held: Holding = {
+      ...holding(1, "Alpha Corp", "ALPHA", "1000.00"),
+      average_cost_native: "12.34",
+      cost_basis_native: "1234.00",
+    };
+
+    renderHoldingsTable([held]);
+
+    const holdingRow = screen
+      .getByRole("link", { name: "Alpha Corp" })
+      .closest("tr");
+    const averageCostCurrency = holdingRow?.querySelector(
+      "td:nth-child(3) .metric-stack > .number .number-prefix",
+    );
+    expect(averageCostCurrency?.parentElement).toHaveTextContent("USD12.34");
   });
 
   it("leaves the target gap cell empty when no target exists", () => {

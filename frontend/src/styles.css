@@ -934,7 +934,7 @@ tbody tr:last-child td {
   margin-left: 8px;
 }
 
-/* Conviction column: the selector with the SEK target value beneath it. */
+/* Conviction column: the selector with the target value beneath it. */
 .conviction-stack {
   display: flex;
   flex-direction: column;
@@ -1319,6 +1319,10 @@ tbody tr:last-child td {
 .sort-button svg {
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+.sort-button .column-help-icon {
+  opacity: 0.8;
 }
 
 .column-header-stack {
