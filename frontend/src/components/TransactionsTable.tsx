@@ -12,7 +12,11 @@ import { useMemo } from "react";
 import type { Instrument, Transaction } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
-import { FormattedNumber, formatGroupedNumber } from "./valuationDisplay";
+import {
+  FormattedNumber,
+  formatGroupedNumber,
+  formatUnitPrice,
+} from "./valuationDisplay";
 
 interface Row {
   transaction: Transaction;
@@ -143,7 +147,10 @@ export function TransactionsTable({
               info.row.original.transaction;
             const value = price ?? dividend_per_share;
             return value ? (
-              <FormattedNumber value={value} prefix={currency ?? ""} />
+              <FormattedNumber
+                value={formatUnitPrice(value)}
+                prefix={currency ?? ""}
+              />
             ) : (
               "-"
             );

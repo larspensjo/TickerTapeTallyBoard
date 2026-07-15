@@ -69,6 +69,85 @@ export function formatGroupedNumber(value: string | number): string {
   return `${sign}${groupedInteger}${fractionalPart}`;
 }
 
+function roundDecimal(value: string | number, maximumFractionDigits: number) {
+  const rawValue = String(value).trim();
+  const match = rawValue.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+
+  if (!match) {
+    return rawValue;
+  }
+
+  const [, sign, integerPart, fractionalPart = ""] = match;
+  if (fractionalPart.length <= maximumFractionDigits) {
+    return rawValue;
+  }
+
+  const retainedFraction = fractionalPart.slice(0, maximumFractionDigits);
+  const digits = [...`${integerPart}${retainedFraction}`];
+  if (fractionalPart[maximumFractionDigits] >= "5") {
+    let index = digits.length - 1;
+    while (index >= 0 && digits[index] === "9") {
+      digits[index] = "0";
+      index -= 1;
+    }
+
+    if (index >= 0) {
+      digits[index] = String(Number(digits[index]) + 1);
+    } else {
+      digits.unshift("1");
+    }
+  }
+
+  if (maximumFractionDigits === 0) {
+    return `${sign}${digits.join("")}`;
+  }
+
+  const decimalIndex = digits.length - maximumFractionDigits;
+  return `${sign}${digits.slice(0, decimalIndex).join("")}.${digits
+    .slice(decimalIndex)
+    .join("")}`;
+}
+
+function unitPriceFractionDigits(value: string | number): number | null {
+  const parsed = parseFiniteNumber(value);
+  if (parsed === null) {
+    return null;
+  }
+
+  const magnitude = Math.abs(parsed);
+  if (magnitude >= 100) return 2;
+  if (magnitude > 0 && magnitude < 0.01) return 6;
+  return 4;
+}
+
+/**
+ * Prices are display-rounded by magnitude: cent precision for prices of 100 or
+ * more, four decimals below 100, and six for very small positive prices. This
+ * keeps meaningful sub-unit precision without exposing provider/import noise.
+ */
+export function formatUnitPrice(value: string | number): string {
+  const fractionDigits = unitPriceFractionDigits(value);
+  if (fractionDigits === null) {
+    return formatGroupedNumber(value);
+  }
+
+  let rounded = roundDecimal(value, fractionDigits);
+  const roundedFractionDigits = unitPriceFractionDigits(rounded);
+  if (
+    roundedFractionDigits !== null &&
+    roundedFractionDigits < fractionDigits
+  ) {
+    rounded = roundDecimal(value, roundedFractionDigits);
+  }
+
+  return formatGroupedNumber(rounded);
+}
+
+/** FX quotes retain four decimals independently of the unit-price scale. */
+export function formatExchangeRate(value: string | number): string {
+  return formatGroupedNumber(roundDecimal(value, 4));
+}
+
 export function FormattedNumber({
   value,
   prefix = "",

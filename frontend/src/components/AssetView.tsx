@@ -49,7 +49,9 @@ import { type ChartTradeMarker, TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
 import { useAppMode } from "./useAppMode";
 import {
+  formatExchangeRate,
   formatGroupedNumber,
+  formatUnitPrice,
   freshnessLabel,
   freshnessTone,
   reasonSummary,
@@ -599,7 +601,7 @@ function tradeChartMarkers(
       },
       {
         label: "Avg price",
-        value: `${formatGroupedNumber(marker.avgPrice.toFixed(2))} ${marker.currency}`,
+        value: `${formatUnitPrice(marker.avgPrice)} ${marker.currency}`,
       },
     ];
     if (marker.fee !== null && marker.feeCurrency !== null) {
@@ -760,7 +762,7 @@ function latestPriceContent(gain: GainsRow) {
   return (
     <span className="data-value">
       <span className="number">
-        {price.currency} {formatGroupedNumber(price.close)}
+        {price.currency} {formatUnitPrice(price.close)}
       </span>{" "}
       <span
         className={
@@ -783,7 +785,7 @@ function latestFxContent(gain: GainsRow) {
 
   return (
     <span className="data-value">
-      <span className="number">{formatGroupedNumber(fx.rate)}</span>{" "}
+      <span className="number">{formatExchangeRate(fx.rate)}</span>{" "}
       <span className="asset-subtle">
         {fx.quote}→{fx.base} · {fx.date}
       </span>{" "}

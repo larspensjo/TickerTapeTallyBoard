@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   availabilityNumber,
   availabilitySortValues,
+  formatExchangeRate,
   formatGroupedNumber,
+  formatUnitPrice,
   isAvailable,
   parseFiniteNumber,
   signedTone,
@@ -100,6 +102,36 @@ describe("formatGroupedNumber", () => {
   it("accepts number inputs", () => {
     expect(formatGroupedNumber(1234)).toBe("1,234");
     expect(formatGroupedNumber(-5000)).toBe("-5,000");
+  });
+});
+
+describe("formatUnitPrice", () => {
+  it("limits high-priced quotes to cents", () => {
+    expect(formatUnitPrice("168.716301")).toBe("168.72");
+    expect(formatUnitPrice("170.276579")).toBe("170.28");
+    expect(formatUnitPrice("184.933788")).toBe("184.93");
+  });
+
+  it("retains relevant precision for lower and very small prices", () => {
+    expect(formatUnitPrice("1.2345")).toBe("1.2345");
+    expect(formatUnitPrice("0.939325")).toBe("0.9393");
+    expect(formatUnitPrice("0.00123456")).toBe("0.001235");
+  });
+
+  it("regroups a value that rounds across a magnitude boundary", () => {
+    expect(formatUnitPrice("99.99999")).toBe("100.00");
+    expect(formatUnitPrice("1234.5678")).toBe("1,234.57");
+  });
+
+  it("passes non-numeric values through", () => {
+    expect(formatUnitPrice("n/a")).toBe("n/a");
+  });
+});
+
+describe("formatExchangeRate", () => {
+  it("uses four decimals regardless of quote magnitude", () => {
+    expect(formatExchangeRate("10.154321")).toBe("10.1543");
+    expect(formatExchangeRate("1.2345")).toBe("1.2345");
   });
 });
 

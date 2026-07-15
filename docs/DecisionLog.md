@@ -447,3 +447,8 @@ Consequences: The Dashboard now emphasizes portfolio value, top movers, and gain
 Decision: Buy and Sell arrows on the per-asset price chart anchor to their quantity-weighted native-currency transaction price using Lightweight Charts' exact-price marker positions. Buy arrow tips meet the transaction price from below and Sell arrow tips meet it from above; Split markers remain attached to the plotted series.
 Context: Bar-relative markers attach to the daily close and can therefore imply that a trade executed at the plotted close even when its actual price differs materially.
 Consequences: Trade arrows remain accurate as the chart rescales and no fixed pixel offset is needed. Raw historical transaction prices remain subject to the separately documented split-adjustment mismatch.
+
+## 2026-07-15 - Numeric display precision follows value semantics and scale
+Decision: Display rounding never changes stored or calculated decimals. Money totals and percentages keep their existing two-decimal contracts; native unit prices show at most two decimals at 100 or above, four below 100, and six below 0.01; FX quotes show at most four decimals. Existing source precision is retained when it is already within the relevant limit.
+Context: Imported and provider prices intentionally retain full precision, but rendering that raw precision produced noisy values such as `168.716301`. A single global decimal limit would also hide meaningful values such as `1.2345`.
+Consequences: Transaction prices and dividends, current native prices, and price-chart trade tooltips share the adaptive unit-price formatter. Asset FX detail uses the separate FX formatter. Exact API strings remain available for calculations, sorting, filtering, and future audit views.
