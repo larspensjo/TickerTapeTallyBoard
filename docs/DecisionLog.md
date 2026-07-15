@@ -442,3 +442,8 @@ Consequences: The Dashboard can render the portfolio waterfall from the existing
 Decision: The Dashboard composition replaces the Allocation panel with the portfolio gains waterfall and keeps the top movers panel alongside the existing value chart / treemap switch.
 Context: Allocation was the least durable part of the landing page and duplicated an analysis the new portfolio waterfall explains more directly.
 Consequences: The Dashboard now emphasizes portfolio value, top movers, and gains decomposition. The removed allocation breakdown is intentionally dropped for now; future regrouping belongs in a new design rather than preserving the old panel.
+
+## 2026-07-15 - Trade markers use exact transaction prices
+Decision: Buy and Sell arrows on the per-asset price chart anchor to their quantity-weighted native-currency transaction price using Lightweight Charts' exact-price marker positions. Buy arrow tips meet the transaction price from below and Sell arrow tips meet it from above; Split markers remain attached to the plotted series.
+Context: Bar-relative markers attach to the daily close and can therefore imply that a trade executed at the plotted close even when its actual price differs materially.
+Consequences: Trade arrows remain accurate as the chart rescales and no fixed pixel offset is needed. Raw historical transaction prices remain subject to the separately documented split-adjustment mismatch.

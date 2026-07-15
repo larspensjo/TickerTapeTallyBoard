@@ -22,12 +22,20 @@ export interface TimeSeriesPoint {
   value: number;
 }
 
-export interface ChartTradeMarker {
+interface ChartMarkerBase {
   time: string;
-  side: "buy" | "sell" | "split";
   title: string;
   rows: { label: string; value: string }[];
 }
+
+export type ChartTradeMarker =
+  | (ChartMarkerBase & {
+      side: "buy" | "sell";
+      price: number;
+    })
+  | (ChartMarkerBase & {
+      side: "split";
+    });
 
 interface TradeTooltipState {
   x: number;
@@ -329,22 +337,24 @@ export function TimeSeriesChart({
     const seriesMarkers: SeriesMarker<Time>[] = markers
       .slice()
       .sort((a, b) => a.time.localeCompare(b.time))
-      .map((marker) => ({
-        time: marker.time,
-        position:
-          marker.side === "buy"
-            ? "belowBar"
-            : marker.side === "sell"
-              ? "aboveBar"
-              : "inBar",
-        shape:
-          marker.side === "buy"
-            ? "arrowUp"
-            : marker.side === "sell"
-              ? "arrowDown"
-              : "circle",
-        color: markerColors[marker.side],
-      }));
+      .map((marker): SeriesMarker<Time> => {
+        if (marker.side === "split") {
+          return {
+            time: marker.time,
+            position: "inBar",
+            shape: "circle",
+            color: markerColors.split,
+          };
+        }
+
+        return {
+          time: marker.time,
+          position: marker.side === "buy" ? "atPriceBottom" : "atPriceTop",
+          shape: marker.side === "buy" ? "arrowUp" : "arrowDown",
+          color: markerColors[marker.side],
+          price: marker.price,
+        };
+      });
 
     seriesMarkersApi.setMarkers(seriesMarkers);
     setTooltip(null);

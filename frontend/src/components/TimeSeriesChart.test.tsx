@@ -160,6 +160,7 @@ describe("TimeSeriesChart", () => {
           {
             time: "2026-06-01",
             side: "buy",
+            price: 300,
             title: "Buy",
             rows: [],
           },
@@ -204,6 +205,48 @@ describe("TimeSeriesChart", () => {
       priceRange: { minValue: 0, maxValue: 300 },
       margins: { above: 12, below: 0 },
     });
+  });
+
+  it("anchors trade arrows to their transaction prices instead of the series", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-07-14", value: 193.92 }]}
+        markers={[
+          {
+            time: "2026-07-14",
+            side: "buy",
+            price: 168.72,
+            title: "Buy",
+            rows: [],
+          },
+          {
+            time: "2026-07-15",
+            side: "sell",
+            price: 201.25,
+            title: "Sell",
+            rows: [],
+          },
+        ]}
+      />,
+    );
+
+    expect(chartMocks.setMarkers).toHaveBeenLastCalledWith([
+      {
+        time: "2026-07-14",
+        position: "atPriceBottom",
+        shape: "arrowUp",
+        color: "#16c784",
+        price: 168.72,
+      },
+      {
+        time: "2026-07-15",
+        position: "atPriceTop",
+        shape: "arrowDown",
+        color: "#ff4d4f",
+        price: 201.25,
+      },
+    ]);
   });
 
   it("renders split markers as neutral in-bar circles", () => {

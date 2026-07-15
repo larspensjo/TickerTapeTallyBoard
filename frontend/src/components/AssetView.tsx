@@ -612,6 +612,7 @@ function tradeChartMarkers(
     return {
       time: marker.time,
       side: marker.side,
+      price: marker.avgPrice,
       title: marker.side === "buy" ? "Buy" : "Sell",
       rows,
     };
