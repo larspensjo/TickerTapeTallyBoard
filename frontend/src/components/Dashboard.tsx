@@ -242,6 +242,7 @@ function DashboardChartPanel({
           dateRange.startDate ?? query.data?.start_date ?? undefined
         }
         height={280}
+        compactValueAxis
         lineColor={isGain ? "#16c784" : undefined}
         topColor={isGain ? "rgba(22, 199, 132, 0.30)" : undefined}
         bottomColor={isGain ? "rgba(22, 199, 132, 0.02)" : undefined}

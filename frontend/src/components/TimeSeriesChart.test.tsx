@@ -207,6 +207,37 @@ describe("TimeSeriesChart", () => {
     });
   });
 
+  it("uses compact axis labels with three significant digits when requested", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[{ time: "2026-07-14", value: 6_365_180.76 }]}
+        referenceData={[{ time: "2026-07-14", value: 4_100_000 }]}
+        compactValueAxis
+      />,
+    );
+
+    type SeriesOptions = {
+      priceFormat: {
+        formatter: (value: number) => string;
+        minMove: number;
+        type: string;
+      };
+    };
+    const areaOptions = chartMocks.addAreaSeries.mock.calls[0]?.[0] as
+      | SeriesOptions
+      | undefined;
+    const lineOptions = chartMocks.addLineSeries.mock.calls[0]?.[0] as
+      | SeriesOptions
+      | undefined;
+
+    expect(areaOptions?.priceFormat.type).toBe("custom");
+    expect(areaOptions?.priceFormat.minMove).toBe(1);
+    expect(areaOptions?.priceFormat.formatter(1_000_000)).toBe("1M");
+    expect(areaOptions?.priceFormat.formatter(6_365_180.76)).toBe("6.37M");
+    expect(lineOptions?.priceFormat.formatter(4_100_000)).toBe("4.1M");
+  });
+
   it("anchors trade arrows to their transaction prices instead of the series", () => {
     render(
       <TimeSeriesChart

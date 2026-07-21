@@ -1,6 +1,6 @@
 {
   "name": "ticker-tape-tally-board-frontend",
-  "version": "0.22.7",
+  "version": "0.22.9",
   "private": true,
   "type": "module",
   "scripts": {

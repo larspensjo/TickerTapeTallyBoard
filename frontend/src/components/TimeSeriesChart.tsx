@@ -57,6 +57,15 @@ function isoFromTime(time: Time): string | null {
 type AreaSeriesPoint = AreaData<Time> | WhitespaceData<Time>;
 const dayMs = 24 * 60 * 60 * 1000;
 const goldLineColor = "#e0b15e";
+const compactNumberFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumSignificantDigits: 3,
+});
+const compactPriceFormat = {
+  type: "custom" as const,
+  formatter: (value: number) => compactNumberFormatter.format(value),
+  minMove: 1,
+};
 
 function chartDate(time: Time): Date | null {
   if (typeof time === "string") {
@@ -162,6 +171,7 @@ export function TimeSeriesChart({
   lineColor = "#4f9cff",
   topColor = "rgba(79, 156, 255, 0.30)",
   bottomColor = "rgba(79, 156, 255, 0.02)",
+  compactValueAxis = false,
 }: {
   data: TimeSeriesPoint[];
   ariaLabel: string;
@@ -173,6 +183,7 @@ export function TimeSeriesChart({
   lineColor?: string;
   topColor?: string;
   bottomColor?: string;
+  compactValueAxis?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -218,6 +229,7 @@ export function TimeSeriesChart({
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+      ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
     });
 
     const series = chart.addSeries(AreaSeries, {
@@ -227,6 +239,7 @@ export function TimeSeriesChart({
       lineWidth: 2,
       priceLineVisible: false,
       autoscaleInfoProvider: zeroBaselineAutoscale,
+      ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
     });
 
     chartRef.current = chart;
@@ -263,7 +276,7 @@ export function TimeSeriesChart({
       referenceSeriesRef.current = null;
       setTooltip(null);
     };
-  }, [height, lineColor, topColor, bottomColor]);
+  }, [height, lineColor, topColor, bottomColor, compactValueAxis]);
 
   useEffect(() => {
     const end = data.at(-1)?.time;
