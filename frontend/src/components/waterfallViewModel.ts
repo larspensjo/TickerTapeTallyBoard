@@ -20,6 +20,18 @@ export interface StackedSegment {
   span: { from: number; to: number };
 }
 
+export interface CapitalStack {
+  /** Exact capital amounts represented by the two gray layers. */
+  held: number;
+  sold: number;
+  /** Layer heights in multiples of the ordinary total-return bar height. */
+  heldUnits: number;
+  soldUnits: number;
+  displayedSoldUnits: number;
+  /** True when the sold layer is capped and rendered with a visible break. */
+  isBroken: boolean;
+}
+
 export interface WaterfallRow {
   key: string;
   label: string;
@@ -33,6 +45,8 @@ export interface WaterfallRow {
   span: { from: number; to: number } | null;
   /** Stacked segment breakdown for total rows; absent on all other kinds. */
   stackedSegments?: StackedSegment[];
+  /** Area encoding for deployed held + sold capital on profitable open rows. */
+  capitalStack?: CapitalStack;
 }
 
 export interface WaterfallView {
@@ -45,6 +59,7 @@ export interface WaterfallView {
 }
 
 const CURRENCY = "SEK";
+const MAX_CAPITAL_STACK_UNITS = 3;
 
 function toNumber(value: MoneyValue): number | null {
   if (value.status !== "available") {
@@ -238,6 +253,7 @@ function totalRow(
   denominator: MoneyValue,
   baseline: MoneyValue,
   stackedSegments?: StackedSegment[],
+  capitalStack?: CapitalStack,
 ): WaterfallRow {
   const amount = toNumber(value);
   const base = toNumber(baseline);
@@ -252,6 +268,50 @@ function totalRow(
     percent: displayPercent(value, denominator),
     span,
     stackedSegments,
+    capitalStack,
+  };
+}
+
+// The total row keeps the held-basis width so its effect segments align with the
+// waterfall above. Extra height makes gray area represent the percentage denominator.
+// Extremely tall sold layers are capped; the component marks that cap with a break.
+function buildCapitalStack(
+  displayedBaseline: MoneyValue,
+  heldCostBasis: MoneyValue,
+  soldCostBasis: MoneyValue,
+  totalReturn: MoneyValue,
+): CapitalStack | undefined {
+  const displayed = toNumber(displayedBaseline);
+  const held = toNumber(heldCostBasis);
+  const sold = toNumber(soldCostBasis);
+  const returned = toNumber(totalReturn);
+  if (
+    displayed === null ||
+    displayed <= 0 ||
+    held === null ||
+    held <= 0 ||
+    sold === null ||
+    sold <= 0 ||
+    returned === null ||
+    returned <= 0
+  ) {
+    return undefined;
+  }
+
+  const heldUnits = held / displayed;
+  const soldUnits = sold / displayed;
+  if (heldUnits >= MAX_CAPITAL_STACK_UNITS) return undefined;
+  const displayedSoldUnits = Math.min(
+    soldUnits,
+    MAX_CAPITAL_STACK_UNITS - heldUnits,
+  );
+  return {
+    held,
+    sold,
+    heldUnits,
+    soldUnits,
+    displayedSoldUnits,
+    isBroken: displayedSoldUnits < soldUnits,
   };
 }
 
@@ -392,6 +452,12 @@ function buildGrossOpenWaterfallView(
       ...(input.incomeNotTracked ? [] : ["income"]),
     ],
   );
+  const capitalStack = buildCapitalStack(
+    grossCostBasis,
+    input.costBasis,
+    input.realizedCostBasis,
+    totalReturn,
+  );
   rows.push(
     totalRow(
       "Total return",
@@ -399,6 +465,7 @@ function buildGrossOpenWaterfallView(
       totalCostBasis,
       grossCostBasis,
       stackedSegments,
+      capitalStack,
     ),
   );
 
@@ -504,6 +571,12 @@ function openWaterfall(gain: GainsRow): WaterfallView {
     "realized",
     "income",
   ]);
+  const capitalStack = buildCapitalStack(
+    costBasis,
+    costBasis,
+    gain.realized_cost_basis_base,
+    totalReturn,
+  );
   rows.push(
     totalRow(
       "Total return",
@@ -511,6 +584,7 @@ function openWaterfall(gain: GainsRow): WaterfallView {
       totalCostBasis,
       costBasis,
       stackedSegments,
+      capitalStack,
     ),
   );
 

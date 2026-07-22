@@ -6,6 +6,7 @@
   --hairline-soft: #181c22;
   /* Gains waterfall neutral bars (base < subtotal < total, progressively lighter) */
   --wf-bar-base: #2b3138;
+  --wf-bar-base-sold: #3a424c;
   --wf-bar-subtotal: #39414b;
   --wf-bar-total: #4a525d;
   --wf-hatch-stripe: #353b44;
@@ -2270,6 +2271,131 @@ th.number-head .sort-button {
   top: 3px;
   height: 16px;
   border-radius: 3px;
+}
+
+.gains-waterfall .wf-capital-track {
+  height: calc(var(--wf-capital-total-height) + 6px);
+}
+
+.gains-waterfall .wf-capital-track > .wf-bar {
+  top: auto;
+  bottom: 3px;
+}
+
+.gains-waterfall .wf-capital-base,
+.gains-waterfall .wf-capital-layer {
+  position: absolute;
+}
+
+.gains-waterfall .wf-capital-base {
+  inset-block: 0;
+}
+
+.gains-waterfall .wf-capital-layer {
+  left: 0;
+  width: 100%;
+}
+
+.gains-waterfall .wf-capital-layer.held {
+  bottom: 3px;
+  height: var(--wf-capital-held-height);
+  background: var(--wf-bar-base);
+  border-radius: 0 0 3px 3px;
+}
+
+.gains-waterfall .wf-capital-layer.sold {
+  bottom: calc(3px + var(--wf-capital-held-height));
+  height: var(--wf-capital-sold-height);
+  overflow: hidden;
+  background: var(--wf-bar-base-sold);
+  border-radius: 3px 3px 0 0;
+}
+
+.gains-waterfall .wf-capital-overflow-label {
+  position: absolute;
+  z-index: 1;
+  top: 1px;
+  left: 4px;
+  right: 4px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 11px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gains-waterfall .wf-capital-layer-label {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  right: 3px;
+  overflow: hidden;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 10px;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gains-waterfall .wf-capital-break {
+  position: absolute;
+  top: 58%;
+  left: -1px;
+  width: calc(100% + 2px);
+  height: 7px;
+  transform: translateY(-50%);
+  background: var(--surface-1);
+  clip-path: polygon(
+    0 35%,
+    5% 0,
+    10% 35%,
+    15% 0,
+    20% 35%,
+    25% 0,
+    30% 35%,
+    35% 0,
+    40% 35%,
+    45% 0,
+    50% 35%,
+    55% 0,
+    60% 35%,
+    65% 0,
+    70% 35%,
+    75% 0,
+    80% 35%,
+    85% 0,
+    90% 35%,
+    95% 0,
+    100% 35%,
+    100% 65%,
+    95% 100%,
+    90% 65%,
+    85% 100%,
+    80% 65%,
+    75% 100%,
+    70% 65%,
+    65% 100%,
+    60% 65%,
+    55% 100%,
+    50% 65%,
+    45% 100%,
+    40% 65%,
+    35% 100%,
+    30% 65%,
+    25% 100%,
+    20% 65%,
+    15% 100%,
+    10% 65%,
+    5% 100%,
+    0 65%
+  );
 }
 
 .gains-waterfall .wf-bar.base {

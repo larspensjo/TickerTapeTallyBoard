@@ -210,6 +210,11 @@ describe("waterfallView (open)", () => {
     expect(brokerage?.direction).toBe("down");
     expect(total?.value).toEqual({ status: "available", value: "3175.00" });
     expect(total?.span).toEqual({ from: 10008, to: 13183 });
+    expect(
+      10008 *
+        ((total?.capitalStack?.heldUnits ?? 0) +
+          (total?.capitalStack?.soldUnits ?? 0)),
+    ).toBeCloseTo(10020 + 4008, 5);
 
     const segs = total?.stackedSegments;
     expect(segs).toBeDefined();
@@ -282,9 +287,41 @@ describe("waterfallView (open)", () => {
     const total = view.rows.find((r) => r.key === "total-return");
     // 63164.73 / (265582.94 + 400) * 100 = 23.75
     expect(total?.percent).toEqual({ status: "available", value: "23.75" });
+    expect(total?.capitalStack).toEqual({
+      held: 265582.94,
+      sold: 400,
+      heldUnits: 1,
+      soldUnits: 400 / 265582.94,
+      displayedSoldUnits: 400 / 265582.94,
+      isBroken: false,
+    });
     // Price/FX effect rows keep the held-cost denominator.
     const price = view.rows.find((r) => r.key === "price");
     expect(price?.percent).toEqual({ status: "available", value: "20.16" });
+  });
+
+  it("caps an extreme sold-capital layer and marks it as broken", () => {
+    const view = waterfallView(
+      openGain({
+        realized_gain_base: money("50000.00"),
+        realized_cost_basis_base: money("2000000.00"),
+      }),
+    );
+    const stack = view.rows.find(
+      (row) => row.key === "total-return",
+    )?.capitalStack;
+
+    expect(stack?.heldUnits).toBe(1);
+    expect(stack?.soldUnits).toBeCloseTo(7.5306, 4);
+    expect(stack?.displayedSoldUnits).toBe(2);
+    expect(stack?.isBroken).toBe(true);
+  });
+
+  it("keeps the ordinary total bar when no capital has been sold", () => {
+    const total = waterfallView(openGain()).rows.find(
+      (row) => row.key === "total-return",
+    );
+    expect(total?.capitalStack).toBeUndefined();
   });
 
   it("exposes a domain that drops below zero when total return wipes out cost basis", () => {
@@ -303,6 +340,7 @@ describe("waterfallView (open)", () => {
     );
     const total = view.rows.find((r) => r.key === "total-return");
     expect(total?.span).toEqual({ from: 1000, to: -500 });
+    expect(total?.capitalStack).toBeUndefined();
     expect(view.minValue).toBeLessThanOrEqual(-500);
   });
 

@@ -1,6 +1,10 @@
-import type { ReactNode } from "react";
-import { SummaryAvailabilityValue } from "./valuationDisplay";
+import type { CSSProperties, ReactNode } from "react";
+import {
+  formatGroupedNumber,
+  SummaryAvailabilityValue,
+} from "./valuationDisplay";
 import type {
+  CapitalStack,
   StackedSegment,
   WaterfallRow,
   WaterfallView,
@@ -18,6 +22,70 @@ function barGeometry(
     left: ((lo - minValue) / domain) * 100,
     width: Math.max(((hi - lo) / domain) * 100, 0.6),
   };
+}
+
+type CapitalTrackStyle = CSSProperties & {
+  "--wf-capital-held-height": string;
+  "--wf-capital-sold-height": string;
+  "--wf-capital-total-height": string;
+};
+
+const BAR_HEIGHT_PX = 16;
+
+function capitalDescription(stack: CapitalStack): string {
+  const description = `Capital deployed: SEK ${formatGroupedNumber(stack.held)} held and SEK ${formatGroupedNumber(stack.sold)} previously sold.`;
+  return stack.isBroken
+    ? `${description} The sold-capital layer is shortened with a visual break.`
+    : description;
+}
+
+function CapitalBase({
+  stack,
+  segment,
+  minValue,
+  maxValue,
+}: {
+  stack: CapitalStack;
+  segment: StackedSegment;
+  minValue: number;
+  maxValue: number;
+}) {
+  const { left, width } = barGeometry(segment.span, minValue, maxValue);
+  const description = capitalDescription(stack);
+  const soldMultiple = stack.sold / stack.held;
+  return (
+    <div
+      className="wf-capital-base"
+      style={{ left: `${left}%`, width: `${width}%` }}
+      role="img"
+      aria-label={description}
+      title={description}
+      data-capital-stack="true"
+      data-broken={stack.isBroken ? "true" : "false"}
+    >
+      <div className="wf-capital-layer held">
+        <span className="wf-capital-layer-label" aria-hidden="true">
+          held
+        </span>
+      </div>
+      <div
+        className={`wf-capital-layer sold${stack.isBroken ? " is-broken" : ""}`}
+      >
+        {stack.isBroken ? (
+          <>
+            <span className="wf-capital-overflow-label">
+              sold ×{soldMultiple.toFixed(1)}
+            </span>
+            <span className="wf-capital-break" aria-hidden="true" />
+          </>
+        ) : stack.displayedSoldUnits >= 0.7 ? (
+          <span className="wf-capital-layer-label" aria-hidden="true">
+            sold
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function barClass(row: WaterfallRow): string {
@@ -78,9 +146,31 @@ function StackedTrack({
   if (!row.stackedSegments) {
     return <Track row={row} minValue={minValue} maxValue={maxValue} />;
   }
+  const stack = row.capitalStack;
+  const trackStyle = stack
+    ? ({
+        "--wf-capital-held-height": `${stack.heldUnits * BAR_HEIGHT_PX}px`,
+        "--wf-capital-sold-height": `${stack.displayedSoldUnits * BAR_HEIGHT_PX}px`,
+        "--wf-capital-total-height": `${(stack.heldUnits + stack.displayedSoldUnits) * BAR_HEIGHT_PX}px`,
+      } as CapitalTrackStyle)
+    : undefined;
   return (
-    <div className="wf-track">
+    <div
+      className={`wf-track${stack ? " wf-capital-track" : ""}`}
+      style={trackStyle}
+    >
       {row.stackedSegments.map((seg) => {
+        if (seg.direction === null && stack) {
+          return (
+            <CapitalBase
+              key={seg.key}
+              stack={stack}
+              segment={seg}
+              minValue={minValue}
+              maxValue={maxValue}
+            />
+          );
+        }
         const { left, width } = barGeometry(seg.span, minValue, maxValue);
         return (
           <div
@@ -155,7 +245,7 @@ export function GainsWaterfall({
         {view.rows.map((row) => (
           <div
             key={row.key}
-            className={`wf-row kind-${row.kind}${row.kind === "placeholder" ? " is-muted" : ""}`}
+            className={`wf-row kind-${row.kind}${row.kind === "placeholder" ? " is-muted" : ""}${row.capitalStack ? " has-capital-stack" : ""}`}
           >
             <span className="wf-label">{row.label}</span>
             {row.kind === "total" ? (

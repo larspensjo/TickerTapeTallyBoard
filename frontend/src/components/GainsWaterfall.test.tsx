@@ -74,4 +74,45 @@ describe("GainsWaterfall", () => {
     // Income placeholder is a calm "not tracked" note, not a warning chip.
     expect(screen.getByText("Not tracked yet")).toBeInTheDocument();
   });
+
+  it("renders held and sold capital layers with an accessible overflow break", () => {
+    const brokenView: WaterfallView = {
+      ...view,
+      rows: view.rows.map((row) =>
+        row.key === "total-return"
+          ? {
+              ...row,
+              stackedSegments: [
+                {
+                  key: "stacked-base",
+                  direction: null,
+                  span: { from: 0, to: 265582.94 },
+                },
+                {
+                  key: "stacked-price",
+                  direction: "up",
+                  span: { from: 265582.94, to: 319129.48 },
+                },
+              ],
+              capitalStack: {
+                held: 265582.94,
+                sold: 2000000,
+                heldUnits: 1,
+                soldUnits: 7.5306,
+                displayedSoldUnits: 2,
+                isBroken: true,
+              },
+            }
+          : row,
+      ),
+    };
+    const { container } = render(<GainsWaterfall view={brokenView} />);
+
+    const capital = container.querySelector("[data-capital-stack='true']");
+    expect(capital).toHaveAttribute("data-broken", "true");
+    expect(capital).toHaveAccessibleName(
+      /SEK 265,582\.94 held and SEK 2,000,000 previously sold/i,
+    );
+    expect(screen.getByText("sold ×7.5")).toBeInTheDocument();
+  });
 });
