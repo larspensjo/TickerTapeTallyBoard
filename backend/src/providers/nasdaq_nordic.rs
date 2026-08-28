@@ -235,7 +235,7 @@ impl super::PriceProvider for NasdaqNordicClient {
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::NasdaqNordic.as_str(),
                     format!(
                         "failed to request Nasdaq price history for {}: {error}",
@@ -251,7 +251,7 @@ impl super::PriceProvider for NasdaqNordicClient {
         let body = match response.text().await {
             Ok(body) => body,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::NasdaqNordic.as_str(),
                     format!(
                         "failed to read Nasdaq price history for {}: {error}",
@@ -282,7 +282,7 @@ impl super::SymbolSearchProvider for NasdaqNordicClient {
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::NasdaqNordic.as_str(),
                     format!("failed to request Nasdaq symbol search for {query}: {error}"),
                 );
@@ -295,7 +295,7 @@ impl super::SymbolSearchProvider for NasdaqNordicClient {
         let body = match response.text().await {
             Ok(body) => body,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::NasdaqNordic.as_str(),
                     format!("failed to read Nasdaq symbol search for {query}: {error}"),
                 );

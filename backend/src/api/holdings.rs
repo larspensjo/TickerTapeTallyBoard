@@ -759,4 +759,66 @@ mod tests {
         assert_eq!(visible["hidden_watchlist_pool_count"], 0);
         assert_eq!(visible["holdings"].as_array().expect("array").len(), 2);
     }
+
+    /// The reported defect, end to end: an instrument no Yahoo mapping covers,
+    /// priced only by Nasdaq Nordic, must be valued rather than showing
+    /// "Valuation missing".
+    #[tokio::test]
+    async fn nasdaq_only_instrument_is_valued_in_holdings() {
+        use crate::db::{prices, provider_symbols};
+        use crate::providers::MarketDataProvider;
+
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "JE00BJ7HNC92", "AVANZA", "SEK").await;
+        send(
+            &state,
+            "POST",
+            "/api/transactions",
+            json!({"instrument_id":id,"type":"Buy","trade_date":"2026-06-12",
+                   "quantity":10,"price":"123.30","currency":"SEK"}),
+        )
+        .await;
+
+        let now = crate::import::now_iso8601();
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: id,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: "TX2997672".to_owned(),
+                asset_class: Some("TRACKER_CERTIFICATES".to_owned()),
+                currency: Some("SEK".to_owned()),
+                enabled: true,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            },
+        )
+        .await
+        .expect("nasdaq mapping should insert");
+        prices::upsert(
+            &state.pool,
+            &prices::NewPrice {
+                instrument_id: id,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: "TX2997672".to_owned(),
+                date: chrono::Local::now().naive_local().date(),
+                close: "124.10".parse().expect("close"),
+                currency: "SEK".to_owned(),
+                fetched_at: now,
+            },
+        )
+        .await
+        .expect("nasdaq price should insert");
+
+        let (status, holdings) = send(&state, "GET", "/api/holdings", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        let holding = &holdings["holdings"].as_array().expect("array")[0];
+        let valuation = &holding["valuation"];
+        assert!(
+            !valuation.is_null(),
+            "a Nasdaq-priced holding must carry a valuation"
+        );
+        assert_eq!(valuation["market_value_base"]["status"], "available");
+        assert_eq!(valuation["market_value_base"]["value"], "1241.00");
+    }
 }

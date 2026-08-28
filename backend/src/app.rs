@@ -282,7 +282,7 @@ mod tests {
         let instruments = db::instruments::list(&state.pool)
             .await
             .expect("seeded instruments should list");
-        assert_eq!(instruments.len(), 6);
+        assert_eq!(instruments.len(), 7);
 
         let write_result = sqlx::query(
             "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \

@@ -18,15 +18,27 @@ use crate::{
     },
     domain,
     import::now_iso8601,
+    market_data::{
+        effective_prices::{self, PriceSourceMapping},
+        symbol_matching::{
+            self, best_yahoo_search_match, is_isin_like, is_plausible_symbol_recovery,
+            is_supported_quote, isin_like_identifier, CurrencyMatch,
+            MAX_SYMBOL_RECOVERY_CANDIDATES,
+        },
+    },
     providers::{
-        FxRateProvider, MarketDataProvider, PriceProvider, ProviderError, ProviderMissingReason,
-        SymbolSearchMatch, SymbolSearchProvider, BASE_FX_PROVIDER,
+        FxRateProvider, MarketDataProvider, PriceHistoryRequest, PriceProvider, ProviderError,
+        ProviderMissingReason, SymbolSearchMatch, SymbolSearchProvider, BASE_FX_PROVIDER,
+        PRICE_PROVIDER_PRECEDENCE,
     },
 };
 
 const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
-const MAX_SYMBOL_RECOVERY_CANDIDATES: usize = 5;
 const SEK: &str = "SEK";
+/// How far after a requested backfill start the earliest returned row may fall
+/// before the run reports `history_clamped`. Nasdaq silently truncates history
+/// to roughly ten years and says nothing, so the gap is the only signal.
+const HISTORY_CLAMP_TOLERANCE_DAYS: i64 = 5;
 
 #[derive(Clone)]
 pub struct MarketDataService {
@@ -34,11 +46,77 @@ pub struct MarketDataService {
 }
 
 struct MarketDataServiceInner {
-    price_provider: Arc<dyn PriceProvider + Send + Sync>,
+    /// Both registries are ordered by `PRICE_PROVIDER_PRECEDENCE`, which stays
+    /// the single source of truth for precedence; lookup is a linear scan over
+    /// a handful of entries.
+    price_providers: Vec<(MarketDataProvider, Arc<dyn PriceProvider + Send + Sync>)>,
+    symbol_search_providers: Vec<(
+        MarketDataProvider,
+        Arc<dyn SymbolSearchProvider + Send + Sync>,
+    )>,
     fx_provider: Arc<dyn FxRateProvider + Send + Sync>,
-    symbol_search_provider: Option<Arc<dyn SymbolSearchProvider + Send + Sync>>,
     running: Arc<AtomicBool>,
     active: Arc<Mutex<Option<RefreshRunSummary>>>,
+}
+
+/// Registration surface for the multi-provider tests and for `live()`.
+#[derive(Default)]
+pub struct ProviderRegistry {
+    price_providers: Vec<(MarketDataProvider, Arc<dyn PriceProvider + Send + Sync>)>,
+    symbol_search_providers: Vec<(
+        MarketDataProvider,
+        Arc<dyn SymbolSearchProvider + Send + Sync>,
+    )>,
+    fx_provider: Option<Arc<dyn FxRateProvider + Send + Sync>>,
+}
+
+impl ProviderRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_price_provider<P>(mut self, provider: MarketDataProvider, client: P) -> Self
+    where
+        P: PriceProvider + Send + Sync + 'static,
+    {
+        self.price_providers.push((provider, Arc::new(client)));
+        self
+    }
+
+    pub fn with_symbol_search_provider<S>(mut self, provider: MarketDataProvider, client: S) -> Self
+    where
+        S: SymbolSearchProvider + Send + Sync + 'static,
+    {
+        self.symbol_search_providers
+            .push((provider, Arc::new(client)));
+        self
+    }
+
+    pub fn with_fx_provider<F>(mut self, client: F) -> Self
+    where
+        F: FxRateProvider + Send + Sync + 'static,
+    {
+        self.fx_provider = Some(Arc::new(client));
+        self
+    }
+}
+
+/// Sort a registry into `PRICE_PROVIDER_PRECEDENCE` order so the registration
+/// order at the call site can never disagree with the read-path precedence.
+fn sort_by_precedence<T>(entries: &mut [(MarketDataProvider, T)]) {
+    debug_assert!(
+        entries
+            .iter()
+            .all(|(provider, _)| precedence_index(*provider).is_some()),
+        "every registered market-data provider must appear in PRICE_PROVIDER_PRECEDENCE"
+    );
+    entries.sort_by_key(|(provider, _)| precedence_index(*provider).unwrap_or(usize::MAX));
+}
+
+fn precedence_index(provider: MarketDataProvider) -> Option<usize> {
+    PRICE_PROVIDER_PRECEDENCE
+        .iter()
+        .position(|candidate| *candidate == provider)
 }
 
 struct RefreshFlightGuard {
@@ -70,22 +148,46 @@ impl Drop for RefreshFlightGuard {
 }
 
 impl MarketDataService {
+    /// Nasdaq Nordic is registered unconditionally: there is no feature flag,
+    /// so the default configuration exercises the multi-source path.
     pub fn live() -> Self {
-        Self::from_providers(
-            Arc::new(crate::providers::YahooChartClient::new()),
-            Arc::new(crate::providers::FrankfurterClient::new()),
-            Some(Arc::new(crate::providers::YahooSearchClient::new())),
+        Self::with_provider_registry(
+            ProviderRegistry::new()
+                .with_price_provider(
+                    MarketDataProvider::Yahoo,
+                    crate::providers::YahooChartClient::new(),
+                )
+                .with_price_provider(
+                    MarketDataProvider::NasdaqNordic,
+                    crate::providers::NasdaqNordicClient::new(),
+                )
+                .with_symbol_search_provider(
+                    MarketDataProvider::Yahoo,
+                    crate::providers::YahooSearchClient::new(),
+                )
+                .with_symbol_search_provider(
+                    MarketDataProvider::NasdaqNordic,
+                    crate::providers::NasdaqNordicClient::new(),
+                )
+                .with_fx_provider(crate::providers::FrankfurterClient::new()),
         )
     }
 
+    /// Single-provider test constructor: the price provider is registered under
+    /// `YAHOO`, which is what the pre-multi-provider tests assume.
     pub fn with_providers<P, F>(price_provider: P, fx_provider: F) -> Self
     where
         P: PriceProvider + Send + Sync + 'static,
         F: FxRateProvider + Send + Sync + 'static,
     {
-        Self::from_providers(Arc::new(price_provider), Arc::new(fx_provider), None)
+        Self::with_provider_registry(
+            ProviderRegistry::new()
+                .with_price_provider(MarketDataProvider::Yahoo, price_provider)
+                .with_fx_provider(fx_provider),
+        )
     }
 
+    /// As [`Self::with_providers`], plus a `YAHOO`-keyed symbol search provider.
     pub fn with_symbol_search_providers<P, F, S>(
         price_provider: P,
         fx_provider: F,
@@ -96,27 +198,55 @@ impl MarketDataService {
         F: FxRateProvider + Send + Sync + 'static,
         S: SymbolSearchProvider + Send + Sync + 'static,
     {
-        Self::from_providers(
-            Arc::new(price_provider),
-            Arc::new(fx_provider),
-            Some(Arc::new(symbol_search_provider)),
+        Self::with_provider_registry(
+            ProviderRegistry::new()
+                .with_price_provider(MarketDataProvider::Yahoo, price_provider)
+                .with_symbol_search_provider(MarketDataProvider::Yahoo, symbol_search_provider)
+                .with_fx_provider(fx_provider),
         )
     }
 
-    fn from_providers(
-        price_provider: Arc<dyn PriceProvider + Send + Sync>,
-        fx_provider: Arc<dyn FxRateProvider + Send + Sync>,
-        symbol_search_provider: Option<Arc<dyn SymbolSearchProvider + Send + Sync>>,
-    ) -> Self {
+    pub fn with_provider_registry(registry: ProviderRegistry) -> Self {
+        let ProviderRegistry {
+            mut price_providers,
+            mut symbol_search_providers,
+            fx_provider,
+        } = registry;
+        sort_by_precedence(&mut price_providers);
+        sort_by_precedence(&mut symbol_search_providers);
+
         Self {
             inner: Arc::new(MarketDataServiceInner {
-                price_provider,
-                fx_provider,
-                symbol_search_provider,
+                price_providers,
+                symbol_search_providers,
+                fx_provider: fx_provider
+                    .unwrap_or_else(|| Arc::new(crate::providers::FrankfurterClient::new())),
                 running: Arc::new(AtomicBool::new(false)),
                 active: Arc::new(Mutex::new(None)),
             }),
         }
+    }
+
+    fn price_provider(
+        &self,
+        provider: MarketDataProvider,
+    ) -> Option<&Arc<dyn PriceProvider + Send + Sync>> {
+        self.inner
+            .price_providers
+            .iter()
+            .find(|(registered, _)| *registered == provider)
+            .map(|(_, client)| client)
+    }
+
+    fn symbol_search_provider(
+        &self,
+        provider: MarketDataProvider,
+    ) -> Option<&Arc<dyn SymbolSearchProvider + Send + Sync>> {
+        self.inner
+            .symbol_search_providers
+            .iter()
+            .find(|(registered, _)| *registered == provider)
+            .map(|(_, client)| client)
     }
 
     pub fn is_refreshing(&self) -> bool {
@@ -253,25 +383,13 @@ impl MarketDataService {
         for instrument in instruments {
             let position = position_for_instrument(&grouped, instrument.id)?;
 
-            let mapping = provider_symbols::find_by_instrument_provider(
-                pool,
-                instrument.id,
-                MarketDataProvider::Yahoo,
-            )
-            .await?;
+            let price_sources = all_price_sources(pool, instrument.id).await?;
+            let enabled_sources =
+                effective_prices::enabled_price_sources(pool, instrument.id).await?;
 
-            let latest_price = if let Some(mapping) = mapping.as_ref() {
-                latest_price_snapshot(
-                    pool,
-                    instrument.id,
-                    mapping,
-                    today,
-                    instrument.currency.as_str(),
-                )
-                .await?
-            } else {
-                PriceSnapshotState::unmapped()
-            };
+            let latest_price =
+                latest_price_snapshot(pool, instrument.id, &enabled_sources, today).await?;
+            let effective_price_source = latest_price.provider.clone();
 
             let latest_fx = latest_fx_snapshot(pool, &instrument.currency, today).await?;
 
@@ -280,8 +398,8 @@ impl MarketDataService {
                 exchange: instrument.exchange,
                 symbol: instrument.symbol,
                 currency: instrument.currency,
-                mapping_enabled: mapping.as_ref().is_some_and(|row| row.enabled),
-                provider_symbol: mapping.as_ref().map(|row| row.provider_symbol.clone()),
+                price_sources,
+                effective_price_source,
                 open_quantity: position.quantity,
                 latest_price,
                 latest_fx,
@@ -297,7 +415,12 @@ impl MarketDataService {
 
     pub async fn lookup_symbol_search(&self, query: &str) -> SymbolSearchLookupResponse {
         let query = query.trim().to_owned();
-        let Some(provider) = self.inner.symbol_search_provider.as_ref().map(Arc::clone) else {
+        let Some(provider) = self
+            .inner
+            .symbol_search_providers
+            .first()
+            .map(|(_, client)| Arc::clone(client))
+        else {
             crate::engine_info!("instrument lookup provider unavailable query={query}");
             return SymbolSearchLookupResponse::provider_unavailable(query);
         };
@@ -317,7 +440,7 @@ impl MarketDataService {
 
         let supported_matches = matches
             .into_iter()
-            .filter(is_supported_yahoo_quote)
+            .filter(is_supported_quote)
             .map(SymbolSearchLookupMatch::from)
             .collect::<Vec<_>>();
 
@@ -375,7 +498,7 @@ impl MarketDataService {
         let transactions = transactions::all_for_holdings(pool).await?;
         let grouped = group_transactions(transactions);
         let instruments = instruments::list(pool).await?;
-        self.seed_provider_symbols(pool, &instruments).await?;
+        let ambiguous = self.seed_provider_symbols(pool, &instruments).await?;
 
         let mut targets = Vec::new();
         for instrument in instruments {
@@ -411,7 +534,6 @@ impl MarketDataService {
             targets.push(RefreshTarget {
                 instrument,
                 currency,
-                provider_symbol: None,
             });
         }
 
@@ -420,152 +542,34 @@ impl MarketDataService {
         let mut unmapped_instruments = 0usize;
         let mut failed_items = 0usize;
         let mut items = Vec::new();
+        let mut rows_by_provider: Vec<(MarketDataProvider, usize)> = Vec::new();
 
-        for target in &mut targets {
-            let mapping = provider_symbols::find_by_instrument_provider(
-                pool,
-                target.instrument.id,
-                MarketDataProvider::Yahoo,
-            )
-            .await?;
-            target.provider_symbol = mapping
-                .as_ref()
-                .filter(|row| row.enabled)
-                .map(|row| row.provider_symbol.clone());
+        for target in &targets {
+            let sources =
+                effective_prices::enabled_price_sources(pool, target.instrument.id).await?;
 
-            if target.provider_symbol.is_none() {
+            if sources.is_empty() {
                 unmapped_instruments += 1;
-                items.push(RefreshItem {
-                    kind: RefreshItemKind::Price,
-                    instrument_id: Some(target.instrument.id),
-                    symbol_or_pair: target.instrument.symbol.clone(),
-                    status: RefreshItemStatus::Unmapped,
-                    reason: Some("symbol_unmapped".to_owned()),
-                    rows_written: 0,
-                });
+                items.push(self.unsourced_item(target, &ambiguous));
                 continue;
             }
 
-            let mapped_symbol = target.provider_symbol.clone().expect("checked above");
-            match self
-                .price_history_with_symbol_recovery(
-                    &target.instrument,
-                    &mapped_symbol,
-                    &target_window,
-                )
-                .await
-            {
-                Ok(resolved) => {
-                    let provider_symbol = resolved.provider_symbol;
-                    let rows = resolved.rows;
-                    if !provider_symbol.eq_ignore_ascii_case(&mapped_symbol) {
-                        let now = now_iso8601();
-                        provider_symbols::upsert(
-                            pool,
-                            &provider_symbols::NewProviderSymbol {
-                                instrument_id: target.instrument.id,
-                                provider: MarketDataProvider::Yahoo,
-                                provider_symbol: provider_symbol.clone(),
-                                asset_class: None,
-                                currency: Some(target.instrument.currency.clone()),
-                                enabled: true,
-                                created_at: now.clone(),
-                                updated_at: now,
-                            },
-                        )
-                        .await?;
-                        target.provider_symbol = Some(provider_symbol.clone());
-                        crate::engine_info!(
-                            "market data recovered changed yahoo symbol instrument_id={} isin={:?} old_symbol={} new_symbol={}",
-                            target.instrument.id,
-                            target.instrument.isin,
-                            mapped_symbol,
-                            provider_symbol
-                        );
-                    }
-
-                    if let Some(row) = rows.iter().find(|row| {
-                        !row.currency
-                            .trim()
-                            .eq_ignore_ascii_case(target.instrument.currency.trim())
-                    }) {
-                        let now = now_iso8601();
-                        provider_symbols::upsert(
-                            pool,
-                            &provider_symbols::NewProviderSymbol {
-                                instrument_id: target.instrument.id,
-                                provider: MarketDataProvider::Yahoo,
-                                provider_symbol: provider_symbol.clone(),
-                                asset_class: None,
-                                currency: Some(target.instrument.currency.clone()),
-                                enabled: false,
-                                created_at: now.clone(),
-                                updated_at: now,
-                            },
-                        )
-                        .await?;
-                        failed_items += 1;
-                        crate::engine_warn!(
-                            "market data refresh price currency mismatch instrument_id={} symbol={} expected_currency={} actual_currency={}; disabled mapping",
-                            target.instrument.id,
-                            provider_symbol,
-                            target.instrument.currency,
-                            row.currency
-                        );
-                        items.push(RefreshItem {
-                            kind: RefreshItemKind::Price,
-                            instrument_id: Some(target.instrument.id),
-                            symbol_or_pair: provider_symbol,
-                            status: RefreshItemStatus::Failed,
-                            reason: Some("currency_mismatch".to_owned()),
-                            rows_written: 0,
-                        });
-                        continue;
-                    }
-
-                    for row in &rows {
-                        prices::upsert(
-                            pool,
-                            &prices::NewPrice {
-                                instrument_id: target.instrument.id,
-                                provider: MarketDataProvider::Yahoo,
-                                provider_symbol: row.provider_symbol.clone(),
-                                date: row.date,
-                                close: row.close,
-                                currency: row.currency.clone(),
-                                fetched_at: now_iso8601(),
-                            },
-                        )
-                        .await?;
-                    }
-                    prices_written += rows.len();
-                    items.push(RefreshItem {
-                        kind: RefreshItemKind::Price,
-                        instrument_id: Some(target.instrument.id),
-                        symbol_or_pair: provider_symbol,
-                        status: RefreshItemStatus::Fetched,
-                        reason: None,
-                        rows_written: rows.len(),
-                    });
-                }
-                Err(error) => {
+            for source in &sources {
+                let outcome = self
+                    .refresh_one_source(pool, target, source, &target_window, request.mode)
+                    .await?;
+                if outcome.failed {
                     failed_items += 1;
-                    crate::engine_warn!(
-                        "market data refresh price failure instrument_id={} symbol={} reason={} message={}",
-                        target.instrument.id,
-                        mapped_symbol,
-                        error.reason_code(),
-                        error.message()
-                    );
-                    items.push(RefreshItem {
-                        kind: RefreshItemKind::Price,
-                        instrument_id: Some(target.instrument.id),
-                        symbol_or_pair: mapped_symbol,
-                        status: provider_error_status(&error),
-                        reason: Some(error.reason_code().to_owned()),
-                        rows_written: 0,
-                    });
                 }
+                prices_written += outcome.item.rows_written;
+                if outcome.item.rows_written > 0 {
+                    add_provider_rows(
+                        &mut rows_by_provider,
+                        source.provider,
+                        outcome.item.rows_written,
+                    );
+                }
+                items.push(outcome.item);
             }
         }
 
@@ -600,6 +604,7 @@ impl MarketDataService {
                     items.push(RefreshItem {
                         kind: RefreshItemKind::Fx,
                         instrument_id: None,
+                        provider: Some(BASE_FX_PROVIDER.to_string()),
                         symbol_or_pair: format!("{currency}/{SEK}"),
                         status: RefreshItemStatus::Fetched,
                         reason: None,
@@ -618,6 +623,7 @@ impl MarketDataService {
                     items.push(RefreshItem {
                         kind: RefreshItemKind::Fx,
                         instrument_id: None,
+                        provider: Some(BASE_FX_PROVIDER.to_string()),
                         symbol_or_pair: format!("{currency}/{SEK}"),
                         status: provider_error_status(&error),
                         reason: Some(error.reason_code().to_owned()),
@@ -635,8 +641,12 @@ impl MarketDataService {
             RefreshRunStatus::Partial
         };
 
+        let by_provider = describe_provider_split(&rows_by_provider);
+        crate::engine_info!(
+            "market data refresh provider split {by_provider} unmapped={unmapped_instruments} failed={failed_items}"
+        );
         let message = Some(format!(
-            "prices_written={prices_written} fx_rates_written={fx_rates_written} unmapped={unmapped_instruments} failed={failed_items}"
+            "prices_written={prices_written} fx_rates_written={fx_rates_written} unmapped={unmapped_instruments} failed={failed_items} by_provider=[{by_provider}]"
         ));
 
         Ok(RefreshOutcome {
@@ -650,16 +660,265 @@ impl MarketDataService {
         })
     }
 
+    /// Report an instrument that ended the run with no usable price source.
+    ///
+    /// An ambiguity is a distinct state from "no provider carries this": it
+    /// means a hand mapping would fix it, so it is named rather than folded
+    /// into `Unmapped`. Both count as unmapped, because action is needed.
+    fn unsourced_item(
+        &self,
+        target: &RefreshTarget,
+        ambiguous: &BTreeMap<i64, String>,
+    ) -> RefreshItem {
+        match ambiguous.get(&target.instrument.id) {
+            Some(candidates) => RefreshItem {
+                kind: RefreshItemKind::Price,
+                instrument_id: Some(target.instrument.id),
+                provider: Some(MarketDataProvider::NasdaqNordic.to_string()),
+                symbol_or_pair: target.instrument.symbol.clone(),
+                status: RefreshItemStatus::Ambiguous,
+                reason: Some(format!("ambiguous_match: {candidates}")),
+                rows_written: 0,
+            },
+            None => RefreshItem {
+                kind: RefreshItemKind::Price,
+                instrument_id: Some(target.instrument.id),
+                provider: None,
+                symbol_or_pair: target.instrument.symbol.clone(),
+                status: RefreshItemStatus::Unmapped,
+                reason: Some("symbol_unmapped".to_owned()),
+                rows_written: 0,
+            },
+        }
+    }
+
+    /// Fetch and store one instrument's prices from one enabled mapping.
+    ///
+    /// A failure disables or reports only *this* mapping; the instrument's other
+    /// sources are fetched independently by the caller.
+    async fn refresh_one_source(
+        &self,
+        pool: &SqlitePool,
+        target: &RefreshTarget,
+        source: &PriceSourceMapping,
+        window: &RefreshWindow,
+        mode: RefreshMode,
+    ) -> Result<SourceRefreshOutcome, MarketDataError> {
+        let instrument = &target.instrument;
+        let mapped_symbol = source.provider_symbol.clone();
+
+        if self.price_provider(source.provider).is_none() {
+            crate::engine_warn!(
+                "market data refresh has no registered client for a stored mapping instrument_id={} provider={} provider_symbol={}",
+                instrument.id,
+                source.provider,
+                mapped_symbol
+            );
+            return Ok(SourceRefreshOutcome::failed(RefreshItem {
+                kind: RefreshItemKind::Price,
+                instrument_id: Some(instrument.id),
+                provider: Some(source.provider.to_string()),
+                symbol_or_pair: mapped_symbol,
+                status: RefreshItemStatus::Unavailable,
+                reason: Some("provider_unregistered".to_owned()),
+                rows_written: 0,
+            }));
+        }
+
+        let resolved = match self
+            .price_history_for_source(instrument, source, window)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                crate::engine_warn!(
+                    "market data refresh price failure instrument_id={} provider={} symbol={} asset_class={:?} reason={} message={}",
+                    instrument.id,
+                    source.provider,
+                    mapped_symbol,
+                    source.asset_class,
+                    error.reason_code(),
+                    error.message()
+                );
+                return Ok(SourceRefreshOutcome::failed(RefreshItem {
+                    kind: RefreshItemKind::Price,
+                    instrument_id: Some(instrument.id),
+                    provider: Some(source.provider.to_string()),
+                    symbol_or_pair: mapped_symbol,
+                    status: provider_error_status(&error),
+                    reason: Some(error.reason_code().to_owned()),
+                    rows_written: 0,
+                }));
+            }
+        };
+
+        let provider_symbol = resolved.provider_symbol;
+        let rows = resolved.rows;
+
+        if !provider_symbol.eq_ignore_ascii_case(&mapped_symbol) {
+            // The recovery path only accepts candidates whose rows quote in the
+            // instrument's own currency, so that is what the mapping records.
+            self.persist_mapping(
+                pool,
+                instrument,
+                source,
+                &provider_symbol,
+                Some(instrument.currency.clone()),
+                true,
+            )
+            .await?;
+            crate::engine_info!(
+                "market data recovered changed yahoo symbol instrument_id={} isin={:?} old_symbol={} new_symbol={}",
+                instrument.id,
+                instrument.isin,
+                mapped_symbol,
+                provider_symbol
+            );
+        }
+
+        if let Some(row) = rows.iter().find(|row| {
+            !row.currency
+                .trim()
+                .eq_ignore_ascii_case(instrument.currency.trim())
+        }) {
+            // Keep the currency the mapping claimed: for Nasdaq it is what
+            // stamped the rows, and it is the value that needs correcting.
+            self.persist_mapping(
+                pool,
+                instrument,
+                source,
+                &provider_symbol,
+                source
+                    .currency
+                    .clone()
+                    .or_else(|| Some(instrument.currency.clone())),
+                false,
+            )
+            .await?;
+            crate::engine_warn!(
+                "market data refresh price currency mismatch instrument_id={} provider={} symbol={} expected_currency={} actual_currency={}; disabled mapping",
+                instrument.id,
+                source.provider,
+                provider_symbol,
+                instrument.currency,
+                row.currency
+            );
+            return Ok(SourceRefreshOutcome::failed(RefreshItem {
+                kind: RefreshItemKind::Price,
+                instrument_id: Some(instrument.id),
+                provider: Some(source.provider.to_string()),
+                symbol_or_pair: provider_symbol,
+                status: RefreshItemStatus::Failed,
+                reason: Some("currency_mismatch".to_owned()),
+                rows_written: 0,
+            }));
+        }
+
+        for row in &rows {
+            prices::upsert(
+                pool,
+                &prices::NewPrice {
+                    instrument_id: instrument.id,
+                    provider: source.provider,
+                    provider_symbol: row.provider_symbol.clone(),
+                    date: row.date,
+                    close: row.close,
+                    currency: row.currency.clone(),
+                    fetched_at: now_iso8601(),
+                },
+            )
+            .await?;
+        }
+
+        let reason = clamp_reason(instrument, source, &provider_symbol, &rows, window, mode);
+
+        Ok(SourceRefreshOutcome::succeeded(RefreshItem {
+            kind: RefreshItemKind::Price,
+            instrument_id: Some(instrument.id),
+            provider: Some(source.provider.to_string()),
+            symbol_or_pair: provider_symbol,
+            status: RefreshItemStatus::Fetched,
+            reason,
+            rows_written: rows.len(),
+        }))
+    }
+
+    /// Rewrite one mapping's enabled flag (and, after a symbol recovery, its
+    /// identifier) while preserving the asset class and currency that make a
+    /// Nasdaq mapping fetchable at all.
+    async fn persist_mapping(
+        &self,
+        pool: &SqlitePool,
+        instrument: &crate::db::instruments::InstrumentRow,
+        source: &PriceSourceMapping,
+        provider_symbol: &str,
+        currency: Option<String>,
+        enabled: bool,
+    ) -> Result<(), MarketDataError> {
+        let now = now_iso8601();
+        provider_symbols::upsert(
+            pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id: instrument.id,
+                provider: source.provider,
+                provider_symbol: provider_symbol.to_owned(),
+                asset_class: source.asset_class.clone(),
+                currency,
+                enabled,
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Yahoo mappings go through the changed-symbol recovery path; every other
+    /// provider is a straight fetch against the mapping as stored.
+    async fn price_history_for_source(
+        &self,
+        instrument: &crate::db::instruments::InstrumentRow,
+        source: &PriceSourceMapping,
+        window: &RefreshWindow,
+    ) -> Result<ResolvedPriceHistory, ProviderError> {
+        if source.provider == MarketDataProvider::Yahoo {
+            return self
+                .price_history_with_symbol_recovery(instrument, &source.provider_symbol, window)
+                .await;
+        }
+
+        let client = self.price_provider(source.provider).ok_or_else(|| {
+            ProviderError::provider_error(
+                source.provider.as_str(),
+                format!("no registered client for provider {}", source.provider),
+            )
+        })?;
+        let rows = client
+            .daily_history(&PriceHistoryRequest {
+                symbol: source.provider_symbol.clone(),
+                asset_class: source.asset_class.clone(),
+                quote_currency: source.currency.clone(),
+                start: window.start,
+                end: window.end,
+            })
+            .await?;
+        Ok(ResolvedPriceHistory::new(&source.provider_symbol, rows))
+    }
+
     async fn price_history_with_symbol_recovery(
         &self,
         instrument: &crate::db::instruments::InstrumentRow,
         mapped_symbol: &str,
         window: &RefreshWindow,
     ) -> Result<ResolvedPriceHistory, ProviderError> {
-        let initial = self
-            .inner
-            .price_provider
-            .daily_history(&crate::providers::PriceHistoryRequest {
+        let Some(client) = self.price_provider(MarketDataProvider::Yahoo) else {
+            return Err(ProviderError::provider_error(
+                MarketDataProvider::Yahoo.as_str(),
+                format!("no registered Yahoo price provider for {mapped_symbol}"),
+            ));
+        };
+        let initial = client
+            .daily_history(&PriceHistoryRequest {
                 symbol: mapped_symbol.to_owned(),
                 asset_class: None,
                 quote_currency: None,
@@ -715,7 +974,7 @@ impl MarketDataService {
         if name.is_empty() {
             return None;
         }
-        let search = self.inner.symbol_search_provider.as_ref()?;
+        let search = self.symbol_search_provider(MarketDataProvider::Yahoo)?;
         let mut queries = Vec::new();
         if let Some(isin) = instrument
             .isin
@@ -761,12 +1020,11 @@ impl MarketDataService {
             .take(MAX_SYMBOL_RECOVERY_CANDIDATES)
             .collect::<Vec<_>>();
 
+        let client = self.price_provider(MarketDataProvider::Yahoo)?;
         let mut viable = Vec::new();
         for candidate in candidates {
-            let rows = match self
-                .inner
-                .price_provider
-                .daily_history(&crate::providers::PriceHistoryRequest {
+            let rows = match client
+                .daily_history(&PriceHistoryRequest {
                     symbol: candidate.provider_symbol.clone(),
                     asset_class: None,
                     quote_currency: None,
@@ -818,11 +1076,21 @@ impl MarketDataService {
         })
     }
 
+    /// Create the mappings a refresh will then fetch through.
+    ///
+    /// Yahoo seeding is unchanged. Nasdaq is consulted only for instruments
+    /// Yahoo cannot price — no enabled Yahoo mapping — so a working holding
+    /// never gains a second source, and never costs a second call per refresh.
+    ///
+    /// Returns the instruments whose Nasdaq search was ambiguous, keyed by id,
+    /// with a rendering of the candidates for the refresh item and the log.
     async fn seed_provider_symbols(
         &self,
         pool: &SqlitePool,
         instruments: &[crate::db::instruments::InstrumentRow],
-    ) -> Result<(), MarketDataError> {
+    ) -> Result<BTreeMap<i64, String>, MarketDataError> {
+        let mut ambiguous = BTreeMap::new();
+
         for instrument in instruments {
             let existing_mapping = provider_symbols::find_by_instrument_provider(
                 pool,
@@ -833,7 +1101,7 @@ impl MarketDataService {
             let known_seed = yahoo_seed_for_known_isin(instrument.isin.as_deref())
                 .or_else(|| yahoo_seed_for_known_isin(Some(&instrument.symbol)));
 
-            let seed = match existing_mapping {
+            let seed = match &existing_mapping {
                 Some(mapping) if mapping.enabled => None,
                 Some(_) => known_seed,
                 None => match known_seed
@@ -844,27 +1112,137 @@ impl MarketDataService {
                 },
             };
 
-            let Some(seed) = seed else {
-                continue;
+            let yahoo_enabled = match (&seed, &existing_mapping) {
+                (Some(seed), _) => seed.enabled,
+                (None, Some(mapping)) => mapping.enabled,
+                (None, None) => false,
             };
 
-            let now = now_iso8601();
-            provider_symbols::upsert(
-                pool,
-                &provider_symbols::NewProviderSymbol {
-                    instrument_id: instrument.id,
-                    provider: MarketDataProvider::Yahoo,
-                    provider_symbol: seed.provider_symbol,
-                    asset_class: None,
-                    currency: Some(instrument.currency.clone()),
-                    enabled: seed.enabled,
-                    created_at: now.clone(),
-                    updated_at: now,
-                },
-            )
-            .await?;
+            if let Some(seed) = seed {
+                let now = now_iso8601();
+                provider_symbols::upsert(
+                    pool,
+                    &provider_symbols::NewProviderSymbol {
+                        instrument_id: instrument.id,
+                        provider: MarketDataProvider::Yahoo,
+                        provider_symbol: seed.provider_symbol,
+                        asset_class: None,
+                        currency: Some(instrument.currency.clone()),
+                        enabled: seed.enabled,
+                        created_at: now.clone(),
+                        updated_at: now,
+                    },
+                )
+                .await?;
+            }
+
+            if yahoo_enabled {
+                continue;
+            }
+
+            if let Some(candidates) = self.seed_nasdaq_symbol(pool, instrument).await? {
+                ambiguous.insert(instrument.id, candidates);
+            }
         }
-        Ok(())
+
+        Ok(ambiguous)
+    }
+
+    /// Auto-connect Nasdaq Nordic, but only when the answer is unambiguous.
+    ///
+    /// Candidates are narrowed to the instrument's own currency and connected
+    /// only if exactly one survives. More than one survivor stays unmapped and
+    /// is returned as an ambiguity; a bad guess would silently value the holding
+    /// off the wrong exchange with nothing marking it a guess.
+    async fn seed_nasdaq_symbol(
+        &self,
+        pool: &SqlitePool,
+        instrument: &crate::db::instruments::InstrumentRow,
+    ) -> Result<Option<String>, MarketDataError> {
+        let existing = provider_symbols::find_by_instrument_provider(
+            pool,
+            instrument.id,
+            MarketDataProvider::NasdaqNordic,
+        )
+        .await?;
+        if existing.is_some() {
+            return Ok(None);
+        }
+
+        let Some(query) = isin_like_identifier(instrument) else {
+            return Ok(None);
+        };
+        let Some(search) = self.symbol_search_provider(MarketDataProvider::NasdaqNordic) else {
+            return Ok(None);
+        };
+
+        let matches = match search.search(query).await {
+            Ok(matches) => matches,
+            Err(error) => {
+                crate::engine_warn!(
+                    "market data nasdaq search failed instrument_id={} isin={} reason={} message={}",
+                    instrument.id,
+                    query,
+                    error.reason_code(),
+                    error.message()
+                );
+                return Ok(None);
+            }
+        };
+
+        let supported = matches
+            .into_iter()
+            .filter(is_supported_quote)
+            .collect::<Vec<_>>();
+
+        match symbol_matching::unique_currency_match(&instrument.currency, supported) {
+            CurrencyMatch::Unique(candidate) => {
+                let now = now_iso8601();
+                provider_symbols::upsert(
+                    pool,
+                    &provider_symbols::NewProviderSymbol {
+                        instrument_id: instrument.id,
+                        provider: MarketDataProvider::NasdaqNordic,
+                        provider_symbol: candidate.provider_symbol.clone(),
+                        asset_class: candidate.asset_class.clone(),
+                        currency: candidate.currency.clone(),
+                        enabled: true,
+                        created_at: now.clone(),
+                        updated_at: now,
+                    },
+                )
+                .await?;
+                crate::engine_info!(
+                    "market data connected nasdaq source instrument_id={} isin={} orderbook_id={} asset_class={:?} currency={:?}",
+                    instrument.id,
+                    query,
+                    candidate.provider_symbol,
+                    candidate.asset_class,
+                    candidate.currency
+                );
+                Ok(None)
+            }
+            CurrencyMatch::Ambiguous(candidates) => {
+                let described = symbol_matching::describe_candidates(&candidates);
+                crate::engine_warn!(
+                    "market data nasdaq match ambiguous instrument_id={} isin={} instrument_currency={} candidates=[{}]; needs a hand mapping",
+                    instrument.id,
+                    query,
+                    instrument.currency,
+                    described
+                );
+                Ok(Some(described))
+            }
+            CurrencyMatch::None => {
+                crate::engine_info!(
+                    "market data nasdaq search returned no same-currency match instrument_id={} isin={} instrument_currency={}",
+                    instrument.id,
+                    query,
+                    instrument.currency
+                );
+                Ok(None)
+            }
+        }
     }
 
     async fn yahoo_seed_from_search(
@@ -881,7 +1259,7 @@ impl MarketDataService {
             .filter(|value| is_isin_like(value))
             .or_else(|| is_isin_like(&instrument.symbol).then_some(instrument.symbol.as_str()))?;
 
-        let search = self.inner.symbol_search_provider.as_ref()?;
+        let search = self.symbol_search_provider(MarketDataProvider::Yahoo)?;
         let matches = match search.search(query).await {
             Ok(matches) => matches,
             Err(error) => {
@@ -966,8 +1344,16 @@ pub enum RefreshItemKind {
 pub enum RefreshItemStatus {
     Fetched,
     Missing,
+    /// The provider answered, but badly: a bad payload, a typed error envelope,
+    /// or a currency that contradicts the instrument.
     Failed,
     Unmapped,
+    /// A provider search returned more than one same-currency candidate. The
+    /// instrument stays unmapped and needs a hand mapping.
+    Ambiguous,
+    /// The provider could not be reached at all. Distinct from `Failed` so a
+    /// provider outage is explicit rather than a silent staleness slide.
+    Unavailable,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1037,6 +1423,8 @@ impl RefreshRunSummary {
 pub struct RefreshItem {
     pub kind: RefreshItemKind,
     pub instrument_id: Option<i64>,
+    /// The feed this item is about, so a failure names the provider that failed.
+    pub provider: Option<String>,
     pub symbol_or_pair: String,
     pub status: RefreshItemStatus,
     pub reason: Option<String>,
@@ -1118,11 +1506,24 @@ pub struct InstrumentMarketDataStatus {
     pub exchange: String,
     pub symbol: String,
     pub currency: String,
-    pub mapping_enabled: bool,
-    pub provider_symbol: Option<String>,
+    /// Every mapping this instrument has, enabled or not, in precedence order.
+    /// This replaces the single `mapping_enabled` / `provider_symbol` pair,
+    /// which has no honest single-valued meaning once two sources exist.
+    pub price_sources: Vec<PriceSourceStatus>,
+    /// The provider code behind `latest_price`, or `None` when nothing resolved.
+    pub effective_price_source: Option<String>,
     pub open_quantity: i64,
     pub latest_price: PriceSnapshotState,
     pub latest_fx: PriceSnapshotState,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PriceSourceStatus {
+    pub provider: String,
+    pub provider_symbol: String,
+    pub asset_class: Option<String>,
+    pub currency: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1248,7 +1649,25 @@ impl ResolvedPriceHistory {
 struct RefreshTarget {
     instrument: crate::db::instruments::InstrumentRow,
     currency: String,
-    provider_symbol: Option<String>,
+}
+
+/// The result of fetching one instrument from one of its sources.
+struct SourceRefreshOutcome {
+    item: RefreshItem,
+    failed: bool,
+}
+
+impl SourceRefreshOutcome {
+    fn succeeded(item: RefreshItem) -> Self {
+        Self {
+            item,
+            failed: false,
+        }
+    }
+
+    fn failed(item: RefreshItem) -> Self {
+        Self { item, failed: true }
+    }
 }
 
 impl RefreshTrigger {
@@ -1315,6 +1734,7 @@ fn provider_error_status(error: &ProviderError) -> RefreshItemStatus {
         ProviderMissingReason::RateLimited | ProviderMissingReason::ProviderError => {
             RefreshItemStatus::Failed
         }
+        ProviderMissingReason::ProviderUnavailable => RefreshItemStatus::Unavailable,
     }
 }
 
@@ -1407,82 +1827,6 @@ struct YahooSeed {
     enabled: bool,
 }
 
-fn best_yahoo_search_match(
-    instrument: &crate::db::instruments::InstrumentRow,
-    matches: Vec<SymbolSearchMatch>,
-) -> Option<SymbolSearchMatch> {
-    let mut supported = matches.into_iter().filter(is_supported_yahoo_quote);
-    if instrument
-        .isin
-        .as_deref()
-        .is_some_and(|isin| isin.trim().starts_with("US"))
-        && instrument.currency.trim().eq_ignore_ascii_case("USD")
-    {
-        return supported.find(|item| {
-            !item.provider_symbol.contains('.')
-                && item.exchange.as_deref().is_some_and(is_us_exchange)
-        });
-    }
-
-    supported.next()
-}
-
-fn is_supported_yahoo_quote(item: &SymbolSearchMatch) -> bool {
-    let quote_type = item
-        .quote_type
-        .as_deref()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    matches!(quote_type.as_str(), "EQUITY" | "ETF" | "MUTUALFUND")
-}
-
-fn is_us_exchange(exchange: &str) -> bool {
-    matches!(
-        exchange.trim().to_ascii_uppercase().as_str(),
-        "NMS" | "NYQ" | "ASE" | "NGM" | "NCM" | "PCX" | "NASDAQ" | "NYSE" | "NYSEARCA"
-    )
-}
-
-fn is_plausible_symbol_recovery(
-    instrument: &crate::db::instruments::InstrumentRow,
-    candidate: &SymbolSearchMatch,
-) -> bool {
-    if !is_supported_yahoo_quote(candidate) {
-        return false;
-    }
-    let Some(candidate_name) = candidate.name.as_deref() else {
-        return false;
-    };
-    if normalized_security_name(candidate_name) != normalized_security_name(&instrument.name) {
-        return false;
-    }
-
-    if instrument
-        .isin
-        .as_deref()
-        .is_some_and(|isin| isin.trim().starts_with("US"))
-        && instrument.currency.trim().eq_ignore_ascii_case("USD")
-    {
-        return !candidate.provider_symbol.contains('.')
-            && candidate.exchange.as_deref().is_some_and(is_us_exchange);
-    }
-
-    true
-}
-
-fn normalized_security_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn is_isin_like(value: &str) -> bool {
-    let trimmed = value.trim();
-    trimmed.len() == 12 && trimmed.chars().all(|ch| ch.is_ascii_alphanumeric())
-}
-
 fn yahoo_seed_for_exchange(exchange: &str, symbol: &str) -> Option<YahooSeed> {
     let normalized = exchange.trim().to_ascii_uppercase();
     match normalized.as_str() {
@@ -1571,33 +1915,128 @@ fn parse_date(field: &'static str, value: &str) -> Result<NaiveDate, MarketDataE
     })
 }
 
+/// Every mapping an instrument has, enabled or not, in precedence order.
+///
+/// `effective_prices::enabled_price_sources` deliberately drops disabled rows
+/// because valuation must never read behind them; the status endpoint needs the
+/// full list so the UI can say a source exists but is switched off.
+async fn all_price_sources(
+    pool: &SqlitePool,
+    instrument_id: i64,
+) -> Result<Vec<PriceSourceStatus>, MarketDataError> {
+    let mut sources = Vec::new();
+    for provider in PRICE_PROVIDER_PRECEDENCE {
+        let mapping =
+            provider_symbols::find_by_instrument_provider(pool, instrument_id, *provider).await?;
+        if let Some(mapping) = mapping {
+            sources.push(PriceSourceStatus {
+                provider: mapping.provider.to_string(),
+                provider_symbol: mapping.provider_symbol,
+                asset_class: mapping.asset_class,
+                currency: mapping.currency,
+                enabled: mapping.enabled,
+            });
+        }
+    }
+    Ok(sources)
+}
+
+/// Resolve the latest close across every enabled source, so `/api/prices/status`
+/// agrees with what valuation actually used.
+///
+/// `Unmapped` now means "no enabled source at all", not "the Yahoo mapping is
+/// off": a disabled mapping alongside an enabled one reports the resolved price.
 async fn latest_price_snapshot(
     pool: &SqlitePool,
     instrument_id: i64,
-    mapping: &provider_symbols::ProviderSymbolRow,
+    sources: &[PriceSourceMapping],
     as_of_date: NaiveDate,
-    _currency: &str,
 ) -> Result<PriceSnapshotState, MarketDataError> {
-    if !mapping.enabled {
+    if sources.is_empty() {
         return Ok(PriceSnapshotState::unmapped());
     }
 
-    let row = prices::find_latest_on_or_before(
-        pool,
-        instrument_id,
-        MarketDataProvider::Yahoo,
-        as_of_date,
-    )
-    .await?;
-    Ok(match row {
-        Some(row) => PriceSnapshotState::available(
-            row.date,
-            row.close,
-            row.provider.to_string(),
-            row.provider_symbol,
-        ),
-        None => PriceSnapshotState::missing("missing_price"),
-    })
+    let candidate =
+        effective_prices::effective_latest_on_or_before(pool, instrument_id, as_of_date).await?;
+    let Some(candidate) = candidate else {
+        return Ok(PriceSnapshotState::missing("missing_price"));
+    };
+
+    let provider = candidate.source.as_str().to_owned();
+    let provider_symbol = sources
+        .iter()
+        .find(|source| source.provider.as_str() == provider)
+        .map(|source| source.provider_symbol.clone())
+        .unwrap_or_default();
+
+    Ok(PriceSnapshotState::available(
+        candidate.date.format("%Y-%m-%d").to_string(),
+        candidate.close.to_string(),
+        provider,
+        provider_symbol,
+    ))
+}
+
+/// Render the per-provider row split for the run message and the finished log.
+fn describe_provider_split(rows_by_provider: &[(MarketDataProvider, usize)]) -> String {
+    if rows_by_provider.is_empty() {
+        return "none".to_owned();
+    }
+    let mut entries = rows_by_provider.to_vec();
+    entries.sort_by_key(|(provider, _)| precedence_index(*provider).unwrap_or(usize::MAX));
+    entries
+        .into_iter()
+        .map(|(provider, rows)| format!("{provider}={rows}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn add_provider_rows(
+    rows_by_provider: &mut Vec<(MarketDataProvider, usize)>,
+    provider: MarketDataProvider,
+    rows: usize,
+) {
+    match rows_by_provider
+        .iter_mut()
+        .find(|(registered, _)| *registered == provider)
+    {
+        Some((_, total)) => *total += rows,
+        None => rows_by_provider.push((provider, rows)),
+    }
+}
+
+/// Detect a provider silently truncating requested history.
+///
+/// Nasdaq clamps to roughly ten years with no error and no warning, and a
+/// backfill cannot otherwise tell "no data" from "older than the provider keeps".
+/// This is a heuristic with benign false positives — a recently-listed
+/// instrument or a long holiday stretch trips it with no clamp involved — so it
+/// is warning-only and the reason must not be read as proof of a clamp.
+fn clamp_reason(
+    instrument: &crate::db::instruments::InstrumentRow,
+    source: &PriceSourceMapping,
+    provider_symbol: &str,
+    rows: &[crate::providers::DailyClose],
+    window: &RefreshWindow,
+    mode: RefreshMode,
+) -> Option<String> {
+    if mode != RefreshMode::Backfill || source.provider != MarketDataProvider::NasdaqNordic {
+        return None;
+    }
+    let earliest = rows.iter().map(|row| row.date).min()?;
+    if earliest - window.start <= Duration::days(HISTORY_CLAMP_TOLERANCE_DAYS) {
+        return None;
+    }
+
+    crate::engine_warn!(
+        "market data history clamped instrument_id={} provider={} orderbook_id={} requested_start={} actual_start={}",
+        instrument.id,
+        source.provider,
+        provider_symbol,
+        window.start,
+        earliest
+    );
+    Some("history_clamped".to_owned())
 }
 
 async fn latest_fx_snapshot(
@@ -1965,14 +2404,11 @@ mod tests {
         assert_eq!(status.instruments.len(), 1);
         assert_eq!(status.instruments[0].symbol, "WATCH");
         assert_eq!(status.instruments[0].open_quantity, 0);
-        assert!(status.instruments[0].mapping_enabled);
-        assert_eq!(
-            status.instruments[0]
-                .provider_symbol
-                .as_deref()
-                .expect("provider symbol"),
-            "WATCH"
-        );
+        let sources = &status.instruments[0].price_sources;
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].provider, "YAHOO");
+        assert_eq!(sources[0].provider_symbol, "WATCH");
+        assert!(sources[0].enabled);
     }
 
     #[tokio::test]
@@ -2629,5 +3065,644 @@ mod tests {
             .expect("task should complete")
             .expect("refresh should succeed");
         assert_eq!(completed.status, RefreshRunStatus::Succeeded);
+    }
+
+    // ----- Multi-provider refresh -------------------------------------------
+
+    fn nasdaq_search_match(
+        orderbook_id: &str,
+        currency: &str,
+        asset_class: &str,
+    ) -> SymbolSearchMatch {
+        SymbolSearchMatch {
+            provider: MarketDataProvider::NasdaqNordic,
+            provider_symbol: orderbook_id.to_owned(),
+            quote_type: None,
+            exchange: Some("Warrants".to_owned()),
+            name: Some("AVA SAMSUNG TRACKER".to_owned()),
+            asset_class: Some(asset_class.to_owned()),
+            currency: Some(currency.to_owned()),
+        }
+    }
+
+    fn nasdaq_close(orderbook_id: &str, day: u32, close: &str) -> DailyClose {
+        DailyClose {
+            provider: MarketDataProvider::NasdaqNordic,
+            provider_symbol: orderbook_id.to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, day).expect("date"),
+            close: close.parse().expect("close"),
+            currency: "SEK".to_owned(),
+        }
+    }
+
+    /// A service with Yahoo and Nasdaq registered as both price and search
+    /// providers, plus FX, so a run exercises the full dispatch.
+    fn multi_provider_service(
+        yahoo_price: FakePriceProvider,
+        yahoo_search: FakeSymbolSearchProvider,
+        nasdaq_price: FakePriceProvider,
+        nasdaq_search: FakeSymbolSearchProvider,
+        fx_provider: FakeFxRateProvider,
+    ) -> MarketDataService {
+        MarketDataService::with_provider_registry(
+            ProviderRegistry::new()
+                .with_price_provider(MarketDataProvider::Yahoo, yahoo_price)
+                .with_price_provider(MarketDataProvider::NasdaqNordic, nasdaq_price)
+                .with_symbol_search_provider(MarketDataProvider::Yahoo, yahoo_search)
+                .with_symbol_search_provider(MarketDataProvider::NasdaqNordic, nasdaq_search)
+                .with_fx_provider(fx_provider),
+        )
+    }
+
+    fn silent_fake_price() -> FakePriceProvider {
+        FakePriceProvider::with_provider(MarketDataProvider::Yahoo)
+    }
+
+    fn empty_search(provider: MarketDataProvider) -> FakeSymbolSearchProvider {
+        let search = FakeSymbolSearchProvider::with_provider(provider);
+        for _ in 0..8 {
+            search.push_response(Ok(Vec::new()));
+        }
+        search
+    }
+
+    async fn map_nasdaq_symbol(
+        pool: &SqlitePool,
+        instrument_id: i64,
+        orderbook_id: &str,
+        asset_class: &str,
+        currency: &str,
+        enabled: bool,
+    ) {
+        let now = now_iso8601();
+        provider_symbols::upsert(
+            pool,
+            &crate::db::provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: orderbook_id.to_owned(),
+                asset_class: Some(asset_class.to_owned()),
+                currency: Some(currency.to_owned()),
+                enabled,
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )
+        .await
+        .expect("nasdaq mapping upsert should succeed");
+    }
+
+    /// The reported defect: instrument 32's shape. Yahoo carries nothing, so the
+    /// instrument had no mapping, no prices and no valuation at all.
+    #[tokio::test]
+    async fn instrument_yahoo_cannot_price_is_valued_from_nasdaq() {
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![
+            nasdaq_close("TX2997672", 10, "123.30"),
+            nasdaq_close("TX2997672", 11, "124.10"),
+        ]));
+        let nasdaq_search =
+            FakeSymbolSearchProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_search.push_response(Ok(vec![nasdaq_search_match(
+            "TX2997672",
+            "SEK",
+            "TRACKER_CERTIFICATES",
+        )]));
+
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            nasdaq_search,
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let tracker =
+            instrument_with_isin(&pool, "JE00BJ7HNC92", "AVANZA", "SEK", "JE00BJ7HNC92").await;
+        buy(&pool, tracker, "2026-06-01", 10, "120", "SEK", None).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(response.status, RefreshRunStatus::Succeeded);
+        assert_eq!(response.unmapped_instruments, 0);
+        assert_eq!(response.prices_written, 2);
+        assert_eq!(response.items[0].provider.as_deref(), Some("NASDAQ_NORDIC"));
+
+        let mapping = provider_symbols::find_by_instrument_provider(
+            &pool,
+            tracker,
+            MarketDataProvider::NasdaqNordic,
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .expect("nasdaq mapping should exist");
+        assert!(mapping.enabled);
+        assert_eq!(mapping.provider_symbol, "TX2997672");
+        assert_eq!(mapping.asset_class.as_deref(), Some("TRACKER_CERTIFICATES"));
+        assert_eq!(mapping.currency.as_deref(), Some("SEK"));
+
+        let candidate = effective_prices::effective_latest_on_or_before(
+            &pool,
+            tracker,
+            NaiveDate::from_ymd_opt(2026, 6, 12).expect("date"),
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("a price should resolve");
+        assert_eq!(candidate.source.as_str(), "NASDAQ_NORDIC");
+        assert_eq!(candidate.close, dec!(124.10));
+    }
+
+    /// Instrument 38's shape: a disabled Yahoo mapping with stored rows in the
+    /// wrong currency. Those rows must never be promoted into valuation, and the
+    /// disabled mapping must not be switched back on.
+    #[tokio::test]
+    async fn disabled_yahoo_mapping_is_repaired_by_nasdaq_without_promoting_its_rows() {
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![nasdaq_close("TX271", 11, "1369.00")]));
+        let nasdaq_search =
+            FakeSymbolSearchProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_search.push_response(Ok(vec![nasdaq_search_match("TX271", "SEK", "SHARES")]));
+
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            nasdaq_search,
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let azn =
+            instrument_with_isin(&pool, "GB0009895292", "AVANZA", "SEK", "GB0009895292").await;
+        buy(&pool, azn, "2026-06-01", 10, "1300", "SEK", None).await;
+        map_yahoo_symbol(&pool, azn, "AZN.L", false).await;
+        prices::upsert(
+            &pool,
+            &prices::NewPrice {
+                instrument_id: azn,
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: "AZN.L".to_owned(),
+                date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+                close: dec!(110.00),
+                currency: "GBP".to_owned(),
+                fetched_at: now_iso8601(),
+            },
+        )
+        .await
+        .expect("stored yahoo row should insert");
+
+        service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        let yahoo =
+            provider_symbols::find_by_instrument_provider(&pool, azn, MarketDataProvider::Yahoo)
+                .await
+                .expect("mapping lookup should succeed")
+                .expect("yahoo mapping should still exist");
+        assert!(!yahoo.enabled, "a disabled mapping must not be re-enabled");
+
+        let candidate = effective_prices::effective_latest_on_or_before(
+            &pool,
+            azn,
+            NaiveDate::from_ymd_opt(2026, 6, 12).expect("date"),
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("a price should resolve");
+        assert_eq!(candidate.source.as_str(), "NASDAQ_NORDIC");
+        assert_eq!(candidate.close, dec!(1369.00));
+    }
+
+    #[tokio::test]
+    async fn two_same_currency_candidates_stay_unmapped_and_report_ambiguous() {
+        let nasdaq_search =
+            FakeSymbolSearchProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_search.push_response(Ok(vec![
+            nasdaq_search_match("TX69", "SEK", "SHARES"),
+            nasdaq_search_match("TX70", "SEK", "SHARES"),
+        ]));
+
+        let yahoo_price = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        yahoo_price.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "WORKS".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(50.00),
+            currency: "SEK".to_owned(),
+        }]));
+        let service = multi_provider_service(
+            yahoo_price,
+            empty_search(MarketDataProvider::Yahoo),
+            FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic),
+            nasdaq_search,
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        // A holding that prices normally, so the run is a realistic PARTIAL
+        // rather than the degenerate "nothing was written at all" case.
+        let works = instrument(&pool, "WORKS", "STO", "SEK").await;
+        buy(&pool, works, "2026-06-01", 10, "50", "SEK", None).await;
+        map_yahoo_symbol(&pool, works, "WORKS", true).await;
+        let ericsson =
+            instrument_with_isin(&pool, "SE0000108656", "AVANZA", "SEK", "SE0000108656").await;
+        buy(&pool, ericsson, "2026-06-01", 10, "80", "SEK", None).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should complete");
+
+        assert_eq!(response.status, RefreshRunStatus::Partial);
+        assert_eq!(response.unmapped_instruments, 1);
+        let ambiguous = response
+            .items
+            .iter()
+            .find(|item| item.instrument_id == Some(ericsson))
+            .expect("the ambiguous instrument should be reported");
+        assert_eq!(ambiguous.status, RefreshItemStatus::Ambiguous);
+        assert!(ambiguous
+            .reason
+            .as_deref()
+            .expect("reason")
+            .contains("TX69"));
+
+        assert!(provider_symbols::find_by_instrument_provider(
+            &pool,
+            ericsson,
+            MarketDataProvider::NasdaqNordic
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .is_none());
+    }
+
+    #[tokio::test]
+    async fn currency_narrowing_connects_the_matching_listing() {
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![nasdaq_close("TX69", 11, "78.20")]));
+        let nasdaq_search =
+            FakeSymbolSearchProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_search.push_response(Ok(vec![
+            nasdaq_search_match("TX50143", "EUR", "SHARES"),
+            nasdaq_search_match("TX69", "SEK", "SHARES"),
+        ]));
+
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            nasdaq_search,
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let ericsson =
+            instrument_with_isin(&pool, "SE0000108656", "AVANZA", "SEK", "SE0000108656").await;
+        buy(&pool, ericsson, "2026-06-01", 10, "80", "SEK", None).await;
+
+        service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        let mapping = provider_symbols::find_by_instrument_provider(
+            &pool,
+            ericsson,
+            MarketDataProvider::NasdaqNordic,
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .expect("nasdaq mapping should exist");
+        assert_eq!(mapping.provider_symbol, "TX69");
+        assert_eq!(mapping.currency.as_deref(), Some("SEK"));
+    }
+
+    /// Yahoo wins a shared date; Nasdaq fills the dates Yahoo does not cover.
+    #[tokio::test]
+    async fn per_date_precedence_prefers_yahoo_and_lets_nasdaq_fill_gaps() {
+        let yahoo_price = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        yahoo_price.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "ERIC-B.ST".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(78.00),
+            currency: "SEK".to_owned(),
+        }]));
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![
+            nasdaq_close("TX69", 11, "77.90"),
+            nasdaq_close("TX69", 12, "79.40"),
+        ]));
+
+        let service = multi_provider_service(
+            yahoo_price,
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let ericsson = instrument(&pool, "ERIC", "STO", "SEK").await;
+        buy(&pool, ericsson, "2026-06-01", 10, "80", "SEK", None).await;
+        map_yahoo_symbol(&pool, ericsson, "ERIC-B.ST", true).await;
+        map_nasdaq_symbol(&pool, ericsson, "TX69", "SHARES", "SEK", true).await;
+
+        service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+
+        let series = effective_prices::effective_series(&pool, ericsson, "SEK", None, None)
+            .await
+            .expect("series should resolve");
+        assert_eq!(series.len(), 2);
+        assert_eq!(series[0].source.as_str(), "YAHOO");
+        assert_eq!(series[0].close, dec!(78.00));
+        assert_eq!(series[1].source.as_str(), "NASDAQ_NORDIC");
+        assert_eq!(series[1].close, dec!(79.40));
+
+        let latest = effective_prices::effective_latest_on_or_before(
+            &pool,
+            ericsson,
+            NaiveDate::from_ymd_opt(2026, 6, 13).expect("date"),
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("a price should resolve");
+        assert_eq!(latest.source.as_str(), "NASDAQ_NORDIC");
+    }
+
+    /// PARTIAL must keep meaning "action needed": a Nasdaq-only instrument is
+    /// fully priced and must not inflate the unmapped counter.
+    #[tokio::test]
+    async fn partial_still_means_action_needed() {
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![nasdaq_close("TX69", 11, "78.20")]));
+
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let nordic = instrument(&pool, "ERIC", "STO", "SEK").await;
+        buy(&pool, nordic, "2026-06-01", 10, "80", "SEK", None).await;
+        map_nasdaq_symbol(&pool, nordic, "TX69", "SHARES", "SEK", true).await;
+
+        let succeeded = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should succeed");
+        assert_eq!(succeeded.status, RefreshRunStatus::Succeeded);
+        assert_eq!(succeeded.unmapped_instruments, 0);
+
+        let orphan = instrument(&pool, "NOFEED", "STO", "SEK").await;
+        buy(&pool, orphan, "2026-06-01", 10, "80", "SEK", None).await;
+
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![nasdaq_close("TX69", 11, "78.20")]));
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let partial = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should complete");
+        assert_eq!(partial.status, RefreshRunStatus::Partial);
+        assert_eq!(partial.unmapped_instruments, 1);
+    }
+
+    /// A provider outage is named rather than silently sliding into staleness,
+    /// and it does not stop the other sources from being written.
+    #[tokio::test]
+    async fn provider_outage_reports_unavailable_and_leaves_other_sources_intact() {
+        let yahoo_price = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        yahoo_price.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "ERIC-B.ST".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 6, 11).expect("date"),
+            close: dec!(78.00),
+            currency: "SEK".to_owned(),
+        }]));
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Err(ProviderError::transport(
+            MarketDataProvider::NasdaqNordic.as_str(),
+            "connection refused",
+        )));
+
+        let service = multi_provider_service(
+            yahoo_price,
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let ericsson = instrument(&pool, "ERIC", "STO", "SEK").await;
+        buy(&pool, ericsson, "2026-06-01", 10, "80", "SEK", None).await;
+        map_yahoo_symbol(&pool, ericsson, "ERIC-B.ST", true).await;
+        map_nasdaq_symbol(&pool, ericsson, "TX69", "SHARES", "SEK", true).await;
+        // A stored Nasdaq row from an earlier run: valuation must fall back to
+        // it with normal staleness rather than losing the holding.
+        prices::upsert(
+            &pool,
+            &prices::NewPrice {
+                instrument_id: ericsson,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: "TX69".to_owned(),
+                date: NaiveDate::from_ymd_opt(2026, 6, 5).expect("date"),
+                close: dec!(74.10),
+                currency: "SEK".to_owned(),
+                fetched_at: now_iso8601(),
+            },
+        )
+        .await
+        .expect("stored nasdaq row should insert");
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Manual,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Latest,
+                    start_date: None,
+                    end_date: None,
+                },
+            )
+            .await
+            .expect("refresh should complete");
+
+        let outage = response
+            .items
+            .iter()
+            .find(|item| item.status == RefreshItemStatus::Unavailable)
+            .expect("an unavailable item should be reported");
+        assert_eq!(outage.provider.as_deref(), Some("NASDAQ_NORDIC"));
+        assert_eq!(outage.reason.as_deref(), Some("provider_unavailable"));
+
+        assert_eq!(response.prices_written, 1);
+        let series = effective_prices::effective_series(&pool, ericsson, "SEK", None, None)
+            .await
+            .expect("series should resolve");
+        assert_eq!(series.len(), 2);
+        assert_eq!(series[0].source.as_str(), "NASDAQ_NORDIC");
+        assert_eq!(series[1].source.as_str(), "YAHOO");
+    }
+
+    #[tokio::test]
+    async fn backfill_reports_history_clamped_when_rows_start_well_after_the_window() {
+        let nasdaq_price = FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic);
+        nasdaq_price.push_response(Ok(vec![nasdaq_close("TX69", 11, "78.20")]));
+
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            nasdaq_price,
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let nordic = instrument(&pool, "ERIC", "STO", "SEK").await;
+        buy(&pool, nordic, "2016-01-04", 10, "80", "SEK", None).await;
+        map_nasdaq_symbol(&pool, nordic, "TX69", "SHARES", "SEK", true).await;
+
+        let response = service
+            .refresh(
+                &pool,
+                RefreshTrigger::Backfill,
+                RefreshPricesRequest {
+                    mode: RefreshMode::Backfill,
+                    start_date: None,
+                    end_date: Some("2026-06-12".to_owned()),
+                },
+            )
+            .await
+            .expect("backfill should complete");
+
+        let item = response
+            .items
+            .iter()
+            .find(|item| item.instrument_id == Some(nordic))
+            .expect("a price item should be reported");
+        assert_eq!(item.status, RefreshItemStatus::Fetched);
+        assert_eq!(item.reason.as_deref(), Some("history_clamped"));
+    }
+
+    #[tokio::test]
+    async fn price_status_lists_every_source_and_names_the_effective_one() {
+        let service = multi_provider_service(
+            silent_fake_price(),
+            empty_search(MarketDataProvider::Yahoo),
+            FakePriceProvider::with_provider(MarketDataProvider::NasdaqNordic),
+            empty_search(MarketDataProvider::NasdaqNordic),
+            FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+        );
+        let pool = db::memory_pool().await.expect("memory pool");
+        let azn = instrument(&pool, "AZN", "STO", "SEK").await;
+        buy(&pool, azn, "2026-06-01", 10, "1300", "SEK", None).await;
+        map_yahoo_symbol(&pool, azn, "AZN.L", false).await;
+        map_nasdaq_symbol(&pool, azn, "TX271", "SHARES", "SEK", true).await;
+        prices::upsert(
+            &pool,
+            &prices::NewPrice {
+                instrument_id: azn,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: "TX271".to_owned(),
+                date: Utc::now().date_naive(),
+                close: dec!(1369.00),
+                currency: "SEK".to_owned(),
+                fetched_at: now_iso8601(),
+            },
+        )
+        .await
+        .expect("nasdaq row should insert");
+
+        let status = service.status(&pool).await.expect("status should succeed");
+        let entry = &status.instruments[0];
+
+        assert_eq!(entry.price_sources.len(), 2);
+        assert_eq!(entry.price_sources[0].provider, "YAHOO");
+        assert!(!entry.price_sources[0].enabled);
+        assert_eq!(entry.price_sources[1].provider, "NASDAQ_NORDIC");
+        assert_eq!(
+            entry.price_sources[1].asset_class.as_deref(),
+            Some("SHARES")
+        );
+        assert!(entry.price_sources[1].enabled);
+
+        assert_eq!(
+            entry.effective_price_source.as_deref(),
+            Some("NASDAQ_NORDIC")
+        );
+        assert!(matches!(
+            entry.latest_price.status,
+            SnapshotStatus::Available
+        ));
     }
 }

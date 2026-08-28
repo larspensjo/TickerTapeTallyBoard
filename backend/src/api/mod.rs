@@ -199,6 +199,11 @@ mod tests {
             ),
             (
                 "PUT",
+                "/api/instruments/1/provider-symbols/NASDAQ_NORDIC",
+                json!({"provider_symbol":"TX2997672","asset_class":"SHARES","currency":"SEK","enabled":true}),
+            ),
+            (
+                "PUT",
                 "/api/instruments/1/conviction",
                 json!({"conviction":"Low"}),
             ),

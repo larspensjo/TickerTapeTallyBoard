@@ -27,7 +27,12 @@ pub struct DemoInstrument {
     pub kind: &'static str,
     pub currency: &'static str,
     pub isin: Option<&'static str>,
+    /// The feed this instrument is priced by, so demo exercises multi-source
+    /// resolution and the price-source label rather than only the Yahoo path.
+    pub provider: MarketDataProvider,
     pub provider_symbol: &'static str,
+    /// Required by Nasdaq Nordic on every price-history call; `None` for Yahoo.
+    pub asset_class: Option<&'static str>,
     /// Seeded conviction as the DB string (`OTHER`/`LOW`/`MEDIUM`/`HIGH`).
     /// Applied after upsert via the conviction repository so target indicators
     /// are visible in read-only demo mode.
@@ -120,9 +125,9 @@ async fn seed_for_date(
             pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: row.id,
-                provider: MarketDataProvider::Yahoo,
+                provider: instrument.provider,
                 provider_symbol: instrument.provider_symbol.to_owned(),
-                asset_class: None,
+                asset_class: instrument.asset_class.map(str::to_owned),
                 currency: Some(instrument.currency.to_owned()),
                 enabled: true,
                 created_at: fetched_at.clone(),
@@ -201,6 +206,8 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "STOCK",
             currency: "USD",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "NOVA",
             conviction: "HIGH",
         },
@@ -211,6 +218,8 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "STOCK",
             currency: "USD",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "HARV",
             conviction: "LOW",
         },
@@ -221,6 +230,8 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "STOCK",
             currency: "SEK",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "NORD.ST",
             conviction: "MEDIUM",
         },
@@ -231,6 +242,8 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "STOCK",
             currency: "SEK",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "SKOG.ST",
             conviction: "OTHER",
         },
@@ -241,6 +254,8 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "STOCK",
             currency: "EUR",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "ALBA.DE",
             conviction: "MEDIUM",
         },
@@ -251,14 +266,28 @@ fn instruments() -> Vec<DemoInstrument> {
             kind: "ETF",
             currency: "USD",
             isin: None,
+            provider: MarketDataProvider::Yahoo,
+            asset_class: None,
             provider_symbol: "GLBL",
             conviction: "HIGH",
+        },
+        DemoInstrument {
+            symbol: "VARV",
+            exchange: "AVANZA",
+            name: "Varvsgatan Industri",
+            kind: "STOCK",
+            currency: "SEK",
+            isin: Some("SE0009999901"),
+            provider: MarketDataProvider::NasdaqNordic,
+            asset_class: Some("SHARES"),
+            provider_symbol: "TX9001",
+            conviction: "MEDIUM",
         },
     ]
 }
 
 fn transactions(start_date: NaiveDate, instruments: &[DemoInstrument]) -> Vec<DemoTransaction> {
-    let specs: [Vec<TransactionSpec>; 6] = [
+    let specs: [Vec<TransactionSpec>; 7] = [
         vec![
             buy(20, 24, dec!(94.20)),
             dividend(118, dec!(0.42)),
@@ -303,6 +332,13 @@ fn transactions(start_date: NaiveDate, instruments: &[DemoInstrument]) -> Vec<De
             dividend(246, dec!(0.18)),
             buy(342, 20, dec!(53.65)),
             dividend(526, dec!(0.20)),
+        ],
+        vec![
+            buy(28, 14, dec!(246.30)),
+            dividend(163, dec!(3.10)),
+            buy(299, 9, dec!(249.80)),
+            dividend(418, dec!(3.25)),
+            dividend(531, dec!(3.40)),
         ],
     ];
 
@@ -358,7 +394,7 @@ fn prices(
                 let close = (base + drift + wave).round_dp(2).max(dec!(1.00));
                 let price = DemoPrice {
                     instrument_index,
-                    provider: MarketDataProvider::Yahoo,
+                    provider: instrument.provider,
                     provider_symbol: instrument.provider_symbol,
                     date,
                     close,
@@ -462,7 +498,7 @@ mod tests {
     fn dataset_contains_expected_instrument_shape() {
         let data = fixed_dataset();
 
-        assert_eq!(data.instruments.len(), 6);
+        assert_eq!(data.instruments.len(), 7);
         assert_eq!(
             data.instruments
                 .iter()
@@ -564,7 +600,7 @@ mod tests {
         let instruments = crate::db::instruments::list(&pool)
             .await
             .expect("instruments should list");
-        assert_eq!(instruments.len(), 6);
+        assert_eq!(instruments.len(), 7);
 
         for instrument in &instruments {
             let ledger = crate::db::transactions::ledger_for_instrument(&pool, instrument.id)
@@ -573,25 +609,35 @@ mod tests {
             assert!(ledger.len() >= 2);
             crate::domain::derive_position_performance(&ledger).expect("ledger should derive");
 
-            let latest_price = crate::db::prices::find_latest_on_or_before(
+            // Resolved across every source, not read off Yahoo: the demo set
+            // deliberately contains a Nasdaq-priced instrument.
+            let latest_price = crate::market_data::effective_prices::effective_latest_on_or_before(
                 &pool,
                 instrument.id,
-                PRICE_PROVIDER_PRECEDENCE[0],
                 today,
             )
             .await
             .expect("price lookup should succeed");
             assert!(latest_price.is_some());
 
-            let provider_symbol = crate::db::provider_symbols::find_by_instrument_provider(
-                &pool,
-                instrument.id,
-                PRICE_PROVIDER_PRECEDENCE[0],
-            )
-            .await
-            .expect("provider symbol lookup should succeed")
-            .expect("provider symbol should exist");
-            assert!(provider_symbol.enabled);
+            let sources =
+                crate::market_data::effective_prices::enabled_price_sources(&pool, instrument.id)
+                    .await
+                    .expect("price sources should load");
+            assert_eq!(sources.len(), 1);
+
+            // The demo set deliberately contains one Nasdaq-priced holding so
+            // the default configuration exercises multi-source resolution.
+            let expected_provider = if instrument.symbol == "VARV" {
+                PRICE_PROVIDER_PRECEDENCE[1]
+            } else {
+                PRICE_PROVIDER_PRECEDENCE[0]
+            };
+            assert_eq!(sources[0].provider, expected_provider);
+            assert_eq!(
+                latest_price.expect("price").source.as_str(),
+                expected_provider.as_str()
+            );
         }
 
         for currency in ["USD", "EUR"] {
@@ -627,7 +673,7 @@ mod tests {
                 .as_array()
                 .expect("holdings array")
                 .len(),
-            6
+            7
         );
         assert_no_missing_price_or_fx(&holdings);
         for holding in holdings["holdings"].as_array().expect("holdings array") {
@@ -639,7 +685,7 @@ mod tests {
         }
 
         let gains = get_json(&state, &format!("/api/gains?end_date={today}")).await;
-        assert_eq!(gains["rows"].as_array().expect("gains rows").len(), 6);
+        assert_eq!(gains["rows"].as_array().expect("gains rows").len(), 7);
         assert_no_missing_price_or_fx(&gains);
 
         let value_history = get_json(&state, "/api/portfolio/value-history").await;

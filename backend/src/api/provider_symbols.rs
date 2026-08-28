@@ -20,6 +20,9 @@ use crate::{
 pub struct UpdateProviderSymbolRequest {
     pub provider_symbol: String,
     pub currency: Option<String>,
+    /// Required for Nasdaq Nordic, which needs it on every price-history call.
+    /// Omitted on an update, the stored asset class is preserved.
+    pub asset_class: Option<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -30,6 +33,7 @@ pub struct ProviderSymbolResponse {
     pub instrument_id: i64,
     pub provider: String,
     pub provider_symbol: String,
+    pub asset_class: Option<String>,
     pub currency: Option<String>,
     pub enabled: bool,
     pub created_at: String,
@@ -43,6 +47,7 @@ impl From<ProviderSymbolRow> for ProviderSymbolResponse {
             instrument_id: row.instrument_id,
             provider: row.provider.to_string(),
             provider_symbol: row.provider_symbol,
+            asset_class: row.asset_class,
             currency: row.currency,
             enabled: row.enabled,
             created_at: row.created_at,
@@ -80,10 +85,30 @@ pub async fn update(
             "provider_symbol is required",
         ));
     }
+    let existing =
+        provider_symbols::find_by_instrument_provider(&state.pool, instrument_id, provider).await?;
     let asset_class =
-        provider_symbols::find_by_instrument_provider(&state.pool, instrument_id, provider)
-            .await?
-            .and_then(|row| row.asset_class);
+        trimmed(body.asset_class).or_else(|| existing.and_then(|row| row.asset_class));
+    let currency = trimmed(body.currency);
+
+    // Nasdaq needs both to be fetchable at all: the asset class is a required
+    // query parameter, and the price-history payload carries no currency, so the
+    // mapping's currency is the only thing that can stamp the stored rows.
+    if provider == MarketDataProvider::NasdaqNordic {
+        if asset_class.is_none() {
+            return Err(ApiError::bad_request(
+                "missing_asset_class",
+                "asset_class is required for NASDAQ_NORDIC mappings",
+            ));
+        }
+        if currency.is_none() {
+            return Err(ApiError::bad_request(
+                "missing_source_currency",
+                "currency is required for NASDAQ_NORDIC mappings",
+            ));
+        }
+    }
+
     let now = now_iso8601();
     let row = provider_symbols::upsert(
         &state.pool,
@@ -92,7 +117,7 @@ pub async fn update(
             provider,
             provider_symbol,
             asset_class,
-            currency: body.currency.map(|value| value.trim().to_owned()),
+            currency,
             enabled: body.enabled,
             created_at: now.clone(),
             updated_at: now,
@@ -105,6 +130,12 @@ pub async fn update(
 
 fn default_enabled() -> bool {
     true
+}
+
+fn trimmed(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]
@@ -282,5 +313,85 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "invalid_provider_symbol");
+    }
+
+    #[tokio::test]
+    async fn nasdaq_mapping_round_trips_asset_class() {
+        let state = AppState::with_market_data(
+            db::memory_pool().await.expect("memory pool"),
+            MarketDataService::with_providers(FakePriceProvider::new(), FakeFxRateProvider::new()),
+        );
+        let instrument_id = instrument(&state.pool).await;
+
+        let (status, body) = send(
+            &state,
+            "PUT",
+            &format!("/api/instruments/{instrument_id}/provider-symbols/NASDAQ_NORDIC"),
+            json!({
+                "provider_symbol": "TX2997672",
+                "asset_class": "TRACKER_CERTIFICATES",
+                "currency": "SEK",
+                "enabled": true
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["provider"], "NASDAQ_NORDIC");
+        assert_eq!(body["provider_symbol"], "TX2997672");
+        assert_eq!(body["asset_class"], "TRACKER_CERTIFICATES");
+        assert_eq!(body["currency"], "SEK");
+
+        let row = provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            instrument_id,
+            MarketDataProvider::NasdaqNordic,
+        )
+        .await
+        .expect("lookup should succeed")
+        .expect("row should exist");
+        assert_eq!(row.asset_class.as_deref(), Some("TRACKER_CERTIFICATES"));
+        assert_eq!(row.currency.as_deref(), Some("SEK"));
+    }
+
+    /// Nasdaq cannot fetch without either field, so both are rejected before a
+    /// write rather than stored as an unfetchable mapping.
+    #[tokio::test]
+    async fn nasdaq_mapping_requires_asset_class_and_currency() {
+        let state = AppState::with_market_data(
+            db::memory_pool().await.expect("memory pool"),
+            MarketDataService::with_providers(FakePriceProvider::new(), FakeFxRateProvider::new()),
+        );
+        let instrument_id = instrument(&state.pool).await;
+        let uri = format!("/api/instruments/{instrument_id}/provider-symbols/NASDAQ_NORDIC");
+
+        let (status, body) = send(
+            &state,
+            "PUT",
+            &uri,
+            json!({"provider_symbol": "TX2997672", "currency": "SEK"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "missing_asset_class");
+
+        let (status, body) = send(
+            &state,
+            "PUT",
+            &uri,
+            json!({"provider_symbol": "TX2997672", "asset_class": "SHARES"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "missing_source_currency");
+
+        assert!(provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            instrument_id,
+            MarketDataProvider::NasdaqNordic,
+        )
+        .await
+        .expect("lookup should succeed")
+        .is_none());
     }
 }

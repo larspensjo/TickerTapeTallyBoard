@@ -100,6 +100,10 @@ pub enum ProviderMissingReason {
     RateLimited,
     ProviderError,
     NoDataInRange,
+    /// The provider could not be reached at all: a transport failure or a 5xx.
+    /// Distinct from `ProviderError`, which means the provider answered badly
+    /// (a malformed body, an unparsable field, a typed error envelope).
+    ProviderUnavailable,
 }
 
 impl ProviderMissingReason {
@@ -111,6 +115,7 @@ impl ProviderMissingReason {
             Self::RateLimited => "rate_limited",
             Self::ProviderError => "provider_error",
             Self::NoDataInRange => "no_data_in_range",
+            Self::ProviderUnavailable => "provider_unavailable",
         }
     }
 }
@@ -194,6 +199,16 @@ impl ProviderError {
     #[allow(clippy::self_named_constructors)]
     pub fn provider_error(provider: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(provider, ProviderMissingReason::ProviderError, message)
+    }
+
+    /// The provider was never reached: connect, TLS, timeout or body-read
+    /// failure. Callers use this to report an outage rather than a bad answer.
+    pub fn transport(provider: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(
+            provider,
+            ProviderMissingReason::ProviderUnavailable,
+            message,
+        )
     }
 
     pub fn with_http_status(
@@ -502,6 +517,7 @@ fn status_to_reason(status: u16) -> ProviderMissingReason {
     match status {
         404 => ProviderMissingReason::NotListed,
         429 => ProviderMissingReason::RateLimited,
+        500..=599 => ProviderMissingReason::ProviderUnavailable,
         _ => ProviderMissingReason::ProviderError,
     }
 }

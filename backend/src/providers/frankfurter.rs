@@ -136,7 +136,7 @@ impl super::FxRateProvider for FrankfurterClient {
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     FxProvider::Frankfurter.as_str(),
                     format!("failed to request Frankfurter rates for {base}/{quote}: {error}"),
                 );
@@ -149,7 +149,7 @@ impl super::FxRateProvider for FrankfurterClient {
         let body = match response.text().await {
             Ok(body) => body,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     FxProvider::Frankfurter.as_str(),
                     format!("failed to read Frankfurter response for {base}/{quote}: {error}"),
                 );

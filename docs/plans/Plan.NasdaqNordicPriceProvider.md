@@ -8,13 +8,31 @@ hand entry, and rebuild the price read path around *several* sources resolved
 per date instead of one hardcoded `"YAHOO"` string.
 
 Done means: instrument 32 "AVA SAMSUNG TRACKER" (ISIN `JE00BJ7HNC92`, SEK,
-exchange `AVANZA`), its five sibling AVA trackers (`JE00BLH0QR80`,
+exchange `AVANZA`) shows real market values, gains and price charts; every
+holding that works today keeps working; and the portfolio-level movement caused
+by newly-valued instruments is measured and explained rather than assumed away.
+
+**Corrected against the real ledger during the multi-provider refresh work.**
+This section originally also named five sibling AVA trackers (`JE00BLH0QR80`,
 `JE00BJ7H8575`, `JE00BM8DHK30`, `JE00BL4PPM48`, `JE00BLH0LQ29`) and instrument 38
-AstraZeneca (`GB0009895292`, SEK, whose `AZN.L` Yahoo mapping the refresh
-auto-disabled on a GBP/SEK currency mismatch) all show real market values,
-gains and price charts; every holding that works today keeps working; and the
-portfolio-level movement caused by six instruments entering valuation is
-measured and explained rather than assumed away.
+AstraZeneca, and budgeted for "six instruments entering valuation". Neither
+holds:
+
+- **The five siblings are not in the database.** No row matches those ISINs
+  under either `instruments.isin` or `instruments.symbol`.
+- **Instrument 38 has zero transactions** and conviction `OTHER`, so it has no
+  position to value. Both refresh modes skip it by design — `Latest` skips a
+  zero quantity without a Low/Medium/High conviction, `Backfill` skips anything
+  with no transaction history — so it is auto-connected but never fetched. That
+  is correct pre-existing target selection, not a defect. Giving it a
+  Low/Medium/High conviction would make it a `Latest` target via the existing
+  convicted-never-traded path; buying it would make it one anyway.
+
+So exactly **one** instrument enters valuation, which materially shrinks the
+aggregate movement the backfill phase sets out to measure. The AstraZeneca
+*repair path* — auto-connect Nasdaq for an instrument whose Yahoo mapping was
+disabled on a currency mismatch, without re-enabling that mapping — is still
+built, still covered by tests, and did run correctly against the real database.
 
 **Out of scope:** hand-entered prices (`docs/plans/Plan.HandEnteredPrices.md`
 stays shelved and unbuilt), any third provider, the day-change adjacency/FX
@@ -738,6 +756,47 @@ Verify:
 
 ### Phase 3 — Multi-provider refresh: dispatch, auto-connect, honest reporting
 
+**Status: DONE**, including the external human testing. Backend sequence green
+(450 unit + 53 integration tests, clippy clean under `-D warnings`,
+`cargo fmt --check` clean). Backend version bumped to 0.15.0.
+
+Live run against the real ledger (`.local/db/tttb-ledger-test.sqlite`):
+
+- Launch refresh (run 303) finished `SUCCEEDED` with `unmapped=0` and
+  `by_provider=[YAHOO=211 NASDAQ_NORDIC=10]`. The two runs before it (301, 302)
+  finished `PARTIAL` with `unmapped=1` — that was instrument 32. The reported
+  defect is closed.
+- Backfill (run 304) finished `SUCCEEDED`, `failed=0`, `unmapped=0`,
+  `by_provider=[YAHOO=10214 NASDAQ_NORDIC=304]`.
+- Instrument 32 auto-connected to `TX2997672` / `TRACKER_CERTIFICATES` / SEK and
+  now holds 304 Nasdaq rows spanning 2025-06-12..2026-08-27, rendering a full
+  price-history chart.
+- Instrument 38 auto-connected to `TX271` / `SHARES` / SEK with its `AZN.L`
+  mapping still present and still disabled — the repair path behaved exactly as
+  designed. It has no price rows because it is never a refresh target; see the
+  correction in *Summary*.
+- No `history_clamped` and no currency-mismatch disable fired on the real data.
+
+Only two instruments carry a Nasdaq mapping, which is the complete correct
+answer for this database — see the *Summary* correction.
+
+Three things differ from this section as originally written:
+
+- The reporting prerequisite landed as `ProviderMissingReason::ProviderUnavailable`
+  plus a `ProviderError::transport` constructor, applied at every `send()` /
+  `text()` failure in Yahoo, Nasdaq **and Frankfurter** (the plan named only the
+  first two; an FX outage deserves the same honesty), and `status_to_reason` now
+  maps 5xx to it. A malformed body still maps to `ProviderError`, so a schema
+  change is not misreported as an outage.
+- **The per-provider row split is a `Vec`, not a `BTreeMap`**, for the same
+  reason the provider registries are: keying a map by `MarketDataProvider` would
+  require deriving `Ord`, which would make precedence incidental to variant
+  declaration order.
+- The ambiguity test asserts PARTIAL against a portfolio that also contains a
+  working holding. With an ambiguous instrument as the *only* target, nothing is
+  written at all and the pre-existing run-status rule returns FAILED, not
+  PARTIAL — correct, but not the case the plan is about.
+
 This is where the feature lands on the backend: after this phase the six
 instruments have stored prices and are valued.
 
@@ -953,9 +1012,11 @@ aggregates, so "nothing else changed" must be checked, not asserted.
    of `market_value_base`, `total_return_base` and the value-history points.
    This is the tool the verification obligation needs, and it stays useful for
    every future change to the valuation read path.
-2. Capture **before**: run it against the real database prior to any Nasdaq
-   backfill.
-3. Run a `Backfill` refresh against the real database. Depth is the portfolio's
+2. Capture **before**: the backfill has already run, so this capture must come
+   from the pre-backfill database backup rather than from the live file.
+3. ~~Run a `Backfill` refresh against the real database.~~ **Already done** (run
+   304). Recorded here because the behavior it describes still holds. Depth is
+   the portfolio's
    earliest transaction date via the existing `refresh_window` /
    `earliest_transaction_date` path — unchanged behavior. Where that predates
    Nasdaq's ~10-year clamp, the instrument gets history from the clamp forward
@@ -969,8 +1030,15 @@ aggregates, so "nothing else changed" must be checked, not asserted.
    fresh or demo database — pass an explicit `start_date` there.
 4. Capture **after** and diff.
 
+**Scope correction:** the backfill has already been run (Phase 3's live
+verification, run 304). Exactly **one** instrument entered valuation, not six —
+see the *Summary* correction. The before/after capture described below was not
+taken, so the "prove nothing else moved" obligation is still open even though the
+backfill itself is done; the pre-backfill state is recoverable from the database
+backup taken before the run.
+
 Expected and acceptable movement, to be confirmed rather than assumed:
-- The six instruments gain market value, unrealized gain and portfolio weight.
+- Instrument 32 gains market value, unrealized gain and portfolio weight.
 - Every other holding's *portfolio weight* and *conviction target* changes,
   because the denominator and the target pool grew.
 - The dashboard value line, the net-invested-capital gap, XIRR / Modified Dietz
@@ -1170,7 +1238,9 @@ not a silent addition.
   in Phase 6 rather than asserted.
 - **Newly-valued instruments enter the conviction target pool and the rebalance
   ladder**, changing every other holding's target weight (2026-07-06 /
-  2026-07-07). Intended.
+  2026-07-07). Intended. In the real ledger this turned out to be one
+  instrument, not six, so the movement is correspondingly smaller — see the
+  *Summary* correction.
 - **Dropping the CHECK constraints removes a database-level invariant.** It is
   replaced by enum-typed repository signatures plus a decode error on unknown
   stored codes. If the typing work is descoped, the invariant is simply gone —
@@ -1201,11 +1271,11 @@ Surface these before resolving them silently during implementation.
    there is no working mapping", so mixed-source series arise only from a
    deliberate hand mapping. Confirm this is the intent — the machinery supports
    the other choice with no code change beyond the seeding condition.
-2. **Should AstraZeneca's disabled `AZN.L` Yahoo mapping be kept or deleted?**
-   The plan keeps it (disabled rows are never promoted, and the record of why it
-   was disabled is useful), which means the Data & mapping panel will list two
-   sources for that instrument, one greyed out. Deleting it would be tidier but
-   would lose that history and let a future refresh re-seed it.
+2. ~~**Should AstraZeneca's disabled `AZN.L` Yahoo mapping be kept or
+   deleted?**~~ **Settled by the live run:** kept. The instrument now carries
+   both sources, `AZN.L` disabled and `TX271` enabled, and the refresh did not
+   re-enable the disabled one. Because the instrument has no transactions it is
+   never fetched, so the two-source listing is the only visible consequence.
 3. **How should an instrument whose transactions predate Nasdaq's ~10-year clamp
    be presented?** The plan reports `history_clamped` on the refresh item and
    lets the existing `incomplete` / `excluded_count` machinery handle the

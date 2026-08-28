@@ -229,7 +229,7 @@ impl super::SymbolSearchProvider for YahooSearchClient {
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::Yahoo.as_str(),
                     format!("failed to request Yahoo symbol search for {query}: {error}"),
                 );
@@ -242,7 +242,7 @@ impl super::SymbolSearchProvider for YahooSearchClient {
         let body = match response.text().await {
             Ok(body) => body,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::Yahoo.as_str(),
                     format!("failed to read Yahoo symbol search response for {query}: {error}"),
                 );
@@ -282,7 +282,7 @@ impl super::PriceProvider for YahooChartClient {
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::Yahoo.as_str(),
                     format!("failed to request Yahoo chart data for {symbol}: {error}"),
                 );
@@ -295,7 +295,7 @@ impl super::PriceProvider for YahooChartClient {
         let body = match response.text().await {
             Ok(body) => body,
             Err(error) => {
-                let error = ProviderError::provider_error(
+                let error = ProviderError::transport(
                     MarketDataProvider::Yahoo.as_str(),
                     format!("failed to read Yahoo chart response for {symbol}: {error}"),
                 );
