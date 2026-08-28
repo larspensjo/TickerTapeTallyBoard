@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GainsRow, PriceStatusInstrument } from "../api/types";
 import {
   effectivePriceSourceRow,
+  instrumentLookupMatchLabel,
   priceAvailabilityLabel,
   priceSourceLabel,
   priceSourceRows,
@@ -75,6 +76,36 @@ describe("priceSourceLabel", () => {
 
   it("prettifies an unknown source code", () => {
     expect(priceSourceLabel("SOME_NEW_PROVIDER")).toBe("Some New Provider");
+  });
+});
+
+describe("instrumentLookupMatchLabel", () => {
+  it("renders the provider, symbol, asset class and currency", () => {
+    expect(
+      instrumentLookupMatchLabel({
+        provider: "NASDAQ_NORDIC",
+        provider_symbol: "TX2997672",
+        quote_type: null,
+        exchange: "Warrants",
+        name: "AVA SAMSUNG TRACKER",
+        asset_class: "TRACKER_CERTIFICATES",
+        currency: "SEK",
+      }),
+    ).toBe("Nasdaq Nordic · TX2997672 · TRACKER_CERTIFICATES · SEK");
+  });
+
+  it("omits absent parts", () => {
+    expect(
+      instrumentLookupMatchLabel({
+        provider: "YAHOO",
+        provider_symbol: "MSFT",
+        quote_type: "EQUITY",
+        exchange: "NMS",
+        name: "Microsoft Corporation",
+        asset_class: null,
+        currency: null,
+      }),
+    ).toBe("Yahoo · MSFT");
   });
 });
 

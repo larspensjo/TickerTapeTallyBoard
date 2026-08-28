@@ -6,9 +6,11 @@ import type {
   InstrumentType,
   PriceStatusResponse,
 } from "../api/types";
+import { instrumentLookupMatchLabel } from "./priceSourceViewModel";
 
 const DEFAULT_PRICE_MAPPING_NOTE =
   "No price mapping yet - configure provider symbol.";
+const PROVIDER_MATCH_NOTE_PREFIX = "Provider match: ";
 const PROVIDER_UNAVAILABLE_WARNING =
   "Could not verify instrument - provider unavailable.";
 
@@ -91,6 +93,7 @@ export interface InstrumentLookupGuard {
   allowCreate: boolean;
   warning: string | null;
   error: string | null;
+  sourceNote: string | null;
 }
 
 export function guardInstrumentLookup(
@@ -101,6 +104,7 @@ export function guardInstrumentLookup(
       allowCreate: true,
       warning: PROVIDER_UNAVAILABLE_WARNING,
       error: null,
+      sourceNote: null,
     };
   }
 
@@ -109,10 +113,19 @@ export function guardInstrumentLookup(
       allowCreate: false,
       warning: null,
       error: "No suitable provider match was found for this instrument.",
+      sourceNote: null,
     };
   }
 
-  return { allowCreate: true, warning: null, error: null };
+  return {
+    allowCreate: true,
+    warning: null,
+    error: null,
+    sourceNote:
+      response.matches.length > 0
+        ? `${PROVIDER_MATCH_NOTE_PREFIX}${instrumentLookupMatchLabel(response.matches[0])}.`
+        : null,
+  };
 }
 
 export function revealAddInstrumentIntent(
@@ -155,12 +168,16 @@ export function instrumentPriceMappingNote(
 
 export function buildSubmissionMessages(args: {
   lookupWarning: string | null;
+  sourceNote: string | null;
   upsertStatus: number;
   priceMappingNote: string | null;
 }): string[] {
   const messages: string[] = [];
   if (args.lookupWarning) {
     messages.push(args.lookupWarning);
+  }
+  if (args.sourceNote) {
+    messages.push(args.sourceNote);
   }
   if (args.upsertStatus === 200) {
     messages.push("Instrument already exists.");
@@ -264,6 +281,7 @@ export function AddInstrumentDialog({
       }
       const messages = buildSubmissionMessages({
         lookupWarning: lookup.warning,
+        sourceNote: lookup.sourceNote,
         upsertStatus: result.status,
         priceMappingNote,
       });

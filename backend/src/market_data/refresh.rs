@@ -8,6 +8,7 @@ use std::{
 };
 
 use chrono::{Duration, NaiveDate, Utc};
+use futures::future::join_all;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
@@ -415,41 +416,78 @@ impl MarketDataService {
 
     pub async fn lookup_symbol_search(&self, query: &str) -> SymbolSearchLookupResponse {
         let query = query.trim().to_owned();
-        let Some(provider) = self
-            .inner
-            .symbol_search_providers
-            .first()
-            .map(|(_, client)| Arc::clone(client))
-        else {
-            crate::engine_info!("instrument lookup provider unavailable query={query}");
-            return SymbolSearchLookupResponse::provider_unavailable(query);
-        };
+        let search_results = join_all(self.inner.symbol_search_providers.iter().map(
+            |(provider, client)| {
+                let query = &query;
+                async move { (*provider, client.search(query).await) }
+            },
+        ))
+        .await;
+        let providers_tried = search_results.len();
+        let mut providers_failed = 0;
 
-        let matches = match provider.search(&query).await {
-            Ok(matches) => matches,
-            Err(error) => {
-                crate::engine_warn!(
-                    "instrument lookup provider search failed query={} reason={} message={}",
-                    query,
-                    error.reason_code(),
-                    error.message()
-                );
-                return SymbolSearchLookupResponse::provider_unavailable(query);
+        let mut reachable_provider = false;
+        let mut supported_matches = Vec::new();
+        for (provider, result) in search_results {
+            match result {
+                Ok(matches) => {
+                    reachable_provider = true;
+                    for item in matches.into_iter().filter(is_supported_quote) {
+                        if !supported_matches
+                            .iter()
+                            .any(|existing: &SymbolSearchMatch| {
+                                existing.provider == item.provider
+                                    && existing.provider_symbol == item.provider_symbol
+                            })
+                        {
+                            supported_matches.push(item);
+                        }
+                    }
+                }
+                Err(error) => {
+                    providers_failed += 1;
+                    crate::engine_warn!(
+                        "instrument lookup provider search failed provider={} query={} reason={} message={}",
+                        provider,
+                        query,
+                        error.reason_code(),
+                        error.message()
+                    );
+                }
             }
-        };
+        }
 
-        let supported_matches = matches
+        let supported_matches = supported_matches
             .into_iter()
-            .filter(is_supported_quote)
             .map(SymbolSearchLookupMatch::from)
             .collect::<Vec<_>>();
 
-        if supported_matches.is_empty() {
-            crate::engine_info!("instrument lookup returned no supported match query={query}");
-            SymbolSearchLookupResponse::no_match(query)
+        let (status, response) = if !supported_matches.is_empty() {
+            (
+                "matches",
+                SymbolSearchLookupResponse::matches(query.clone(), supported_matches),
+            )
+        } else if reachable_provider {
+            (
+                "no_match",
+                SymbolSearchLookupResponse::no_match(query.clone()),
+            )
         } else {
-            SymbolSearchLookupResponse::matches(query, supported_matches)
-        }
+            (
+                "provider_unavailable",
+                SymbolSearchLookupResponse::provider_unavailable(query.clone()),
+            )
+        };
+
+        crate::engine_info!(
+            "instrument lookup merged outcome query={} status={} matches={} providers_tried={} providers_failed={}",
+            query,
+            status,
+            response.matches.len(),
+            providers_tried,
+            providers_failed
+        );
+        response
     }
 
     async fn running_response(
@@ -1445,6 +1483,8 @@ pub struct SymbolSearchLookupMatch {
     pub quote_type: Option<String>,
     pub exchange: Option<String>,
     pub name: Option<String>,
+    pub asset_class: Option<String>,
+    pub currency: Option<String>,
 }
 
 impl From<SymbolSearchMatch> for SymbolSearchLookupMatch {
@@ -1455,6 +1495,8 @@ impl From<SymbolSearchMatch> for SymbolSearchLookupMatch {
             quote_type: value.quote_type,
             exchange: value.exchange,
             name: value.name,
+            asset_class: value.asset_class,
+            currency: value.currency,
         }
     }
 }

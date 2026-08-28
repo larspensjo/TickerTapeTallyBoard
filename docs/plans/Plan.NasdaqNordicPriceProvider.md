@@ -964,6 +964,29 @@ Verify:
 
 ### Phase 5 — Add-instrument lookup consults every provider
 
+**Status: DONE**, apart from the external human testing below. Backend sequence
+green (455 unit + 53 integration tests, clippy clean under `-D warnings`,
+`cargo fmt --check` clean); frontend sequence green (`npm run check`: tsc clean,
+Biome 77 files, 28 test files / 288 tests). Three things were settled during
+implementation and review and should not be reopened:
+
+- **The blocking `no_match` rule stands as written.** Review argued that when
+  one provider errors and another is reachable but returns nothing, the status
+  should degrade to `provider_unavailable` so an outage cannot refuse creation
+  of instruments the surviving provider could never have listed. Rejected: the
+  rule is unchanged, so a search outage does block those creations, with the
+  hard-refuse message and no override affordance. Accepted deliberately.
+- **The lookup result is named only in the post-create confirmation.** A
+  pre-save "Check" affordance rendering all matches was considered and rejected
+  as scope; so was carrying the new fields with nothing rendering them. The note
+  reads `Provider match: <source> · <identifier> · <asset class> · <currency>.`
+  and deliberately does *not* claim to name the effective price source: it
+  describes `matches[0]`, which auto-connect need not choose, and it is shown
+  before any mapping exists.
+- **`futures` is now a direct backend dependency**, for `join_all` in the
+  lookup fan-out. Searching providers sequentially would have added a second
+  provider timeout (~20 s) to the add-instrument wait during an outage.
+
 Without this, adding a seventh AVA tracker by ISIN still shows "No suitable
 provider match was found for this instrument", which is now untrue.
 
@@ -1165,6 +1188,19 @@ Verify:
    dispatch": dispatch is now provider-plural, and the demo seed deliberately
    includes a Nasdaq-priced instrument so demo exercises multi-source
    resolution. Demo remains ephemeral, read-only and offline.
+8. **Refines 2026-07-08's** lookup-guard clause that "`provider_unavailable`
+   allows creation with a warning" for instrument creation. The guard now
+   consults every registered search provider and merges their supported matches
+   in precedence order, so the two statuses mean something narrower than they
+   did with one provider: `provider_unavailable` — and therefore
+   allow-with-warning — requires that **no** provider was reachable, while a
+   single reachable provider answering "not found" produces the blocking
+   `no_match` even if every other provider was down. The consequence is
+   deliberate and belongs in the entry: during a search outage, creation is
+   refused for instruments the one reachable provider does not list, with a
+   message that reads as "wrong symbol" rather than "could not verify", and
+   there is no UI override. The rest of that entry — lookup validation stays
+   read-only, `POST /api/instruments` stays a pure DB mutation — stands.
 
 ## Documents to update
 
@@ -1174,7 +1210,7 @@ Verify:
 | `docs/Design.HighLevel.md` (market-data section) | **the hand-mapping workflow for ambiguous instruments** — endpoint, body fields, where to read the orderbook id and asset class, and the fact that ambiguity surfaces only in the log or the raw refresh response. This is the "documented workaround" decision 6 depends on; without it the workflow is curl-only and undiscoverable | 7 |
 | `docs/CurrencyAndFxRules.md` | a Nasdaq price row's currency comes from its mapping | 7 |
 | `docs/DecisionLog.md` | seven entries (see above) — **proposals only; deliberately not written until implementation** | 7 |
-| `backend/Cargo.toml`, `frontend/package.json` (+ lock) | version bumps | 7 |
+| `backend/Cargo.toml`, `frontend/package.json` (+ lock) | version bumps — **done per phase, not deferred**: each phase bumps whichever side it changed, matching what the earlier phase commits actually did | each |
 
 No `docs/VisualDesign.DarkTheme.md` change is expected — the price-source rows
 reuse the existing `status-chip` and `data-value` classes under the chip and

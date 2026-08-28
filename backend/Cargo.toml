@@ -1,6 +1,6 @@
 [package]
 name = "ticker-tape-tally-board-backend"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,7 @@ chrono = { version = "0.4", default-features = false, features = [
   "clock",
 ] }
 csv = "1"
+futures = "0.3"
 log = "0.4.33"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "json",

@@ -106,6 +106,8 @@ export interface InstrumentLookupMatch {
   quote_type: string | null;
   exchange: string | null;
   name: string | null;
+  asset_class: string | null;
+  currency: string | null;
 }
 
 export interface InstrumentLookupResponse {

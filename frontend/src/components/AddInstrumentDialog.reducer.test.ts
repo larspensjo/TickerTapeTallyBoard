@@ -76,6 +76,7 @@ describe("instrument lookup guard", () => {
       allowCreate: false,
       warning: null,
       error: "No suitable provider match was found for this instrument.",
+      sourceNote: null,
     });
 
     expect(
@@ -88,6 +89,48 @@ describe("instrument lookup guard", () => {
       allowCreate: true,
       warning: "Could not verify instrument - provider unavailable.",
       error: null,
+      sourceNote: null,
+    });
+  });
+
+  it("allows matches and names the highest-precedence source", () => {
+    expect(
+      guardInstrumentLookup({
+        query: "JE00BJ7HNC92",
+        status: "matches",
+        matches: [
+          {
+            provider: "NASDAQ_NORDIC",
+            provider_symbol: "TX2997672",
+            quote_type: null,
+            exchange: "Warrants",
+            name: "AVA SAMSUNG TRACKER",
+            asset_class: "TRACKER_CERTIFICATES",
+            currency: "SEK",
+          },
+        ],
+      }),
+    ).toEqual({
+      allowCreate: true,
+      warning: null,
+      error: null,
+      sourceNote:
+        "Provider match: Nasdaq Nordic · TX2997672 · TRACKER_CERTIFICATES · SEK.",
+    });
+  });
+
+  it("allows a matches response with no entries and omits the source note", () => {
+    expect(
+      guardInstrumentLookup({
+        query: "MSFT",
+        status: "matches",
+        matches: [],
+      }),
+    ).toEqual({
+      allowCreate: true,
+      warning: null,
+      error: null,
+      sourceNote: null,
     });
   });
 });
@@ -109,11 +152,13 @@ describe("submission feedback", () => {
     expect(
       buildSubmissionMessages({
         lookupWarning: "Could not verify instrument - provider unavailable.",
+        sourceNote: "Provider match: Nasdaq Nordic · TX2997672 · SEK.",
         upsertStatus: 200,
         priceMappingNote: "No price mapping yet - configure provider symbol.",
       }),
     ).toEqual([
       "Could not verify instrument - provider unavailable.",
+      "Provider match: Nasdaq Nordic · TX2997672 · SEK.",
       "Instrument already exists.",
       "No price mapping yet - configure provider symbol.",
     ]);

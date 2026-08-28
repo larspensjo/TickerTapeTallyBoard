@@ -1,4 +1,8 @@
-import type { GainsRow, PriceStatusInstrument } from "../api/types";
+import type {
+  GainsRow,
+  InstrumentLookupMatch,
+  PriceStatusInstrument,
+} from "../api/types";
 
 type PriceSourceGain = Pick<GainsRow, "latest_price">;
 
@@ -27,6 +31,19 @@ export function priceSourceLabel(code: string): string {
         .map((part) => `${part[0].toUpperCase()}${part.slice(1)}`)
         .join(" ");
   }
+}
+
+export function instrumentLookupMatchLabel(
+  match: InstrumentLookupMatch,
+): string {
+  return [
+    priceSourceLabel(match.provider),
+    match.provider_symbol,
+    match.asset_class,
+    match.currency,
+  ]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join(" · ");
 }
 
 export function priceSourceRows(
