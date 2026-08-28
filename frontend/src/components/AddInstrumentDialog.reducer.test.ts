@@ -131,8 +131,8 @@ describe("submission feedback", () => {
               exchange: "NASDAQ",
               symbol: "MSFT",
               currency: "USD",
-              mapping_enabled: false,
-              provider_symbol: null,
+              price_sources: [],
+              effective_price_source: null,
               open_quantity: 0,
               latest_price: {
                 status: "unmapped",

@@ -9,6 +9,7 @@ import type {
   PriceStatusInstrument,
   Transaction,
 } from "../api/types";
+import { priceAvailabilityLabel } from "./priceSourceViewModel";
 import { parseFiniteNumber, reasonLabel } from "./valuationDisplay";
 
 export type AssetData =
@@ -319,12 +320,11 @@ export function headerStatus(
     return { label: "Closed position", tone: "neutral" };
   }
 
-  if (priceStatus && !priceStatus.mapping_enabled) {
-    return { label: "Mapping disabled", tone: "warning" };
-  }
-
   if (priceStatus && priceStatus.latest_price.status === "unmapped") {
-    return { label: "Unmapped", tone: "warning" };
+    return {
+      label: priceAvailabilityLabel(priceStatus, gain),
+      tone: "warning",
+    };
   }
 
   if (priceStatus && priceStatus.latest_price.status === "missing") {

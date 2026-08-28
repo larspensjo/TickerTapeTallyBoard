@@ -140,8 +140,7 @@ export function instrumentPriceMappingNote(
   }
 
   if (
-    !instrument.mapping_enabled ||
-    instrument.provider_symbol === null ||
+    instrument.price_sources.length === 0 ||
     instrument.latest_price.status === "unmapped"
   ) {
     return DEFAULT_PRICE_MAPPING_NOTE;

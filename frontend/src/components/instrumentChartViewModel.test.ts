@@ -42,11 +42,13 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2026-01-02",
           close: "100",
+          source: "YAHOO",
           close_base: { status: "available", value: "1000.00" },
         },
         {
           date: "2026-01-03",
           close: "110",
+          source: "YAHOO",
           close_base: { status: "unavailable", reasons: ["missing_fx"] },
         },
       ]),
@@ -64,6 +66,7 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2026-01-02",
           close: "not-a-number",
+          source: "YAHOO",
           close_base: { status: "unavailable", reasons: ["missing_fx"] },
         },
       ]),
@@ -90,6 +93,7 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2025-06-04",
           close: "157.11",
+          source: "YAHOO",
           close_base: { status: "available", value: "1503.55" },
         },
       ]),
@@ -107,6 +111,7 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2026-06-04",
           close: "1000",
+          source: "YAHOO",
           close_base: { status: "available", value: "9570.10" },
         },
       ]),
@@ -131,6 +136,7 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2025-06-04",
           close: "157.11",
+          source: "YAHOO",
           close_base: { status: "available", value: "1503.55" },
         },
       ]),
@@ -146,6 +152,7 @@ describe("instrumentPriceSeries", () => {
         {
           date: "2026-06-04",
           close: "1000",
+          source: "YAHOO",
           close_base: { status: "available", value: "9570.10" },
         },
       ]),

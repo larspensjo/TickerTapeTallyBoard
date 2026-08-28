@@ -17,6 +17,7 @@ import {
   findHolding,
   findInstrument,
   findPriceStatus,
+  headerStatus,
   instrumentTransactions,
   parseInstrumentId,
   sharesSold,
@@ -138,8 +139,16 @@ function makePriceStatus(instrumentId: number): PriceStatusInstrument {
     exchange: "NYSE",
     symbol: `SYM${instrumentId}`,
     currency: "USD",
-    mapping_enabled: true,
-    provider_symbol: null,
+    price_sources: [
+      {
+        provider: "YAHOO",
+        provider_symbol: "SYM",
+        asset_class: null,
+        currency: "USD",
+        enabled: true,
+      },
+    ],
+    effective_price_source: "YAHOO",
     open_quantity: 10,
     latest_price: {
       status: "available",
@@ -261,6 +270,69 @@ describe("findPriceStatus", () => {
 
   it("returns null when not found", () => {
     expect(findPriceStatus(entries, 99)).toBeNull();
+  });
+});
+
+describe("headerStatus", () => {
+  it.each(["unmapped", "missing"] as const)(
+    "gives a closed position precedence over a %s price warning",
+    (priceStatusValue) => {
+      const gain = makeGainsRow(1, "closed");
+      const priceStatus = makePriceStatus(1);
+      priceStatus.price_sources = [];
+      priceStatus.effective_price_source = null;
+      priceStatus.latest_price.status = priceStatusValue;
+
+      expect(headerStatus(gain, priceStatus)).toEqual({
+        label: "Closed position",
+        tone: "neutral",
+      });
+    },
+  );
+
+  it("distinguishes an unmapped instrument with no price sources", () => {
+    const priceStatus = makePriceStatus(1);
+    priceStatus.price_sources = [];
+    priceStatus.effective_price_source = null;
+    priceStatus.latest_price.status = "unmapped";
+
+    expect(headerStatus(null, priceStatus)).toEqual({
+      label: "No price source",
+      tone: "warning",
+    });
+  });
+
+  it("distinguishes an unmapped instrument with disabled price sources", () => {
+    const priceStatus = makePriceStatus(1);
+    priceStatus.price_sources = priceStatus.price_sources.map((source) => ({
+      ...source,
+      enabled: false,
+    }));
+    priceStatus.effective_price_source = null;
+    priceStatus.latest_price.status = "unmapped";
+
+    expect(headerStatus(null, priceStatus)).toEqual({
+      label: "Price sources disabled",
+      tone: "warning",
+    });
+  });
+
+  it("reports a missing price", () => {
+    const priceStatus = makePriceStatus(1);
+    priceStatus.effective_price_source = null;
+    priceStatus.latest_price.status = "missing";
+
+    expect(headerStatus(null, priceStatus)).toEqual({
+      label: "Missing price",
+      tone: "warning",
+    });
+  });
+
+  it("does not show a price-source warning for a working instrument", () => {
+    expect(headerStatus(makeGainsRow(1, "open"), makePriceStatus(1))).toEqual({
+      label: "Open position",
+      tone: "neutral",
+    });
   });
 });
 

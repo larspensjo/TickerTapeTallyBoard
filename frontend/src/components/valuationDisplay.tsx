@@ -257,6 +257,8 @@ export function reasonLabel(code: string): string {
       return "Missing previous close";
     case "missing_previous_fx":
       return "Missing previous FX";
+    case "previous_close_source_mismatch":
+      return "Day change unavailable across sources";
     case "symbol_unmapped":
       return "Symbol unmapped";
     case "base_cost_basis_unavailable":

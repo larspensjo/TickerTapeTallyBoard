@@ -45,6 +45,11 @@ import {
   instrumentPriceSeries,
   tradeMarkers,
 } from "./instrumentChartViewModel";
+import {
+  effectivePriceSourceRow,
+  type PriceSourceRow,
+  priceSourceRows,
+} from "./priceSourceViewModel";
 import { type ChartTradeMarker, TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
 import { useAppMode } from "./useAppMode";
@@ -717,6 +722,9 @@ function AssetDataMapping({
   gain: GainsRow | null;
   priceStatus: PriceStatusInstrument | null;
 }) {
+  const sourceRows = priceStatus ? priceSourceRows(priceStatus, gain) : [];
+  const effectiveSource = effectivePriceSourceRow(priceStatus, gain);
+
   return (
     <section className="panel asset-panel" aria-label="Data and mapping">
       <h2>Data &amp; mapping</h2>
@@ -727,7 +735,12 @@ function AssetDataMapping({
             <DataRow label="Latest FX">{latestFxContent(gain)}</DataRow>
           </>
         ) : null}
-        <DataRow label="Provider">{providerContent(priceStatus)}</DataRow>
+        <DataRow label="Provider">
+          {providerContent(priceStatus, sourceRows)}
+        </DataRow>
+        <DataRow label="Price source">
+          {priceSourceContent(effectiveSource)}
+        </DataRow>
       </dl>
       <div className="asset-panel-section">
         <h3>Conviction</h3>
@@ -802,28 +815,37 @@ function latestFxContent(gain: GainsRow) {
   );
 }
 
-function providerContent(priceStatus: PriceStatusInstrument | null) {
+function providerContent(
+  priceStatus: PriceStatusInstrument | null,
+  rows: PriceSourceRow[],
+) {
   if (!priceStatus) {
     return <span className="asset-subtle">—</span>;
   }
 
-  if (!priceStatus.mapping_enabled) {
-    return <span className="status-chip warning">Mapping disabled</span>;
+  if (rows.length === 0) {
+    return <span className="status-chip warning">No price source</span>;
   }
-
-  if (
-    priceStatus.provider_symbol === null ||
-    priceStatus.latest_price.status === "unmapped"
-  ) {
-    return <span className="status-chip warning">Unmapped</span>;
-  }
-
-  const provider = priceStatus.latest_price.provider ?? "—";
 
   return (
-    <span className="data-value">
-      <span className="number">{priceStatus.provider_symbol}</span>{" "}
-      <span className="asset-subtle">{provider}</span>
+    <>
+      {rows.map((row) => (
+        <div key={`${row.provider}-${row.identifier}`}>
+          <span className="data-value">
+            <span className="asset-subtle">{row.label}</span>
+            <span className="number">{row.identifier}</span>
+            {row.assetClass ? (
+              <span className="asset-subtle">{row.assetClass}</span>
+            ) : null}
+            {row.effective ? (
+              <span className="status-chip compact">Effective</span>
+            ) : null}
+            {!row.enabled ? (
+              <span className="status-chip compact">Disabled</span>
+            ) : null}
+          </span>
+        </div>
+      ))}
       {priceStatus.latest_price.status === "missing" ? (
         <span className="status-chip warning compact">Missing price</span>
       ) : null}
@@ -833,6 +855,19 @@ function providerContent(priceStatus: PriceStatusInstrument | null) {
       {priceStatus.latest_fx.status === "unmapped" ? (
         <span className="status-chip warning compact">FX unmapped</span>
       ) : null}
+    </>
+  );
+}
+
+function priceSourceContent(row: PriceSourceRow | null) {
+  if (!row) {
+    return <span className="asset-subtle">—</span>;
+  }
+
+  return (
+    <span className="data-value">
+      <span className="asset-subtle">{row.label}</span>
+      <span className="number">{row.identifier}</span>
     </span>
   );
 }

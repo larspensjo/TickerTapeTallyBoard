@@ -118,6 +118,7 @@ export interface PriceSnapshot {
   date: string;
   close: string;
   currency: string;
+  source: string;
   freshness: string;
 }
 
@@ -132,6 +133,7 @@ export interface FxSnapshot {
 export interface PriceHistoryPoint {
   date: string;
   close: string;
+  source: string;
   close_base: MoneyValue;
   fx?: { rate: string; date: string };
 }
@@ -349,13 +351,21 @@ export interface PriceSnapshotState {
   reason: string | null;
 }
 
+export interface PriceSourceStatus {
+  provider: string;
+  provider_symbol: string;
+  asset_class: string | null;
+  currency: string | null;
+  enabled: boolean;
+}
+
 export interface PriceStatusInstrument {
   instrument_id: number;
   exchange: string;
   symbol: string;
   currency: string;
-  mapping_enabled: boolean;
-  provider_symbol: string | null;
+  price_sources: PriceSourceStatus[];
+  effective_price_source: string | null;
   open_quantity: number;
   latest_price: PriceSnapshotState;
   latest_fx: PriceSnapshotState;
@@ -378,7 +388,13 @@ export type RefreshMode = "latest" | "backfill";
 export type RefreshTrigger = "manual" | "backfill" | "launch";
 export type RefreshRunStatus = "running" | "succeeded" | "partial" | "failed";
 export type RefreshItemKind = "price" | "fx";
-export type RefreshItemStatus = "fetched" | "missing" | "failed" | "unmapped";
+export type RefreshItemStatus =
+  | "fetched"
+  | "missing"
+  | "failed"
+  | "unmapped"
+  | "ambiguous"
+  | "unavailable";
 
 export interface RefreshPricesInput {
   mode: RefreshMode;
@@ -389,6 +405,7 @@ export interface RefreshPricesInput {
 export interface RefreshItem {
   kind: RefreshItemKind;
   instrument_id: number | null;
+  provider: string | null;
   symbol_or_pair: string;
   status: RefreshItemStatus;
   reason: string | null;

@@ -7,6 +7,7 @@ import {
   formatUnitPrice,
   isAvailable,
   parseFiniteNumber,
+  reasonLabel,
   signedTone,
 } from "./valuationDisplay";
 
@@ -150,5 +151,13 @@ describe("parseFiniteNumber", () => {
 
   it("returns 0 for empty string (Number('') === 0, which is finite)", () => {
     expect(parseFiniteNumber("")).toBe(0);
+  });
+});
+
+describe("reasonLabel", () => {
+  it("uses the polished label for a source mismatch", () => {
+    expect(reasonLabel("previous_close_source_mismatch")).toBe(
+      "Day change unavailable across sources",
+    );
   });
 });
