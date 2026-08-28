@@ -330,6 +330,7 @@ mod tests {
     use crate::api::router;
     use crate::db::{instruments as instruments_db, prices, provider_symbols};
     use crate::import::now_iso8601;
+    use crate::providers::MarketDataProvider;
     use crate::state::AppState;
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
@@ -521,8 +522,9 @@ mod tests {
             &state.pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "CORN".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: true,
                 created_at: now.clone(),
@@ -535,7 +537,7 @@ mod tests {
             &state.pool,
             &prices::NewPrice {
                 instrument_id: id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "CORN".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 1).expect("date"),
                 close: Decimal::new(12345, 2),
@@ -559,16 +561,18 @@ mod tests {
             .await
             .expect("find")
             .is_none());
-        assert!(
-            provider_symbols::find_by_instrument_provider(&state.pool, id, "YAHOO")
-                .await
-                .expect("provider symbol lookup")
-                .is_none()
-        );
+        assert!(provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            id,
+            MarketDataProvider::Yahoo
+        )
+        .await
+        .expect("provider symbol lookup")
+        .is_none());
         assert!(prices::find_by_key(
             &state.pool,
             id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 1).expect("date"),
         )
         .await

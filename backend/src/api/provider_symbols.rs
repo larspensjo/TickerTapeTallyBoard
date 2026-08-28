@@ -41,7 +41,7 @@ impl From<ProviderSymbolRow> for ProviderSymbolResponse {
         Self {
             id: row.id,
             instrument_id: row.instrument_id,
-            provider: row.provider,
+            provider: row.provider.to_string(),
             provider_symbol: row.provider_symbol,
             currency: row.currency,
             enabled: row.enabled,
@@ -66,12 +66,12 @@ pub async fn update(
     }
 
     let provider = provider.trim().to_ascii_uppercase();
-    if MarketDataProvider::from_db_str(&provider).is_none() {
-        return Err(ApiError::bad_request(
+    let provider = MarketDataProvider::from_db_str(&provider).ok_or_else(|| {
+        ApiError::bad_request(
             "invalid_provider",
             format!("unsupported provider {:?}", provider),
-        ));
-    }
+        )
+    })?;
 
     let provider_symbol = body.provider_symbol.trim().to_owned();
     if provider_symbol.is_empty() {
@@ -80,6 +80,10 @@ pub async fn update(
             "provider_symbol is required",
         ));
     }
+    let asset_class =
+        provider_symbols::find_by_instrument_provider(&state.pool, instrument_id, provider)
+            .await?
+            .and_then(|row| row.asset_class);
     let now = now_iso8601();
     let row = provider_symbols::upsert(
         &state.pool,
@@ -87,6 +91,7 @@ pub async fn update(
             instrument_id,
             provider,
             provider_symbol,
+            asset_class,
             currency: body.currency.map(|value| value.trim().to_owned()),
             enabled: body.enabled,
             created_at: now.clone(),
@@ -114,7 +119,7 @@ mod tests {
     use crate::{
         db::{self, provider_symbols},
         market_data::MarketDataService,
-        providers::{FakeFxRateProvider, FakePriceProvider},
+        providers::{FakeFxRateProvider, FakePriceProvider, MarketDataProvider},
         state::AppState,
     };
 
@@ -184,11 +189,58 @@ mod tests {
         assert_eq!(body["provider_symbol"], "MSFT");
         assert_eq!(body["enabled"], true);
 
-        let row =
-            provider_symbols::find_by_instrument_provider(&state.pool, instrument_id, "YAHOO")
-                .await
-                .expect("lookup should succeed")
-                .expect("row should exist");
+        let row = provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            instrument_id,
+            MarketDataProvider::Yahoo,
+        )
+        .await
+        .expect("lookup should succeed")
+        .expect("row should exist");
+        assert!(row.enabled);
+    }
+
+    #[tokio::test]
+    async fn provider_symbol_update_preserves_existing_asset_class() {
+        let state = AppState::with_market_data(
+            db::memory_pool().await.expect("memory pool"),
+            MarketDataService::with_providers(FakePriceProvider::new(), FakeFxRateProvider::new()),
+        );
+        let instrument_id = instrument(&state.pool).await;
+        provider_symbols::upsert(
+            &state.pool,
+            &provider_symbols::NewProviderSymbol {
+                instrument_id,
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: "MSFT".to_owned(),
+                asset_class: Some("EQUITY".to_owned()),
+                currency: Some("USD".to_owned()),
+                enabled: false,
+                created_at: "2026-08-28T08:00:00Z".to_owned(),
+                updated_at: "2026-08-28T08:00:00Z".to_owned(),
+            },
+        )
+        .await
+        .expect("provider symbol seed should succeed");
+
+        let (status, _) = send(
+            &state,
+            "PUT",
+            &format!("/api/instruments/{instrument_id}/provider-symbols/YAHOO"),
+            json!({"provider_symbol":"MSFT","currency":"USD","enabled":true}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        let row = provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            instrument_id,
+            MarketDataProvider::Yahoo,
+        )
+        .await
+        .expect("lookup should succeed")
+        .expect("row should exist");
+        assert_eq!(row.asset_class.as_deref(), Some("EQUITY"));
         assert!(row.enabled);
     }
 

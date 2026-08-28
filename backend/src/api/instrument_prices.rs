@@ -6,11 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
 use crate::api::valuation::{
-    money_string, serialize_availability, AvailabilityResponse, BASE_CURRENCY, FX_PROVIDER,
-    PRICE_PROVIDER,
+    money_string, serialize_availability, AvailabilityResponse, BASE_CURRENCY,
 };
-use crate::db::{fx_rates, instruments, prices, provider_symbols};
-use crate::domain::{build_price_history, FxApplied, FxCandidate, PriceCandidate, PricePoint};
+use crate::db::{fx_rates, instruments};
+use crate::domain::{build_price_history, FxApplied, FxCandidate, PricePoint};
+use crate::market_data::effective_prices;
+use crate::providers::BASE_FX_PROVIDER;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +32,7 @@ pub struct PriceHistoryResponse {
 pub struct PricePointResponse {
     date: String,
     close: String,
+    source: String,
     close_base: AvailabilityResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     fx: Option<FxAppliedResponse>,
@@ -56,6 +58,7 @@ fn point_response(point: &PricePoint) -> PricePointResponse {
     PricePointResponse {
         date: point.date.format("%Y-%m-%d").to_string(),
         close: precise_string(point.close),
+        source: point.source.as_str().to_owned(),
         close_base: serialize_availability(&point.close_base, |v| money_string(*v)),
         fx: point
             .fx
@@ -95,40 +98,26 @@ pub async fn list(
         .await?
         .ok_or_else(|| ApiError::not_found("instrument", id))?;
 
-    let mapping =
-        provider_symbols::find_by_instrument_provider(&state.pool, id, PRICE_PROVIDER).await?;
-    let mapping_enabled = mapping.as_ref().is_some_and(|m| m.enabled);
+    let price_candidates =
+        effective_prices::effective_series(&state.pool, id, &instrument.currency, from, to).await?;
 
-    let points = if mapping_enabled {
-        let price_rows =
-            prices::list_for_instrument_in_range(&state.pool, id, PRICE_PROVIDER, from, to).await?;
-        // Decode failures are internal invariant violations, not missing data:
-        // propagate them as `ApiError::internal` instead of silently dropping rows.
-        let price_candidates: Vec<PriceCandidate> = price_rows
-            .into_iter()
-            .map(|row| price_candidate(&instrument, row))
-            .collect::<Result<_, _>>()?;
-
-        let is_base = instrument.currency.eq_ignore_ascii_case(BASE_CURRENCY);
-        let fx_candidates: Vec<FxCandidate> = if is_base {
-            Vec::new()
-        } else {
-            fx_rates::list_for_pair(
-                &state.pool,
-                &instrument.currency,
-                BASE_CURRENCY,
-                FX_PROVIDER,
-            )
-            .await?
-            .into_iter()
-            .map(fx_candidate)
-            .collect::<Result<_, _>>()?
-        };
-
-        build_price_history(&instrument.currency, &price_candidates, &fx_candidates)
-    } else {
+    let is_base = instrument.currency.eq_ignore_ascii_case(BASE_CURRENCY);
+    let fx_candidates: Vec<FxCandidate> = if is_base {
         Vec::new()
+    } else {
+        fx_rates::list_for_pair(
+            &state.pool,
+            &instrument.currency,
+            BASE_CURRENCY,
+            BASE_FX_PROVIDER,
+        )
+        .await?
+        .into_iter()
+        .map(fx_candidate)
+        .collect::<Result<_, _>>()?
     };
+
+    let points = build_price_history(&instrument.currency, &price_candidates, &fx_candidates);
 
     Ok(Json(PriceHistoryResponse {
         instrument_id: id,
@@ -136,44 +125,6 @@ pub async fn list(
         base_currency: BASE_CURRENCY.to_string(),
         points: points.iter().map(point_response).collect(),
     }))
-}
-
-/// Map a price row into a `PriceCandidate`. A decode failure (date or close) is
-/// an internal invariant violation per `db/mod.rs`, not missing data, so it
-/// propagates as `ApiError::internal` with instrument id, row id, and field
-/// context rather than producing a `200` with silently missing points. A row
-/// whose currency differs from the instrument's is logged here (the
-/// repository-mapping boundary where the instrument is known) and kept; the
-/// builder drops mismatched rows.
-fn price_candidate(
-    instrument: &instruments::InstrumentRow,
-    row: prices::PriceRow,
-) -> Result<PriceCandidate, ApiError> {
-    let date = row.date_value().map_err(|e| {
-        ApiError::internal(format!(
-            "price-history: undecodable date in price row {} for instrument {}: {e}",
-            row.id, instrument.id
-        ))
-    })?;
-    let close = row.close_decimal().map_err(|e| {
-        ApiError::internal(format!(
-            "price-history: undecodable close in price row {} for instrument {}: {e}",
-            row.id, instrument.id
-        ))
-    })?;
-    if !row.currency.eq_ignore_ascii_case(&instrument.currency) {
-        crate::engine_warn!(
-            "price-history currency mismatch for instrument {}: row currency {:?} != instrument {:?}",
-            instrument.id,
-            row.currency,
-            instrument.currency
-        );
-    }
-    Ok(PriceCandidate {
-        date,
-        close,
-        currency: row.currency,
-    })
 }
 
 fn fx_candidate(row: fx_rates::FxRateRow) -> Result<FxCandidate, ApiError> {
@@ -200,9 +151,10 @@ fn fx_candidate(row: fx_rates::FxRateRow) -> Result<FxCandidate, ApiError> {
 #[cfg(test)]
 mod tests {
     use crate::api::router;
-    use crate::api::valuation::{BASE_CURRENCY, FX_PROVIDER, PRICE_PROVIDER};
+    use crate::api::valuation::BASE_CURRENCY;
     use crate::db::{fx_rates, instruments, prices, provider_symbols};
     use crate::import::now_iso8601;
+    use crate::providers::{BASE_FX_PROVIDER, PRICE_PROVIDER_PRECEDENCE};
     use crate::state::AppState;
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
@@ -255,8 +207,9 @@ mod tests {
             &state.pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "SYM".to_owned(),
+                asset_class: None,
                 currency: None,
                 enabled,
                 created_at: now.clone(),
@@ -278,7 +231,7 @@ mod tests {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "SYM".to_owned(),
                 date,
                 close,
@@ -298,7 +251,7 @@ mod tests {
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate,
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: now_iso8601(),
             },
         )
@@ -325,6 +278,7 @@ mod tests {
         let point = &body["points"][0];
         assert_eq!(point["date"], "2026-06-10");
         assert_eq!(point["close"], "110.5034"); // full precision, not money_string
+        assert_eq!(point["source"], "YAHOO");
         assert_eq!(point["close_base"]["status"], "available");
         // 110.5034 * 10.4731 = 1157.31315854, serialized through money_string (2 dp).
         assert_eq!(point["close_base"]["value"], "1157.31");
@@ -343,6 +297,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let point = &body["points"][0];
         assert_eq!(point["close_base"]["value"], "42.50");
+        assert_eq!(point["source"], "YAHOO");
         assert!(point.get("fx").is_none());
     }
 

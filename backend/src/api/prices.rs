@@ -179,10 +179,14 @@ mod tests {
             "available"
         );
 
-        let mapping = provider_symbols::find_by_instrument_provider(&state.pool, msft, "YAHOO")
-            .await
-            .expect("mapping lookup should succeed")
-            .expect("mapping should exist");
+        let mapping = provider_symbols::find_by_instrument_provider(
+            &state.pool,
+            msft,
+            MarketDataProvider::Yahoo,
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .expect("mapping should exist");
         assert!(mapping.enabled);
     }
 

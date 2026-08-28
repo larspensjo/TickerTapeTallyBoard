@@ -100,8 +100,9 @@ pub(crate) async fn seed_valued_at(state: &AppState, spec: SeededHoldingSpec<'_>
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id: id,
-            provider: crate::api::valuation::PRICE_PROVIDER.to_owned(),
+            provider: crate::providers::PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: spec.symbol.to_owned(),
+            asset_class: None,
             currency: Some(spec.currency.to_owned()),
             enabled: true,
             created_at: now.clone(),
@@ -114,7 +115,7 @@ pub(crate) async fn seed_valued_at(state: &AppState, spec: SeededHoldingSpec<'_>
         &state.pool,
         &prices::NewPrice {
             instrument_id: id,
-            provider: crate::api::valuation::PRICE_PROVIDER.to_owned(),
+            provider: crate::providers::PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: spec.symbol.to_owned(),
             date: spec.price_date,
             close: Decimal::from_str(spec.price).expect("price"),
@@ -135,7 +136,7 @@ pub(crate) async fn seed_valued_at(state: &AppState, spec: SeededHoldingSpec<'_>
                 quote: "SEK".to_owned(),
                 date: fx_date,
                 rate: Decimal::from_str(fx_rate).expect("fx rate"),
-                provider: crate::api::valuation::FX_PROVIDER.to_owned(),
+                provider: crate::providers::BASE_FX_PROVIDER,
                 fetched_at: now.clone(),
             },
         )

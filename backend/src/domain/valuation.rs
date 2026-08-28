@@ -1,7 +1,7 @@
 use super::performance::split_factor;
 use super::{
-    derive_position, BaseCostBasis, LedgerError, LedgerTransaction, Position, TransactionKind,
-    UnavailableReason,
+    derive_position, BaseCostBasis, LedgerError, LedgerTransaction, Position, ProviderCode,
+    TransactionKind, UnavailableReason,
 };
 use chrono::{Datelike, NaiveDate, Weekday};
 use rust_decimal::Decimal;
@@ -36,6 +36,7 @@ pub enum ValuationReason {
     MissingPrice,
     MissingFx,
     MissingPreviousClose,
+    PreviousCloseSourceMismatch,
     MissingPreviousFx,
     StalePrice { trading_days: i64 },
     StaleFx { trading_days: i64 },
@@ -58,6 +59,7 @@ pub struct PriceCandidate {
     pub date: NaiveDate,
     pub close: Decimal,
     pub currency: String,
+    pub source: ProviderCode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,6 +75,7 @@ pub struct PriceSnapshot {
     pub date: NaiveDate,
     pub close: Decimal,
     pub currency: String,
+    pub source: ProviderCode,
     pub freshness: DataFreshness,
 }
 
@@ -95,6 +98,7 @@ pub struct FxApplied {
 pub struct PricePoint {
     pub date: NaiveDate,
     pub close: Decimal,
+    pub source: ProviderCode,
     pub close_base: Availability<Decimal>,
     pub fx: Option<FxApplied>,
 }
@@ -125,6 +129,7 @@ pub fn build_price_history(
             points.push(PricePoint {
                 date: price.date,
                 close: price.close,
+                source: price.source.clone(),
                 close_base: Availability::available(price.close),
                 fx: None,
             });
@@ -140,6 +145,7 @@ pub fn build_price_history(
             Some(fx) => points.push(PricePoint {
                 date: price.date,
                 close: price.close,
+                source: price.source.clone(),
                 close_base: Availability::available(price.close * fx.rate),
                 fx: Some(FxApplied {
                     rate: fx.rate,
@@ -149,6 +155,7 @@ pub fn build_price_history(
             None => points.push(PricePoint {
                 date: price.date,
                 close: price.close,
+                source: price.source.clone(),
                 close_base: Availability::unavailable(ValuationReason::MissingFx),
                 fx: None,
             }),
@@ -468,6 +475,7 @@ pub fn value_position(
                 date: candidate.date,
                 close: candidate.close,
                 currency: candidate.currency,
+                source: candidate.source,
                 freshness,
             };
             Availability::available(snapshot)
@@ -480,9 +488,16 @@ pub fn value_position(
             date: candidate.date,
             close: candidate.close,
             currency: candidate.currency,
+            source: candidate.source,
             freshness: data_freshness(valuation_date, candidate.date),
         }),
         None => Availability::unavailable(ValuationReason::MissingPreviousClose),
+    };
+    let previous_price = match (latest_price.as_ref(), previous_price.as_ref()) {
+        (Some(latest), Some(previous)) if latest.source != previous.source => {
+            Availability::unavailable(ValuationReason::PreviousCloseSourceMismatch)
+        }
+        _ => previous_price,
     };
 
     let latest_fx = fx_snapshot(native_currency, valuation_date, latest_fx, false);
@@ -962,7 +977,7 @@ fn dedup_reasons(reasons: &mut Vec<ValuationReason>) {
 mod tests {
     use super::{
         build_price_history, build_value_history, summarize_holdings, value_position, Availability,
-        DataFreshness, FxApplied, FxCandidate, PriceCandidate, ValuationReason,
+        DataFreshness, FxApplied, FxCandidate, PriceCandidate, ProviderCode, ValuationReason,
         ValueHistoryInstrument,
     };
     use crate::domain::{
@@ -1019,6 +1034,7 @@ mod tests {
             date,
             close,
             currency: currency.to_owned(),
+            source: ProviderCode::new("PRIMARY"),
         }
     }
 
@@ -1316,15 +1332,18 @@ mod tests {
     #[test]
     fn build_price_history_carries_fx_forward() {
         // FX only on the 10th; the 11th (no same-day rate) carries the 10th forward.
-        let prices = vec![
+        let mut prices = vec![
             price(d(2026, 6, 10), dec!(100), "USD"),
             price(d(2026, 6, 11), dec!(110), "USD"),
         ];
+        prices[1].source = ProviderCode::new("NASDAQ_NORDIC");
         let fx_rates = vec![fx(d(2026, 6, 10), dec!(10), "USD", "SEK")];
 
         let points = build_price_history("USD", &prices, &fx_rates);
 
         assert_eq!(points.len(), 2);
+        assert_eq!(points[0].source.as_str(), "PRIMARY");
+        assert_eq!(points[1].source.as_str(), "NASDAQ_NORDIC");
         assert_eq!(points[0].close_base, Availability::available(dec!(1000)));
         assert_eq!(
             points[0].fx,
@@ -1674,6 +1693,50 @@ mod tests {
         assert!(value
             .reasons
             .contains(&ValuationReason::MissingPreviousClose));
+    }
+
+    #[test]
+    fn mixed_price_sources_keep_market_value_and_block_day_change() {
+        let pos = position(&[buy(1, d(2026, 6, 1), 5, dec!(100), Some(dec!(10)), "USD")]);
+        let latest = price(d(2026, 6, 16), dec!(110), "USD");
+        let mut previous = price(d(2026, 6, 15), dec!(100), "USD");
+        previous.source = ProviderCode::new("NASDAQ_NORDIC");
+
+        let value = value_position(
+            &pos,
+            "USD",
+            d(2026, 6, 16),
+            Some(latest),
+            Some(previous),
+            Some(fx(d(2026, 6, 16), dec!(10), "USD", "SEK")),
+            Some(fx(d(2026, 6, 15), dec!(10), "USD", "SEK")),
+        );
+
+        assert!(value.market_value_base.as_ref().is_some());
+        assert_eq!(
+            value.day_change_base,
+            Availability::unavailable(ValuationReason::PreviousCloseSourceMismatch)
+        );
+    }
+
+    #[test]
+    fn same_price_source_keeps_day_change_available() {
+        let pos = position(&[buy(1, d(2026, 6, 1), 5, dec!(100), Some(dec!(10)), "USD")]);
+
+        let value = value_position(
+            &pos,
+            "USD",
+            d(2026, 6, 16),
+            Some(price(d(2026, 6, 16), dec!(110), "USD")),
+            Some(price(d(2026, 6, 15), dec!(100), "USD")),
+            Some(fx(d(2026, 6, 16), dec!(10), "USD", "SEK")),
+            Some(fx(d(2026, 6, 15), dec!(10), "USD", "SEK")),
+        );
+
+        assert_eq!(value.day_change_base, Availability::available(dec!(500)));
+        assert!(!value
+            .reasons
+            .contains(&ValuationReason::PreviousCloseSourceMismatch));
     }
 
     #[test]

@@ -5,10 +5,9 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
 use crate::domain::TransactionKind;
+use crate::providers::{FxProvider, MarketDataProvider, BASE_FX_PROVIDER};
 
 pub const BASE_CURRENCY: &str = "SEK";
-pub const PRICE_PROVIDER: &str = "YAHOO";
-pub const FX_PROVIDER: &str = "FRANKFURTER";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemoData {
@@ -52,7 +51,7 @@ pub struct DemoTransaction {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemoPrice {
     pub instrument_index: usize,
-    pub provider: &'static str,
+    pub provider: MarketDataProvider,
     pub provider_symbol: &'static str,
     pub date: NaiveDate,
     pub close: Decimal,
@@ -65,7 +64,7 @@ pub struct DemoFxRate {
     pub quote: &'static str,
     pub date: NaiveDate,
     pub rate: Decimal,
-    pub provider: &'static str,
+    pub provider: FxProvider,
 }
 
 pub fn dataset(today: NaiveDate) -> DemoData {
@@ -121,8 +120,9 @@ async fn seed_for_date(
             pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: row.id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: instrument.provider_symbol.to_owned(),
+                asset_class: None,
                 currency: Some(instrument.currency.to_owned()),
                 enabled: true,
                 created_at: fetched_at.clone(),
@@ -156,7 +156,7 @@ async fn seed_for_date(
             pool,
             &prices::NewPrice {
                 instrument_id: instrument_ids[price.instrument_index],
-                provider: price.provider.to_owned(),
+                provider: price.provider,
                 provider_symbol: price.provider_symbol.to_owned(),
                 date: price.date,
                 close: price.close,
@@ -175,7 +175,7 @@ async fn seed_for_date(
                 quote: fx_rate.quote.to_owned(),
                 date: fx_rate.date,
                 rate: fx_rate.rate,
-                provider: fx_rate.provider.to_owned(),
+                provider: fx_rate.provider,
                 fetched_at: fetched_at.clone(),
             },
         )
@@ -358,7 +358,7 @@ fn prices(
                 let close = (base + drift + wave).round_dp(2).max(dec!(1.00));
                 let price = DemoPrice {
                     instrument_index,
-                    provider: PRICE_PROVIDER,
+                    provider: MarketDataProvider::Yahoo,
                     provider_symbol: instrument.provider_symbol,
                     date,
                     close,
@@ -387,7 +387,7 @@ fn fx_rates(start_date: NaiveDate, end_date: NaiveDate) -> Vec<DemoFxRate> {
                     quote: BASE_CURRENCY,
                     date,
                     rate,
-                    provider: FX_PROVIDER,
+                    provider: BASE_FX_PROVIDER,
                 };
                 date += Duration::days(1);
                 Some(fx_rate)
@@ -455,6 +455,8 @@ mod tests {
     use serde_json::Value;
     use std::collections::HashSet;
     use tower::ServiceExt;
+
+    use crate::providers::PRICE_PROVIDER_PRECEDENCE;
 
     #[test]
     fn dataset_contains_expected_instrument_shape() {
@@ -574,7 +576,7 @@ mod tests {
             let latest_price = crate::db::prices::find_latest_on_or_before(
                 &pool,
                 instrument.id,
-                PRICE_PROVIDER,
+                PRICE_PROVIDER_PRECEDENCE[0],
                 today,
             )
             .await
@@ -584,7 +586,7 @@ mod tests {
             let provider_symbol = crate::db::provider_symbols::find_by_instrument_provider(
                 &pool,
                 instrument.id,
-                PRICE_PROVIDER,
+                PRICE_PROVIDER_PRECEDENCE[0],
             )
             .await
             .expect("provider symbol lookup should succeed")
@@ -597,7 +599,7 @@ mod tests {
                 &pool,
                 currency,
                 BASE_CURRENCY,
-                FX_PROVIDER,
+                BASE_FX_PROVIDER,
                 today,
             )
             .await

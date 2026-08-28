@@ -15,10 +15,15 @@ pub mod yahoo;
 pub use frankfurter::FrankfurterClient;
 pub use yahoo::{YahooChartClient, YahooSearchClient};
 
+pub const PRICE_PROVIDER_PRECEDENCE: &[MarketDataProvider] =
+    &[MarketDataProvider::Yahoo, MarketDataProvider::NasdaqNordic];
+pub const BASE_FX_PROVIDER: FxProvider = FxProvider::Frankfurter;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MarketDataProvider {
     Yahoo,
+    NasdaqNordic,
     TwelveData,
     Manual,
 }
@@ -27,6 +32,7 @@ impl MarketDataProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Yahoo => "YAHOO",
+            Self::NasdaqNordic => "NASDAQ_NORDIC",
             Self::TwelveData => "TWELVE_DATA",
             Self::Manual => "MANUAL",
         }
@@ -35,6 +41,7 @@ impl MarketDataProvider {
     pub fn from_db_str(value: &str) -> Option<Self> {
         match value {
             "YAHOO" => Some(Self::Yahoo),
+            "NASDAQ_NORDIC" => Some(Self::NasdaqNordic),
             "TWELVE_DATA" => Some(Self::TwelveData),
             "MANUAL" => Some(Self::Manual),
             _ => None,

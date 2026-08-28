@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::sqlite::SqlitePool;
 
-use crate::db::RepoError;
+use crate::{db::RepoError, providers::FxProvider};
 
 const LIST_SQL: &str = "SELECT id, base, quote, date, rate, provider, fetched_at \
     FROM fx_rates ORDER BY base, quote, provider, date";
@@ -27,7 +27,7 @@ const UPSERT_SQL: &str = "INSERT INTO fx_rates \
      RETURNING id, base, quote, date, rate, provider, fetched_at";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
-pub struct FxRateRow {
+struct RawFxRateRow {
     pub id: i64,
     pub base: String,
     pub quote: String,
@@ -35,6 +35,39 @@ pub struct FxRateRow {
     pub rate: String,
     pub provider: String,
     pub fetched_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FxRateRow {
+    pub id: i64,
+    pub base: String,
+    pub quote: String,
+    pub date: String,
+    pub rate: String,
+    pub provider: FxProvider,
+    pub fetched_at: String,
+}
+
+impl TryFrom<RawFxRateRow> for FxRateRow {
+    type Error = RepoError;
+
+    fn try_from(row: RawFxRateRow) -> Result<Self, Self::Error> {
+        let provider = FxProvider::from_db_str(&row.provider).ok_or_else(|| {
+            RepoError::Decode(format!(
+                "unknown fx provider {:?} in row {} for {}/{}",
+                row.provider, row.id, row.base, row.quote
+            ))
+        })?;
+        Ok(Self {
+            id: row.id,
+            base: row.base,
+            quote: row.quote,
+            date: row.date,
+            rate: row.rate,
+            provider,
+            fetched_at: row.fetched_at,
+        })
+    }
 }
 
 impl FxRateRow {
@@ -55,102 +88,102 @@ pub struct NewFxRate {
     pub quote: String,
     pub date: NaiveDate,
     pub rate: Decimal,
-    pub provider: String,
+    pub provider: FxProvider,
     pub fetched_at: String,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<FxRateRow>, RepoError> {
-    let rows = sqlx::query_as::<_, FxRateRow>(LIST_SQL)
+    let rows = sqlx::query_as::<_, RawFxRateRow>(LIST_SQL)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<FxRateRow>, RepoError> {
-    let row = sqlx::query_as::<_, FxRateRow>(FIND_SQL)
+    let row = sqlx::query_as::<_, RawFxRateRow>(FIND_SQL)
         .bind(id)
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_by_key(
     pool: &SqlitePool,
     base: &str,
     quote: &str,
-    provider: &str,
+    provider: FxProvider,
     date: NaiveDate,
 ) -> Result<Option<FxRateRow>, RepoError> {
-    let row = sqlx::query_as::<_, FxRateRow>(FIND_BY_KEY_SQL)
+    let row = sqlx::query_as::<_, RawFxRateRow>(FIND_BY_KEY_SQL)
         .bind(base)
         .bind(quote)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_latest_on_or_before(
     pool: &SqlitePool,
     base: &str,
     quote: &str,
-    provider: &str,
+    provider: FxProvider,
     as_of_date: NaiveDate,
 ) -> Result<Option<FxRateRow>, RepoError> {
-    let row = sqlx::query_as::<_, FxRateRow>(FIND_LATEST_ON_OR_BEFORE_SQL)
+    let row = sqlx::query_as::<_, RawFxRateRow>(FIND_LATEST_ON_OR_BEFORE_SQL)
         .bind(base)
         .bind(quote)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(as_of_date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_previous_before(
     pool: &SqlitePool,
     base: &str,
     quote: &str,
-    provider: &str,
+    provider: FxProvider,
     before_date: NaiveDate,
 ) -> Result<Option<FxRateRow>, RepoError> {
-    let row = sqlx::query_as::<_, FxRateRow>(FIND_PREVIOUS_BEFORE_SQL)
+    let row = sqlx::query_as::<_, RawFxRateRow>(FIND_PREVIOUS_BEFORE_SQL)
         .bind(base)
         .bind(quote)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(before_date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn list_for_pair(
     pool: &SqlitePool,
     base: &str,
     quote: &str,
-    provider: &str,
+    provider: FxProvider,
 ) -> Result<Vec<FxRateRow>, RepoError> {
-    let rows = sqlx::query_as::<_, FxRateRow>(LIST_FOR_PAIR_SQL)
+    let rows = sqlx::query_as::<_, RawFxRateRow>(LIST_FOR_PAIR_SQL)
         .bind(base)
         .bind(quote)
-        .bind(provider)
+        .bind(provider.as_str())
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn upsert(pool: &SqlitePool, new: &NewFxRate) -> Result<FxRateRow, RepoError> {
-    let row = sqlx::query_as::<_, FxRateRow>(UPSERT_SQL)
+    let row = sqlx::query_as::<_, RawFxRateRow>(UPSERT_SQL)
         .bind(&new.base)
         .bind(&new.quote)
         .bind(new.date.format("%Y-%m-%d").to_string())
         .bind(new.rate.to_string())
-        .bind(&new.provider)
+        .bind(new.provider.as_str())
         .bind(&new.fetched_at)
         .fetch_one(pool)
         .await?;
-    Ok(row)
+    row.try_into()
 }
 
 #[cfg(test)]
@@ -170,7 +203,7 @@ mod tests {
                 quote: "SEK".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
                 rate: Decimal::new(1005, 2),
-                provider: "FRANKFURTER".to_owned(),
+                provider: FxProvider::Frankfurter,
                 fetched_at: "2026-06-16T08:00:00Z".to_owned(),
             },
         )
@@ -184,7 +217,7 @@ mod tests {
                 quote: "SEK".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
                 rate: Decimal::new(1012, 2),
-                provider: "FRANKFURTER".to_owned(),
+                provider: FxProvider::Frankfurter,
                 fetched_at: "2026-06-16T08:05:00Z".to_owned(),
             },
         )
@@ -198,7 +231,7 @@ mod tests {
                 quote: "SEK".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
                 rate: Decimal::new(1022, 2),
-                provider: "FRANKFURTER".to_owned(),
+                provider: FxProvider::Frankfurter,
                 fetched_at: "2026-06-16T08:10:00Z".to_owned(),
             },
         )
@@ -222,7 +255,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 11).expect("date should be valid"),
         )
         .await
@@ -243,7 +276,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -255,7 +288,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -267,7 +300,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -279,7 +312,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 9).expect("date should be valid"),
         )
         .await
@@ -290,7 +323,7 @@ mod tests {
             &pool,
             "USD",
             "SEK",
-            "FRANKFURTER",
+            FxProvider::Frankfurter,
             NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
         )
         .await
@@ -310,7 +343,7 @@ mod tests {
                     quote: "SEK".to_owned(),
                     date: NaiveDate::from_ymd_opt(2026, 6, day).expect("valid date"),
                     rate: Decimal::from_str(rate).expect("rate"),
-                    provider: "FRANKFURTER".to_owned(),
+                    provider: FxProvider::Frankfurter,
                     fetched_at: "2026-06-16T08:00:00Z".to_owned(),
                 },
             )
@@ -318,24 +351,24 @@ mod tests {
             .expect("fx upsert should succeed");
         }
 
-        let rows = list_for_pair(&pool, "USD", "SEK", "FRANKFURTER")
+        let rows = list_for_pair(&pool, "USD", "SEK", FxProvider::Frankfurter)
             .await
             .expect("pair query should succeed");
         let dates: Vec<&str> = rows.iter().map(|r| r.date.as_str()).collect();
         assert_eq!(dates, vec!["2026-06-08", "2026-06-10", "2026-06-12"]);
 
         // Wrong pair direction yields nothing.
-        let reversed = list_for_pair(&pool, "SEK", "USD", "FRANKFURTER")
+        let reversed = list_for_pair(&pool, "SEK", "USD", FxProvider::Frankfurter)
             .await
             .expect("pair query should succeed");
         assert!(reversed.is_empty());
     }
 
     #[tokio::test]
-    async fn fx_constraints_are_enforced() {
+    async fn unknown_provider_is_decode_error() {
         let pool = testing::memory_pool().await;
 
-        let invalid_provider = sqlx::query(
+        sqlx::query(
             "INSERT INTO fx_rates (base, quote, date, rate, provider, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind("USD")
@@ -346,12 +379,8 @@ mod tests {
         .bind("2026-06-16T08:00:00Z")
         .execute(&pool)
         .await
-        .expect_err("invalid provider should fail");
+        .expect("unknown provider row inserts after CHECK removal");
 
-        assert!(is_constraint_error(&invalid_provider, "CHECK"));
-    }
-
-    fn is_constraint_error(error: &sqlx::Error, needle: &str) -> bool {
-        matches!(error, sqlx::Error::Database(database_error) if database_error.message().contains(needle))
+        assert!(matches!(list(&pool).await, Err(RepoError::Decode(_))));
     }
 }

@@ -186,8 +186,9 @@ mod tests {
             &state.pool,
             &crate::db::provider_symbols::NewProviderSymbol {
                 instrument_id: instrument.id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: true,
                 created_at: crate::import::now_iso8601(),

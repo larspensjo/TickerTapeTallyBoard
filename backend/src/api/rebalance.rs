@@ -510,8 +510,9 @@ mod tests {
             &state.pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: missing_id,
-                provider: crate::api::valuation::PRICE_PROVIDER.to_owned(),
+                provider: crate::providers::PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "MISS".to_owned(),
+                asset_class: None,
                 currency: Some("SEK".to_owned()),
                 enabled: true,
                 created_at: now.clone(),

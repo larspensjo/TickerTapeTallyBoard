@@ -19,15 +19,13 @@ use crate::{
     domain,
     import::now_iso8601,
     providers::{
-        FxRateProvider, PriceProvider, ProviderError, ProviderMissingReason, SymbolSearchMatch,
-        SymbolSearchProvider,
+        FxRateProvider, MarketDataProvider, PriceProvider, ProviderError, ProviderMissingReason,
+        SymbolSearchMatch, SymbolSearchProvider, BASE_FX_PROVIDER,
     },
 };
 
 const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
 const MAX_SYMBOL_RECOVERY_CANDIDATES: usize = 5;
-const YAHOO_PROVIDER: &str = "YAHOO";
-const FRANKFURTER_PROVIDER: &str = "FRANKFURTER";
 const SEK: &str = "SEK";
 
 #[derive(Clone)]
@@ -255,9 +253,12 @@ impl MarketDataService {
         for instrument in instruments {
             let position = position_for_instrument(&grouped, instrument.id)?;
 
-            let mapping =
-                provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
-                    .await?;
+            let mapping = provider_symbols::find_by_instrument_provider(
+                pool,
+                instrument.id,
+                MarketDataProvider::Yahoo,
+            )
+            .await?;
 
             let latest_price = if let Some(mapping) = mapping.as_ref() {
                 latest_price_snapshot(
@@ -424,7 +425,7 @@ impl MarketDataService {
             let mapping = provider_symbols::find_by_instrument_provider(
                 pool,
                 target.instrument.id,
-                YAHOO_PROVIDER,
+                MarketDataProvider::Yahoo,
             )
             .await?;
             target.provider_symbol = mapping
@@ -463,8 +464,9 @@ impl MarketDataService {
                             pool,
                             &provider_symbols::NewProviderSymbol {
                                 instrument_id: target.instrument.id,
-                                provider: YAHOO_PROVIDER.to_owned(),
+                                provider: MarketDataProvider::Yahoo,
                                 provider_symbol: provider_symbol.clone(),
+                                asset_class: None,
                                 currency: Some(target.instrument.currency.clone()),
                                 enabled: true,
                                 created_at: now.clone(),
@@ -492,8 +494,9 @@ impl MarketDataService {
                             pool,
                             &provider_symbols::NewProviderSymbol {
                                 instrument_id: target.instrument.id,
-                                provider: YAHOO_PROVIDER.to_owned(),
+                                provider: MarketDataProvider::Yahoo,
                                 provider_symbol: provider_symbol.clone(),
+                                asset_class: None,
                                 currency: Some(target.instrument.currency.clone()),
                                 enabled: false,
                                 created_at: now.clone(),
@@ -525,7 +528,7 @@ impl MarketDataService {
                             pool,
                             &prices::NewPrice {
                                 instrument_id: target.instrument.id,
-                                provider: YAHOO_PROVIDER.to_owned(),
+                                provider: MarketDataProvider::Yahoo,
                                 provider_symbol: row.provider_symbol.clone(),
                                 date: row.date,
                                 close: row.close,
@@ -587,7 +590,7 @@ impl MarketDataService {
                                 quote: row.quote.clone(),
                                 date: row.date,
                                 rate: row.rate,
-                                provider: FRANKFURTER_PROVIDER.to_owned(),
+                                provider: BASE_FX_PROVIDER,
                                 fetched_at: now_iso8601(),
                             },
                         )
@@ -809,9 +812,12 @@ impl MarketDataService {
         instruments: &[crate::db::instruments::InstrumentRow],
     ) -> Result<(), MarketDataError> {
         for instrument in instruments {
-            let existing_mapping =
-                provider_symbols::find_by_instrument_provider(pool, instrument.id, YAHOO_PROVIDER)
-                    .await?;
+            let existing_mapping = provider_symbols::find_by_instrument_provider(
+                pool,
+                instrument.id,
+                MarketDataProvider::Yahoo,
+            )
+            .await?;
             let known_seed = yahoo_seed_for_known_isin(instrument.isin.as_deref())
                 .or_else(|| yahoo_seed_for_known_isin(Some(&instrument.symbol)));
 
@@ -835,8 +841,9 @@ impl MarketDataService {
                 pool,
                 &provider_symbols::NewProviderSymbol {
                     instrument_id: instrument.id,
-                    provider: YAHOO_PROVIDER.to_owned(),
+                    provider: MarketDataProvider::Yahoo,
                     provider_symbol: seed.provider_symbol,
+                    asset_class: None,
                     currency: Some(instrument.currency.clone()),
                     enabled: seed.enabled,
                     created_at: now.clone(),
@@ -1563,12 +1570,20 @@ async fn latest_price_snapshot(
         return Ok(PriceSnapshotState::unmapped());
     }
 
-    let row =
-        prices::find_latest_on_or_before(pool, instrument_id, YAHOO_PROVIDER, as_of_date).await?;
+    let row = prices::find_latest_on_or_before(
+        pool,
+        instrument_id,
+        MarketDataProvider::Yahoo,
+        as_of_date,
+    )
+    .await?;
     Ok(match row {
-        Some(row) => {
-            PriceSnapshotState::available(row.date, row.close, row.provider, row.provider_symbol)
-        }
+        Some(row) => PriceSnapshotState::available(
+            row.date,
+            row.close,
+            row.provider.to_string(),
+            row.provider_symbol,
+        ),
         None => PriceSnapshotState::missing("missing_price"),
     })
 }
@@ -1587,14 +1602,13 @@ async fn latest_fx_snapshot(
         ));
     }
 
-    let row =
-        fx_rates::find_latest_on_or_before(pool, currency, SEK, FRANKFURTER_PROVIDER, as_of_date)
-            .await?;
+    let row = fx_rates::find_latest_on_or_before(pool, currency, SEK, BASE_FX_PROVIDER, as_of_date)
+        .await?;
     Ok(match row {
         Some(row) => PriceSnapshotState::available(
             row.date,
             row.rate,
-            row.provider,
+            row.provider.to_string(),
             format!("{}/{}", row.base, row.quote),
         ),
         None => PriceSnapshotState::missing("missing_fx"),
@@ -1731,8 +1745,9 @@ mod tests {
             pool,
             &crate::db::provider_symbols::NewProviderSymbol {
                 instrument_id,
-                provider: YAHOO_PROVIDER.to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: provider_symbol.to_owned(),
+                asset_class: None,
                 currency: Some("SEK".to_owned()),
                 enabled,
                 created_at: now.clone(),
@@ -1801,10 +1816,11 @@ mod tests {
         assert_eq!(response.failed_items, 0);
         assert!(!response.items.is_empty());
 
-        let mapping = provider_symbols::find_by_instrument_provider(&pool, msft, YAHOO_PROVIDER)
-            .await
-            .expect("mapping lookup should succeed")
-            .expect("mapping should exist");
+        let mapping =
+            provider_symbols::find_by_instrument_provider(&pool, msft, MarketDataProvider::Yahoo)
+                .await
+                .expect("mapping lookup should succeed")
+                .expect("mapping should exist");
         assert!(mapping.enabled);
         assert_eq!(mapping.provider_symbol, "MSFT");
 
@@ -2002,10 +2018,11 @@ mod tests {
         assert_eq!(response.unmapped_instruments, 0);
         assert_eq!(symbol_search.calls()[0].query, "US5949181045");
 
-        let mapping = provider_symbols::find_by_instrument_provider(&pool, msft, YAHOO_PROVIDER)
-            .await
-            .expect("mapping lookup should succeed")
-            .expect("mapping should exist");
+        let mapping =
+            provider_symbols::find_by_instrument_provider(&pool, msft, MarketDataProvider::Yahoo)
+                .await
+                .expect("mapping lookup should succeed")
+                .expect("mapping should exist");
         assert!(mapping.enabled);
         assert_eq!(mapping.provider_symbol, "MSFT");
     }
@@ -2070,8 +2087,9 @@ mod tests {
             &pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: korea,
-                provider: YAHOO_PROVIDER.to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "IDKO.L".to_owned(),
+                asset_class: None,
                 currency: Some("EUR".to_owned()),
                 enabled: false,
                 created_at: now_iso8601(),
@@ -2084,8 +2102,9 @@ mod tests {
             &pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: tsm,
-                provider: YAHOO_PROVIDER.to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "TSMN.MX".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: false,
                 created_at: now_iso8601(),
@@ -2119,11 +2138,14 @@ mod tests {
 
         let cases = [(korea, "IQQK.DE"), (alphabet, "GOOGL"), (tsm, "TSM")];
         for (instrument_id, expected_symbol) in cases {
-            let mapping =
-                provider_symbols::find_by_instrument_provider(&pool, instrument_id, YAHOO_PROVIDER)
-                    .await
-                    .expect("mapping lookup should succeed")
-                    .expect("mapping should exist");
+            let mapping = provider_symbols::find_by_instrument_provider(
+                &pool,
+                instrument_id,
+                MarketDataProvider::Yahoo,
+            )
+            .await
+            .expect("mapping lookup should succeed")
+            .expect("mapping should exist");
             assert!(mapping.enabled);
             assert_eq!(mapping.provider_symbol, expected_symbol);
         }
@@ -2230,11 +2252,14 @@ mod tests {
         assert_eq!(price_provider.calls()[1].symbol, "SKHY");
         assert_eq!(symbol_search.calls()[0].query, "US78392B2060");
         assert_eq!(symbol_search.calls()[1].query, "SK Hynix Inc");
-        let mapping =
-            provider_symbols::find_by_instrument_provider(&pool, sk_hynix, YAHOO_PROVIDER)
-                .await
-                .expect("mapping lookup should succeed")
-                .expect("mapping should exist");
+        let mapping = provider_symbols::find_by_instrument_provider(
+            &pool,
+            sk_hynix,
+            MarketDataProvider::Yahoo,
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .expect("mapping should exist");
         assert!(mapping.enabled);
         assert_eq!(mapping.provider_symbol, "SKHY");
         assert_eq!(mapping.currency.as_deref(), Some("USD"));
@@ -2323,11 +2348,14 @@ mod tests {
         assert_eq!(response.status, RefreshRunStatus::Succeeded);
         assert_eq!(response.prices_written, 1);
         assert_eq!(price_provider.calls().len(), 2);
-        let mapping =
-            provider_symbols::find_by_instrument_provider(&pool, instrument.id, YAHOO_PROVIDER)
-                .await
-                .expect("mapping lookup should succeed")
-                .expect("mapping should exist");
+        let mapping = provider_symbols::find_by_instrument_provider(
+            &pool,
+            instrument.id,
+            MarketDataProvider::Yahoo,
+        )
+        .await
+        .expect("mapping lookup should succeed")
+        .expect("mapping should exist");
         assert_eq!(mapping.provider_symbol, "OLD");
     }
 
@@ -2404,8 +2432,9 @@ mod tests {
             &pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id: asml,
-                provider: YAHOO_PROVIDER.to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "ASML.DE".to_owned(),
+                asset_class: None,
                 currency: Some("EUR".to_owned()),
                 enabled: true,
                 created_at: now_iso8601(),

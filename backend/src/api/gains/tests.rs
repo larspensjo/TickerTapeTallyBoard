@@ -1,10 +1,11 @@
 use chrono::{Duration, Local};
 
 use crate::api::router;
-use crate::api::valuation::{AvailabilityResponse, BASE_CURRENCY, FX_PROVIDER, PRICE_PROVIDER};
+use crate::api::valuation::{AvailabilityResponse, BASE_CURRENCY};
 use crate::db::{fx_rates, prices, provider_symbols};
 use crate::domain::{Availability, BaseAmount, RealizedGain, ValuedHolding};
 use crate::import::now_iso8601;
+use crate::providers::{BASE_FX_PROVIDER, PRICE_PROVIDER_PRECEDENCE};
 use crate::state::AppState;
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
@@ -551,6 +552,7 @@ async fn gains_populated_portfolio_uses_cached_price_and_frankfurter_fx() {
     assert_available(&row["price_effect_base"], "2200.00");
     assert_available(&row["fx_effect_base"], "1000.00");
     assert_eq!(row["latest_price"]["close"], "120.00");
+    assert_eq!(row["latest_price"]["source"], "YAHOO");
     assert_eq!(row["latest_fx"]["rate"], "11");
     assert_eq!(row["latest_fx"]["quote"], BASE_CURRENCY);
     assert_available(&row["market_value_native"], "1200.00");
@@ -756,7 +758,7 @@ async fn seed_june_fixture(state: &AppState) -> i64 {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "MSFT".to_owned(),
                 date,
                 close,
@@ -778,7 +780,7 @@ async fn seed_june_fixture(state: &AppState) -> i64 {
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate: dec!(10),
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: fetched_at.clone(),
             },
         )
@@ -789,8 +791,9 @@ async fn seed_june_fixture(state: &AppState) -> i64 {
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id,
-            provider: PRICE_PROVIDER.to_owned(),
+            provider: PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: "MSFT".to_owned(),
+            asset_class: None,
             currency: Some("USD".to_owned()),
             enabled: true,
             created_at: fetched_at.clone(),
@@ -888,7 +891,7 @@ async fn gains_xirr_zero_total_return_with_nonzero_components() {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "MSFT".to_owned(),
                 date,
                 close,
@@ -916,7 +919,7 @@ async fn gains_xirr_zero_total_return_with_nonzero_components() {
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate,
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: fetched_at.clone(),
             },
         )
@@ -927,8 +930,9 @@ async fn gains_xirr_zero_total_return_with_nonzero_components() {
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id,
-            provider: PRICE_PROVIDER.to_owned(),
+            provider: PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: "MSFT".to_owned(),
+            asset_class: None,
             currency: Some("USD".to_owned()),
             enabled: true,
             created_at: fetched_at.clone(),
@@ -1005,7 +1009,7 @@ async fn gains_split_neutrality_regression() {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "TSLA".to_owned(),
                 date,
                 close,
@@ -1027,7 +1031,7 @@ async fn gains_split_neutrality_regression() {
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate: dec!(10),
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: fetched_at.clone(),
             },
         )
@@ -1038,8 +1042,9 @@ async fn gains_split_neutrality_regression() {
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id,
-            provider: PRICE_PROVIDER.to_owned(),
+            provider: PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: "TSLA".to_owned(),
+            asset_class: None,
             currency: Some("USD".to_owned()),
             enabled: true,
             created_at: fetched_at.clone(),
@@ -1098,8 +1103,9 @@ async fn seed_market_data(
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id,
-            provider: PRICE_PROVIDER.to_owned(),
+            provider: PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: "MSFT".to_owned(),
+            asset_class: None,
             currency: Some("USD".to_owned()),
             enabled: true,
             created_at: fetched_at.clone(),
@@ -1114,7 +1120,7 @@ async fn seed_market_data(
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "MSFT".to_owned(),
                 date,
                 close,
@@ -1134,7 +1140,7 @@ async fn seed_market_data(
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate,
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: fetched_at.clone(),
             },
         )
@@ -1149,8 +1155,9 @@ async fn seed_sek_prices(state: &AppState, instrument_id: i64, symbol: &str) {
         &state.pool,
         &provider_symbols::NewProviderSymbol {
             instrument_id,
-            provider: PRICE_PROVIDER.to_owned(),
+            provider: PRICE_PROVIDER_PRECEDENCE[0],
             provider_symbol: symbol.to_owned(),
+            asset_class: None,
             currency: Some(BASE_CURRENCY.to_owned()),
             enabled: true,
             created_at: fetched_at.clone(),
@@ -1168,7 +1175,7 @@ async fn seed_sek_prices(state: &AppState, instrument_id: i64, symbol: &str) {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: symbol.to_owned(),
                 date,
                 close: dec!(12),

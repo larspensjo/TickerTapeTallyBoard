@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::sqlite::SqlitePool;
 
-use crate::db::RepoError;
+use crate::{db::RepoError, providers::MarketDataProvider};
 
 const LIST_SQL: &str =
     "SELECT id, instrument_id, provider, provider_symbol, date, close, currency, fetched_at \
@@ -38,7 +38,7 @@ const UPSERT_SQL: &str = "INSERT INTO prices \
      RETURNING id, instrument_id, provider, provider_symbol, date, close, currency, fetched_at";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
-pub struct PriceRow {
+struct RawPriceRow {
     pub id: i64,
     pub instrument_id: i64,
     pub provider: String,
@@ -47,6 +47,41 @@ pub struct PriceRow {
     pub close: String,
     pub currency: String,
     pub fetched_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PriceRow {
+    pub id: i64,
+    pub instrument_id: i64,
+    pub provider: MarketDataProvider,
+    pub provider_symbol: String,
+    pub date: String,
+    pub close: String,
+    pub currency: String,
+    pub fetched_at: String,
+}
+
+impl TryFrom<RawPriceRow> for PriceRow {
+    type Error = RepoError;
+
+    fn try_from(row: RawPriceRow) -> Result<Self, Self::Error> {
+        let provider = MarketDataProvider::from_db_str(&row.provider).ok_or_else(|| {
+            RepoError::Decode(format!(
+                "unknown price provider {:?} in row {} for instrument {}",
+                row.provider, row.id, row.instrument_id
+            ))
+        })?;
+        Ok(Self {
+            id: row.id,
+            instrument_id: row.instrument_id,
+            provider,
+            provider_symbol: row.provider_symbol,
+            date: row.date,
+            close: row.close,
+            currency: row.currency,
+            fetched_at: row.fetched_at,
+        })
+    }
 }
 
 impl PriceRow {
@@ -65,7 +100,7 @@ impl PriceRow {
 #[derive(Clone, Debug)]
 pub struct NewPrice {
     pub instrument_id: i64,
-    pub provider: String,
+    pub provider: MarketDataProvider,
     pub provider_symbol: String,
     pub date: NaiveDate,
     pub close: Decimal,
@@ -74,90 +109,90 @@ pub struct NewPrice {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<PriceRow>, RepoError> {
-    let rows = sqlx::query_as::<_, PriceRow>(LIST_SQL)
+    let rows = sqlx::query_as::<_, RawPriceRow>(LIST_SQL)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<PriceRow>, RepoError> {
-    let row = sqlx::query_as::<_, PriceRow>(FIND_SQL)
+    let row = sqlx::query_as::<_, RawPriceRow>(FIND_SQL)
         .bind(id)
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_by_key(
     pool: &SqlitePool,
     instrument_id: i64,
-    provider: &str,
+    provider: MarketDataProvider,
     date: NaiveDate,
 ) -> Result<Option<PriceRow>, RepoError> {
-    let row = sqlx::query_as::<_, PriceRow>(FIND_BY_KEY_SQL)
+    let row = sqlx::query_as::<_, RawPriceRow>(FIND_BY_KEY_SQL)
         .bind(instrument_id)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_latest_on_or_before(
     pool: &SqlitePool,
     instrument_id: i64,
-    provider: &str,
+    provider: MarketDataProvider,
     as_of_date: NaiveDate,
 ) -> Result<Option<PriceRow>, RepoError> {
-    let row = sqlx::query_as::<_, PriceRow>(FIND_LATEST_ON_OR_BEFORE_SQL)
+    let row = sqlx::query_as::<_, RawPriceRow>(FIND_LATEST_ON_OR_BEFORE_SQL)
         .bind(instrument_id)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(as_of_date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_previous_before(
     pool: &SqlitePool,
     instrument_id: i64,
-    provider: &str,
+    provider: MarketDataProvider,
     before_date: NaiveDate,
 ) -> Result<Option<PriceRow>, RepoError> {
-    let row = sqlx::query_as::<_, PriceRow>(FIND_PREVIOUS_BEFORE_SQL)
+    let row = sqlx::query_as::<_, RawPriceRow>(FIND_PREVIOUS_BEFORE_SQL)
         .bind(instrument_id)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(before_date.format("%Y-%m-%d").to_string())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn list_for_instrument_in_range(
     pool: &SqlitePool,
     instrument_id: i64,
-    provider: &str,
+    provider: MarketDataProvider,
     from: Option<NaiveDate>,
     to: Option<NaiveDate>,
 ) -> Result<Vec<PriceRow>, RepoError> {
     let from = from.map(|d| d.format("%Y-%m-%d").to_string());
     let to = to.map(|d| d.format("%Y-%m-%d").to_string());
-    let rows = sqlx::query_as::<_, PriceRow>(LIST_IN_RANGE_SQL)
+    let rows = sqlx::query_as::<_, RawPriceRow>(LIST_IN_RANGE_SQL)
         .bind(instrument_id)
-        .bind(provider)
+        .bind(provider.as_str())
         .bind(&from)
         .bind(&from)
         .bind(&to)
         .bind(&to)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoError> {
-    let row = sqlx::query_as::<_, PriceRow>(UPSERT_SQL)
+    let row = sqlx::query_as::<_, RawPriceRow>(UPSERT_SQL)
         .bind(new.instrument_id)
-        .bind(&new.provider)
+        .bind(new.provider.as_str())
         .bind(&new.provider_symbol)
         .bind(new.date.format("%Y-%m-%d").to_string())
         .bind(new.close.to_string())
@@ -165,7 +200,7 @@ pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoE
         .bind(&new.fetched_at)
         .fetch_one(pool)
         .await?;
-    Ok(row)
+    row.try_into()
 }
 
 pub async fn delete_by_instrument_id_in_tx(
@@ -194,7 +229,7 @@ mod tests {
             &pool,
             &NewPrice {
                 instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
                 close: Decimal::new(1000, 2),
@@ -209,7 +244,7 @@ mod tests {
             &pool,
             &NewPrice {
                 instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
                 close: Decimal::new(1125, 2),
@@ -224,7 +259,7 @@ mod tests {
             &pool,
             &NewPrice {
                 instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFTX".to_owned(),
                 date: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
                 close: Decimal::new(1135, 2),
@@ -246,7 +281,7 @@ mod tests {
         let latest = find_latest_on_or_before(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 11).expect("date should be valid"),
         )
         .await
@@ -266,7 +301,7 @@ mod tests {
         let inclusive_latest = find_latest_on_or_before(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -277,7 +312,7 @@ mod tests {
         let prior = find_previous_before(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -288,7 +323,7 @@ mod tests {
         let same_day = find_by_key(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
         )
         .await
@@ -300,7 +335,7 @@ mod tests {
         let no_latest = find_latest_on_or_before(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 9).expect("date should be valid"),
         )
         .await
@@ -310,7 +345,7 @@ mod tests {
         let no_previous = find_previous_before(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
         )
         .await
@@ -328,7 +363,7 @@ mod tests {
                 &pool,
                 &NewPrice {
                     instrument_id,
-                    provider: "YAHOO".to_owned(),
+                    provider: MarketDataProvider::Yahoo,
                     provider_symbol: "MSFT".to_owned(),
                     date: NaiveDate::from_ymd_opt(2026, 6, day).expect("valid date"),
                     close: Decimal::from_str(close).expect("close"),
@@ -344,7 +379,7 @@ mod tests {
         let windowed = list_for_instrument_in_range(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             Some(NaiveDate::from_ymd_opt(2026, 6, 11).unwrap()),
             Some(NaiveDate::from_ymd_opt(2026, 6, 12).unwrap()),
         )
@@ -354,23 +389,35 @@ mod tests {
         assert_eq!(dates, vec!["2026-06-11", "2026-06-12"]);
 
         // No bounds returns full history ascending.
-        let all = list_for_instrument_in_range(&pool, instrument_id, "YAHOO", None, None)
-            .await
-            .expect("range query should succeed");
+        let all = list_for_instrument_in_range(
+            &pool,
+            instrument_id,
+            MarketDataProvider::Yahoo,
+            None,
+            None,
+        )
+        .await
+        .expect("range query should succeed");
         let all_dates: Vec<&str> = all.iter().map(|r| r.date.as_str()).collect();
         assert_eq!(all_dates, vec!["2026-06-10", "2026-06-11", "2026-06-12"]);
 
         // Provider filtering: wrong provider yields nothing.
-        let other = list_for_instrument_in_range(&pool, instrument_id, "OTHER", None, None)
-            .await
-            .expect("range query should succeed");
+        let other = list_for_instrument_in_range(
+            &pool,
+            instrument_id,
+            MarketDataProvider::NasdaqNordic,
+            None,
+            None,
+        )
+        .await
+        .expect("range query should succeed");
         assert!(other.is_empty());
 
         // Open-ended `from` only.
         let from_only = list_for_instrument_in_range(
             &pool,
             instrument_id,
-            "YAHOO",
+            MarketDataProvider::Yahoo,
             Some(NaiveDate::from_ymd_opt(2026, 6, 12).unwrap()),
             None,
         )
@@ -381,11 +428,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn price_constraints_are_enforced() {
+    async fn unknown_provider_is_decode_error_and_foreign_key_is_enforced() {
         let pool = testing::memory_pool().await;
         let instrument_id = seed_instrument(&pool).await;
 
-        let invalid_provider = sqlx::query(
+        sqlx::query(
             "INSERT INTO prices (instrument_id, provider, provider_symbol, date, close, currency, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(instrument_id)
@@ -397,9 +444,9 @@ mod tests {
         .bind("2026-06-16T08:00:00Z")
         .execute(&pool)
         .await
-        .expect_err("invalid provider should fail");
+        .expect("unknown provider row inserts after CHECK removal");
 
-        assert!(is_constraint_error(&invalid_provider, "CHECK"));
+        assert!(matches!(list(&pool).await, Err(RepoError::Decode(_))));
 
         let missing_instrument = sqlx::query(
             "INSERT INTO prices (instrument_id, provider, provider_symbol, date, close, currency, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

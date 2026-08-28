@@ -88,7 +88,7 @@ pub async fn load_valued_holdings(
             ))
         })?;
         let valuation_inputs = load_valuation_inputs(pool, instrument, valuation_date).await?;
-        let valuation = if valuation_inputs.price_mapping_enabled {
+        let valuation = if valuation_inputs.has_price_coverage {
             Some(value_position(
                 &position,
                 &instrument.currency,

@@ -1,33 +1,35 @@
 use sqlx::sqlite::SqlitePool;
 
-use crate::db::RepoError;
+use crate::{db::RepoError, providers::MarketDataProvider};
 
-const LIST_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at \
+const LIST_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at \
     FROM instrument_provider_symbols ORDER BY instrument_id, provider";
-const FIND_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at \
+const FIND_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at \
     FROM instrument_provider_symbols WHERE id = ?";
-const FIND_BY_INSTRUMENT_PROVIDER_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at \
+const FIND_BY_INSTRUMENT_PROVIDER_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at \
     FROM instrument_provider_symbols WHERE instrument_id = ? AND provider = ?";
-const LIST_BY_PROVIDER_SYMBOL_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at \
+const LIST_BY_PROVIDER_SYMBOL_SQL: &str = "SELECT id, instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at \
     FROM instrument_provider_symbols WHERE provider = ? AND provider_symbol = ? ORDER BY instrument_id, id";
 const DELETE_BY_INSTRUMENT_SQL: &str =
     "DELETE FROM instrument_provider_symbols WHERE instrument_id = ?";
 const UPSERT_SQL: &str = "INSERT INTO instrument_provider_symbols \
-       (instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at) \
-     VALUES (?, ?, ?, ?, ?, ?, ?) \
+       (instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
      ON CONFLICT (instrument_id, provider) DO UPDATE SET \
        provider_symbol = excluded.provider_symbol, \
+       asset_class = excluded.asset_class, \
        currency = excluded.currency, \
        enabled = excluded.enabled, \
        updated_at = excluded.updated_at \
-     RETURNING id, instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at";
+     RETURNING id, instrument_id, provider, provider_symbol, asset_class, currency, enabled, created_at, updated_at";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
-pub struct ProviderSymbolRow {
+struct RawProviderSymbolRow {
     pub id: i64,
     pub instrument_id: i64,
     pub provider: String,
     pub provider_symbol: String,
+    pub asset_class: Option<String>,
     pub currency: Option<String>,
     pub enabled: bool,
     pub created_at: String,
@@ -35,10 +37,48 @@ pub struct ProviderSymbolRow {
 }
 
 #[derive(Clone, Debug)]
+pub struct ProviderSymbolRow {
+    pub id: i64,
+    pub instrument_id: i64,
+    pub provider: MarketDataProvider,
+    pub provider_symbol: String,
+    pub asset_class: Option<String>,
+    pub currency: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl TryFrom<RawProviderSymbolRow> for ProviderSymbolRow {
+    type Error = RepoError;
+
+    fn try_from(row: RawProviderSymbolRow) -> Result<Self, Self::Error> {
+        let provider = MarketDataProvider::from_db_str(&row.provider).ok_or_else(|| {
+            RepoError::Decode(format!(
+                "unknown provider-symbol provider {:?} in row {} for instrument {}",
+                row.provider, row.id, row.instrument_id
+            ))
+        })?;
+        Ok(Self {
+            id: row.id,
+            instrument_id: row.instrument_id,
+            provider,
+            provider_symbol: row.provider_symbol,
+            asset_class: row.asset_class,
+            currency: row.currency,
+            enabled: row.enabled,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct NewProviderSymbol {
     pub instrument_id: i64,
-    pub provider: String,
+    pub provider: MarketDataProvider,
     pub provider_symbol: String,
+    pub asset_class: Option<String>,
     pub currency: Option<String>,
     pub enabled: bool,
     pub created_at: String,
@@ -46,44 +86,44 @@ pub struct NewProviderSymbol {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<ProviderSymbolRow>, RepoError> {
-    let rows = sqlx::query_as::<_, ProviderSymbolRow>(LIST_SQL)
+    let rows = sqlx::query_as::<_, RawProviderSymbolRow>(LIST_SQL)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn find(pool: &SqlitePool, id: i64) -> Result<Option<ProviderSymbolRow>, RepoError> {
-    let row = sqlx::query_as::<_, ProviderSymbolRow>(FIND_SQL)
+    let row = sqlx::query_as::<_, RawProviderSymbolRow>(FIND_SQL)
         .bind(id)
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn find_by_instrument_provider(
     pool: &SqlitePool,
     instrument_id: i64,
-    provider: &str,
+    provider: MarketDataProvider,
 ) -> Result<Option<ProviderSymbolRow>, RepoError> {
-    let row = sqlx::query_as::<_, ProviderSymbolRow>(FIND_BY_INSTRUMENT_PROVIDER_SQL)
+    let row = sqlx::query_as::<_, RawProviderSymbolRow>(FIND_BY_INSTRUMENT_PROVIDER_SQL)
         .bind(instrument_id)
-        .bind(provider)
+        .bind(provider.as_str())
         .fetch_optional(pool)
         .await?;
-    Ok(row)
+    row.map(TryInto::try_into).transpose()
 }
 
 pub async fn list_by_provider_symbol(
     pool: &SqlitePool,
-    provider: &str,
+    provider: MarketDataProvider,
     provider_symbol: &str,
 ) -> Result<Vec<ProviderSymbolRow>, RepoError> {
-    let rows = sqlx::query_as::<_, ProviderSymbolRow>(LIST_BY_PROVIDER_SYMBOL_SQL)
-        .bind(provider)
+    let rows = sqlx::query_as::<_, RawProviderSymbolRow>(LIST_BY_PROVIDER_SYMBOL_SQL)
+        .bind(provider.as_str())
         .bind(provider_symbol)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 /// Upsert a provider-symbol mapping by `(instrument_id, provider)`.
@@ -91,17 +131,18 @@ pub async fn upsert(
     pool: &SqlitePool,
     new: &NewProviderSymbol,
 ) -> Result<ProviderSymbolRow, RepoError> {
-    let row = sqlx::query_as::<_, ProviderSymbolRow>(UPSERT_SQL)
+    let row = sqlx::query_as::<_, RawProviderSymbolRow>(UPSERT_SQL)
         .bind(new.instrument_id)
-        .bind(&new.provider)
+        .bind(new.provider.as_str())
         .bind(&new.provider_symbol)
+        .bind(new.asset_class.clone())
         .bind(new.currency.clone())
         .bind(new.enabled)
         .bind(&new.created_at)
         .bind(&new.updated_at)
         .fetch_one(pool)
         .await?;
-    Ok(row)
+    row.try_into()
 }
 
 pub async fn delete_by_instrument_id_in_tx(
@@ -130,8 +171,9 @@ mod tests {
             &pool,
             &NewProviderSymbol {
                 instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: true,
                 created_at: "2026-06-16T08:00:00Z".to_owned(),
@@ -145,8 +187,9 @@ mod tests {
             &pool,
             &NewProviderSymbol {
                 instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFTX".to_owned(),
+                asset_class: None,
                 currency: None,
                 enabled: false,
                 created_at: "2026-06-16T08:10:00Z".to_owned(),
@@ -167,13 +210,13 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].provider_symbol, "MSFTX");
 
-        let by_pair = find_by_instrument_provider(&pool, instrument_id, "YAHOO")
+        let by_pair = find_by_instrument_provider(&pool, instrument_id, MarketDataProvider::Yahoo)
             .await
             .expect("pair lookup should succeed")
             .expect("row should exist");
         assert_eq!(by_pair.id, second.id);
 
-        let by_symbol = list_by_provider_symbol(&pool, "YAHOO", "MSFTX")
+        let by_symbol = list_by_provider_symbol(&pool, MarketDataProvider::Yahoo, "MSFTX")
             .await
             .expect("symbol lookup should succeed");
         assert_eq!(by_symbol.len(), 1);
@@ -190,8 +233,9 @@ mod tests {
             &pool,
             &NewProviderSymbol {
                 instrument_id: first_instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: true,
                 created_at: "2026-06-16T08:00:00Z".to_owned(),
@@ -205,8 +249,9 @@ mod tests {
             &pool,
             &NewProviderSymbol {
                 instrument_id: second_instrument_id,
-                provider: "YAHOO".to_owned(),
+                provider: MarketDataProvider::Yahoo,
                 provider_symbol: "MSFT".to_owned(),
+                asset_class: None,
                 currency: Some("USD".to_owned()),
                 enabled: true,
                 created_at: "2026-06-16T08:01:00Z".to_owned(),
@@ -216,7 +261,7 @@ mod tests {
         .await
         .expect("second mapping should upsert");
 
-        let matches = list_by_provider_symbol(&pool, "YAHOO", "MSFT")
+        let matches = list_by_provider_symbol(&pool, MarketDataProvider::Yahoo, "MSFT")
             .await
             .expect("reverse lookup should succeed");
 
@@ -226,11 +271,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_symbol_constraints_are_enforced() {
+    async fn unknown_provider_code_is_decode_error_and_foreign_key_is_enforced() {
         let pool = testing::memory_pool().await;
         let instrument_id = seed_instrument(&pool, "MSFT").await;
 
-        let invalid_provider = sqlx::query(
+        sqlx::query(
             "INSERT INTO instrument_provider_symbols (instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(instrument_id)
@@ -242,9 +287,9 @@ mod tests {
         .bind("2026-06-16T08:00:00Z")
         .execute(&pool)
         .await
-        .expect_err("invalid provider should fail");
+        .expect("unknown provider row inserts after CHECK removal");
 
-        assert!(is_constraint_error(&invalid_provider, "CHECK"));
+        assert!(matches!(list(&pool).await, Err(RepoError::Decode(_))));
 
         let missing_instrument = sqlx::query(
             "INSERT INTO instrument_provider_symbols (instrument_id, provider, provider_symbol, currency, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

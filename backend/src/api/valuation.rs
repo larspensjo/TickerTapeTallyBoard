@@ -4,12 +4,12 @@ use serde::Serialize;
 use sqlx::sqlite::SqlitePool;
 
 use crate::api::error::ApiError;
-use crate::db::{fx_rates, instruments, prices, provider_symbols};
+use crate::db::{fx_rates, instruments};
 use crate::domain::{Availability, DataFreshness, FxCandidate, PriceCandidate, ValuationReason};
+use crate::market_data::effective_prices;
+use crate::providers::BASE_FX_PROVIDER;
 
 pub(super) const BASE_CURRENCY: &str = "SEK";
-pub(super) const PRICE_PROVIDER: &str = "YAHOO";
-pub(super) const FX_PROVIDER: &str = "FRANKFURTER";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -23,6 +23,7 @@ pub(crate) struct PriceSnapshotResponse {
     pub date: String,
     pub close: String,
     pub currency: String,
+    pub source: String,
     pub freshness: String,
 }
 
@@ -36,7 +37,7 @@ pub(crate) struct FxSnapshotResponse {
 }
 
 pub(super) struct ValuationInputs {
-    pub price_mapping_enabled: bool,
+    pub has_price_coverage: bool,
     pub latest_price: Option<PriceCandidate>,
     pub previous_price: Option<PriceCandidate>,
     pub latest_fx: Option<FxCandidate>,
@@ -55,20 +56,15 @@ pub(super) async fn load_valuation_inputs(
     instrument: &instruments::InstrumentRow,
     valuation_date: NaiveDate,
 ) -> Result<ValuationInputs, ApiError> {
-    let price_mapping =
-        provider_symbols::find_by_instrument_provider(pool, instrument.id, PRICE_PROVIDER).await?;
-    let price_mapping_enabled = price_mapping.as_ref().is_some_and(|row| row.enabled);
+    let has_price_coverage = effective_prices::has_price_coverage(pool, instrument.id).await?;
 
-    let (latest_price, previous_price) = if price_mapping_enabled {
+    let (latest_price, previous_price) = if has_price_coverage {
         let latest =
-            prices::find_latest_on_or_before(pool, instrument.id, PRICE_PROVIDER, valuation_date)
-                .await?
-                .and_then(price_candidate);
+            effective_prices::effective_latest_on_or_before(pool, instrument.id, valuation_date)
+                .await?;
 
         let previous = if let Some(ref latest) = latest {
-            prices::find_previous_before(pool, instrument.id, PRICE_PROVIDER, latest.date)
-                .await?
-                .and_then(price_candidate)
+            effective_prices::effective_previous_before(pool, instrument.id, latest.date).await?
         } else {
             None
         };
@@ -85,7 +81,7 @@ pub(super) async fn load_valuation_inputs(
             pool,
             &instrument.currency,
             BASE_CURRENCY,
-            FX_PROVIDER,
+            BASE_FX_PROVIDER,
             valuation_date,
         )
         .await?
@@ -96,7 +92,7 @@ pub(super) async fn load_valuation_inputs(
                 pool,
                 &instrument.currency,
                 BASE_CURRENCY,
-                FX_PROVIDER,
+                BASE_FX_PROVIDER,
                 latest.date,
             )
             .await?
@@ -109,7 +105,7 @@ pub(super) async fn load_valuation_inputs(
     };
 
     Ok(ValuationInputs {
-        price_mapping_enabled,
+        has_price_coverage,
         latest_price,
         previous_price,
         latest_fx,
@@ -123,18 +119,13 @@ pub(super) async fn load_period_inputs(
     start_date: Option<NaiveDate>,
     end_date: NaiveDate,
 ) -> Result<PeriodInputs, ApiError> {
-    let price_mapping =
-        provider_symbols::find_by_instrument_provider(pool, instrument.id, PRICE_PROVIDER).await?;
-    let mapping_enabled = price_mapping.as_ref().is_some_and(|r| r.enabled);
+    let has_price_coverage = effective_prices::has_price_coverage(pool, instrument.id).await?;
 
-    let (start_price, end_price) = if mapping_enabled {
-        let end = prices::find_latest_on_or_before(pool, instrument.id, PRICE_PROVIDER, end_date)
-            .await?
-            .and_then(price_candidate);
+    let (start_price, end_price) = if has_price_coverage {
+        let end =
+            effective_prices::effective_latest_on_or_before(pool, instrument.id, end_date).await?;
         let start = if let Some(sd) = start_date {
-            prices::find_latest_on_or_before(pool, instrument.id, PRICE_PROVIDER, sd)
-                .await?
-                .and_then(price_candidate)
+            effective_prices::effective_latest_on_or_before(pool, instrument.id, sd).await?
         } else {
             None
         };
@@ -151,7 +142,7 @@ pub(super) async fn load_period_inputs(
             pool,
             &instrument.currency,
             BASE_CURRENCY,
-            FX_PROVIDER,
+            BASE_FX_PROVIDER,
             end_date,
         )
         .await?
@@ -161,7 +152,7 @@ pub(super) async fn load_period_inputs(
                 pool,
                 &instrument.currency,
                 BASE_CURRENCY,
-                FX_PROVIDER,
+                BASE_FX_PROVIDER,
                 sd,
             )
             .await?
@@ -197,6 +188,9 @@ pub(super) fn serialize_valuation_reason(reason: &ValuationReason) -> String {
         ValuationReason::MissingPrice => "missing_price".to_string(),
         ValuationReason::MissingFx => "missing_fx".to_string(),
         ValuationReason::MissingPreviousClose => "missing_previous_close".to_string(),
+        ValuationReason::PreviousCloseSourceMismatch => {
+            "previous_close_source_mismatch".to_string()
+        }
         ValuationReason::MissingPreviousFx => "missing_previous_fx".to_string(),
         ValuationReason::StalePrice { trading_days } => {
             format!("stale_price_{}_days", trading_days)
@@ -233,6 +227,7 @@ pub(super) fn price_snapshot_response(
         date: snapshot.date.format("%Y-%m-%d").to_string(),
         close: money_string(snapshot.close),
         currency: snapshot.currency.clone(),
+        source: snapshot.source.as_str().to_owned(),
         freshness: serialize_freshness(snapshot.freshness),
     }
 }
@@ -265,16 +260,6 @@ pub(super) fn money_string(value: Decimal) -> String {
         }
         None => format!("{raw}.00"),
     }
-}
-
-fn price_candidate(row: prices::PriceRow) -> Option<PriceCandidate> {
-    let date = row.date_value().ok()?;
-    let close = row.close_decimal().ok()?;
-    Some(PriceCandidate {
-        date,
-        close,
-        currency: row.currency,
-    })
 }
 
 fn fx_candidate(row: fx_rates::FxRateRow) -> Option<FxCandidate> {
@@ -320,11 +305,20 @@ pub(super) fn serialize_freshness(freshness: DataFreshness) -> String {
 mod tests {
     use rust_decimal_macros::dec;
 
-    use super::money_string;
+    use super::{money_string, serialize_valuation_reason};
+    use crate::domain::ValuationReason;
 
     #[test]
     fn money_string_formats_two_decimals_and_normalizes_negative_zero() {
         assert_eq!(money_string(dec!(12.3)), "12.30");
         assert_eq!(money_string(dec!(-0.001)), "0.00");
+    }
+
+    #[test]
+    fn serializes_previous_close_source_mismatch() {
+        assert_eq!(
+            serialize_valuation_reason(&ValuationReason::PreviousCloseSourceMismatch),
+            "previous_close_source_mismatch"
+        );
     }
 }

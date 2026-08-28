@@ -6,11 +6,11 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
-use crate::api::valuation::{money_string, BASE_CURRENCY, FX_PROVIDER, PRICE_PROVIDER};
-use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
-use crate::domain::{
-    build_value_history, FxCandidate, PriceCandidate, ValueHistoryInstrument, ValueHistoryPoint,
-};
+use crate::api::valuation::{money_string, BASE_CURRENCY};
+use crate::db::{fx_rates, instruments, transactions};
+use crate::domain::{build_value_history, FxCandidate, ValueHistoryInstrument, ValueHistoryPoint};
+use crate::market_data::effective_prices;
+use crate::providers::BASE_FX_PROVIDER;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -99,29 +99,14 @@ pub async fn value_history(
             continue;
         }
 
-        let mapping = provider_symbols::find_by_instrument_provider(
+        let prices = effective_prices::effective_series(
             &state.pool,
             instrument.id,
-            PRICE_PROVIDER,
+            &instrument.currency,
+            None,
+            None,
         )
         .await?;
-        let mapping_enabled = mapping.as_ref().is_some_and(|m| m.enabled);
-
-        let prices: Vec<PriceCandidate> = if mapping_enabled {
-            prices::list_for_instrument_in_range(
-                &state.pool,
-                instrument.id,
-                PRICE_PROVIDER,
-                None,
-                None,
-            )
-            .await?
-            .into_iter()
-            .map(|row| price_candidate(instrument, row))
-            .collect::<Result<_, _>>()?
-        } else {
-            Vec::new()
-        };
 
         let is_base = instrument.currency.eq_ignore_ascii_case(BASE_CURRENCY);
         let fx_rates: Vec<FxCandidate> = if is_base {
@@ -131,7 +116,7 @@ pub async fn value_history(
                 &state.pool,
                 &instrument.currency,
                 BASE_CURRENCY,
-                FX_PROVIDER,
+                BASE_FX_PROVIDER,
             )
             .await?
             .into_iter()
@@ -155,29 +140,6 @@ pub async fn value_history(
         start_date: start_date.map(|date| date.format("%Y-%m-%d").to_string()),
         points: points.iter().map(point_response).collect(),
     }))
-}
-
-fn price_candidate(
-    instrument: &instruments::InstrumentRow,
-    row: prices::PriceRow,
-) -> Result<PriceCandidate, ApiError> {
-    let date = row.date_value().map_err(|e| {
-        ApiError::internal(format!(
-            "value-history: undecodable date in price row {} for instrument {}: {e}",
-            row.id, instrument.id
-        ))
-    })?;
-    let close = row.close_decimal().map_err(|e| {
-        ApiError::internal(format!(
-            "value-history: undecodable close in price row {} for instrument {}: {e}",
-            row.id, instrument.id
-        ))
-    })?;
-    Ok(PriceCandidate {
-        date,
-        close,
-        currency: row.currency,
-    })
 }
 
 fn fx_candidate(row: fx_rates::FxRateRow) -> Result<FxCandidate, ApiError> {
@@ -204,9 +166,10 @@ fn fx_candidate(row: fx_rates::FxRateRow) -> Result<FxCandidate, ApiError> {
 #[cfg(test)]
 mod tests {
     use crate::api::router;
-    use crate::api::valuation::{BASE_CURRENCY, FX_PROVIDER, PRICE_PROVIDER};
+    use crate::api::valuation::BASE_CURRENCY;
     use crate::db::{fx_rates, instruments, prices, provider_symbols};
     use crate::import::now_iso8601;
+    use crate::providers::{BASE_FX_PROVIDER, PRICE_PROVIDER_PRECEDENCE};
     use crate::state::AppState;
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
@@ -266,8 +229,9 @@ mod tests {
             &state.pool,
             &provider_symbols::NewProviderSymbol {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "SYM".to_owned(),
+                asset_class: None,
                 currency: None,
                 enabled,
                 created_at: now.clone(),
@@ -289,7 +253,7 @@ mod tests {
             &state.pool,
             &prices::NewPrice {
                 instrument_id,
-                provider: PRICE_PROVIDER.to_owned(),
+                provider: PRICE_PROVIDER_PRECEDENCE[0],
                 provider_symbol: "SYM".to_owned(),
                 date,
                 close,
@@ -309,7 +273,7 @@ mod tests {
                 quote: BASE_CURRENCY.to_owned(),
                 date,
                 rate,
-                provider: FX_PROVIDER.to_owned(),
+                provider: BASE_FX_PROVIDER,
                 fetched_at: now_iso8601(),
             },
         )

@@ -6,6 +6,7 @@
 mod conviction;
 mod performance;
 mod position;
+mod price_resolution;
 mod rebalance;
 mod transaction;
 mod valuation;
@@ -27,6 +28,9 @@ pub use performance::{
 pub use position::{
     derive_position, derive_position_performance, BaseAmount, BaseCostBasis, Position,
     PositionPerformance, RealizedGain, UnavailableReason,
+};
+pub use price_resolution::{
+    pick_latest_on_or_before, pick_previous_before, resolve_price_series, ProviderCode,
 };
 #[allow(unused_imports)]
 pub use rebalance::{
