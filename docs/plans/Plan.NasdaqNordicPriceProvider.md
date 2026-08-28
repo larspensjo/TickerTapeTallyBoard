@@ -964,12 +964,33 @@ Verify:
 
 ### Phase 5 — Add-instrument lookup consults every provider
 
-**Status: DONE** — commit `a792913`, apart from the external human testing
-below. Backend sequence
-green (455 unit + 53 integration tests, clippy clean under `-D warnings`,
-`cargo fmt --check` clean); frontend sequence green (`npm run check`: tsc clean,
-Biome 77 files, 28 test files / 288 tests). Three things were settled during
-implementation and review and should not be reopened:
+**Status: DONE** — commit `a792913`. Backend sequence green (455 unit + 53
+integration tests, clippy clean under `-D warnings`, `cargo fmt --check`
+clean); frontend sequence green (`npm run check`: tsc clean, Biome 77 files,
+28 test files / 288 tests).
+
+**External testing: the API path is confirmed against the live provider; the
+dialog rendering is not.** `GET /api/instruments/lookup?query=JE00BLH0QR80`
+returned:
+
+```json
+{"query":"JE00BLH0QR80","status":"matches","matches":[{"provider":"NASDAQ_NORDIC",
+"provider_symbol":"TX3329594","quote_type":null,"exchange":"Warrants",
+"name":"AVA BLOCKCHAIN TRACKER","asset_class":"TRACKER_CERTIFICATES","currency":"SEK"}]}
+```
+
+That is `matches` where the single-provider lookup returned `no_match`; the hit
+comes from Nasdaq with Yahoo contributing nothing, which is the gap-filling
+premise; both new fields are populated; and `quote_type: null` is the case
+Yahoo's allow-list would have discarded, so the per-provider `is_supported_quote`
+dispatch is confirmed on live data rather than only in tests. **Still
+unverified:** that the post-create note actually renders in the dialog and reads
+correctly beside the "No price mapping yet" message that follows it. That needs
+a real instrument created, since the lookup fires on Save; it is cosmetic rather
+than money-affecting.
+
+Three things were settled during implementation and review and should not be
+reopened:
 
 - **The blocking `no_match` rule stands as written.** Review argued that when
   one provider errors and another is reachable but returns nothing, the status
