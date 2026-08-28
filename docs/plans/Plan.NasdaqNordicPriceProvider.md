@@ -964,7 +964,8 @@ Verify:
 
 ### Phase 5 — Add-instrument lookup consults every provider
 
-**Status: DONE**, apart from the external human testing below. Backend sequence
+**Status: DONE** — commit `a792913`, apart from the external human testing
+below. Backend sequence
 green (455 unit + 53 integration tests, clippy clean under `-D warnings`,
 `cargo fmt --check` clean); frontend sequence green (`npm run check`: tsc clean,
 Biome 77 files, 28 test files / 288 tests). Three things were settled during
