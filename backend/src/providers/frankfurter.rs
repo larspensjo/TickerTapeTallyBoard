@@ -22,7 +22,7 @@ impl FrankfurterClient {
 
     pub fn with_provider_filter(provider_filter: Option<String>) -> Self {
         Self {
-            client: build_client(),
+            client: super::http::build_client(),
             base_url: DEFAULT_BASE_URL.to_owned(),
             provider_filter,
         }
@@ -191,19 +191,6 @@ struct FrankfurterRateRow {
     base: String,
     quote: String,
     rate: Number,
-}
-
-fn build_client() -> Client {
-    Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!(
-            env!("CARGO_PKG_NAME"),
-            "/",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .build()
-        .expect("Frankfurter HTTP client should build")
 }
 
 #[cfg(test)]

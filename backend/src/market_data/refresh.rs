@@ -659,7 +659,13 @@ impl MarketDataService {
         let initial = self
             .inner
             .price_provider
-            .daily_history(mapped_symbol, window.start, window.end)
+            .daily_history(&crate::providers::PriceHistoryRequest {
+                symbol: mapped_symbol.to_owned(),
+                asset_class: None,
+                quote_currency: None,
+                start: window.start,
+                end: window.end,
+            })
             .await;
 
         match initial {
@@ -760,7 +766,13 @@ impl MarketDataService {
             let rows = match self
                 .inner
                 .price_provider
-                .daily_history(&candidate.provider_symbol, window.start, window.end)
+                .daily_history(&crate::providers::PriceHistoryRequest {
+                    symbol: candidate.provider_symbol.clone(),
+                    asset_class: None,
+                    quote_currency: None,
+                    start: window.start,
+                    end: window.end,
+                })
                 .await
             {
                 Ok(rows) => rows,
@@ -1988,6 +2000,8 @@ mod tests {
             quote_type: Some("EQUITY".to_owned()),
             exchange: Some("NMS".to_owned()),
             name: Some("Microsoft Corporation".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
 
         let pool = db::memory_pool().await.expect("memory pool");
@@ -2183,6 +2197,8 @@ mod tests {
             quote_type: Some("EQUITY".to_owned()),
             exchange: Some("NGM".to_owned()),
             name: Some("SK hynix Inc.".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
         symbol_search.push_response(Ok(vec![
             SymbolSearchMatch {
@@ -2191,6 +2207,8 @@ mod tests {
                 quote_type: Some("EQUITY".to_owned()),
                 exchange: Some("NGM".to_owned()),
                 name: Some("SK hynix Inc.".to_owned()),
+                asset_class: None,
+                currency: None,
             },
             SymbolSearchMatch {
                 provider: MarketDataProvider::Yahoo,
@@ -2198,6 +2216,8 @@ mod tests {
                 quote_type: Some("EQUITY".to_owned()),
                 exchange: Some("NGM".to_owned()),
                 name: Some("SK hynix Inc.".to_owned()),
+                asset_class: None,
+                currency: None,
             },
         ]));
 
@@ -2292,6 +2312,8 @@ mod tests {
             quote_type: Some("EQUITY".to_owned()),
             exchange: Some("NGM".to_owned()),
             name: Some("Example Inc.".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
         symbol_search.push_response(Ok(vec![SymbolSearchMatch {
             provider: MarketDataProvider::Yahoo,
@@ -2299,6 +2321,8 @@ mod tests {
             quote_type: Some("EQUITY".to_owned()),
             exchange: Some("NGM".to_owned()),
             name: Some("Example Inc.".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
 
         let pool = db::memory_pool().await.expect("memory pool");

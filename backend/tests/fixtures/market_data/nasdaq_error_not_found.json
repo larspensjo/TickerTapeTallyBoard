@@ -1,0 +1,16 @@
+
+{
+  "data": null,
+  "messages": null,
+  "status": {
+    "timestamp": "2026-08-28T08:09:40\u002B0200",
+    "rCode": 400,
+    "bCodeMessage": [
+      {
+        "code": 10003,
+        "errorMessage": "Instrument not found"
+      }
+    ],
+    "developerMessage": ""
+  }
+}

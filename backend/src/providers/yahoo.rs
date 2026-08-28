@@ -6,8 +6,8 @@ use serde_json::Number;
 use std::str::FromStr;
 
 use super::{
-    DailyClose, MarketDataProvider, ProviderError, ProviderMissingReason, ProviderResult,
-    SymbolSearchMatch,
+    DailyClose, MarketDataProvider, PriceHistoryRequest, ProviderError, ProviderMissingReason,
+    ProviderResult, SymbolSearchMatch,
 };
 
 const DEFAULT_BASE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
@@ -26,7 +26,7 @@ impl YahooChartClient {
 
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
-            client: build_client(),
+            client: super::http::build_client(),
             base_url: base_url.into(),
         }
     }
@@ -76,7 +76,7 @@ impl YahooChartClient {
         );
     }
 
-    fn parse_response(symbol: &str, body: &str) -> ProviderResult<Vec<DailyClose>> {
+    pub(crate) fn parse_response(symbol: &str, body: &str) -> ProviderResult<Vec<DailyClose>> {
         let response: YahooChartResponse = serde_json::from_str(body).map_err(|error| {
             ProviderError::provider_error(
                 MarketDataProvider::Yahoo.as_str(),
@@ -158,7 +158,7 @@ impl YahooSearchClient {
 
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
-            client: build_client(),
+            client: super::http::build_client(),
             base_url: base_url.into(),
         }
     }
@@ -198,6 +198,8 @@ impl YahooSearchClient {
                     quote_type: quote.quote_type,
                     exchange: quote.exchange,
                     name: quote.longname.or(quote.shortname),
+                    asset_class: None,
+                    currency: None,
                 })
             })
             .collect())
@@ -271,10 +273,11 @@ impl super::SymbolSearchProvider for YahooSearchClient {
 impl super::PriceProvider for YahooChartClient {
     async fn daily_history(
         &self,
-        symbol: &str,
-        start: NaiveDate,
-        end: NaiveDate,
+        request: &PriceHistoryRequest,
     ) -> ProviderResult<Vec<DailyClose>> {
+        let symbol = request.symbol.as_str();
+        let start = request.start;
+        let end = request.end;
         let url = self.url(symbol, start, end);
         let response = match self.client.get(&url).send().await {
             Ok(response) => response,
@@ -425,19 +428,6 @@ struct YahooMeta {
     symbol: Option<String>,
     #[serde(default)]
     gmtoffset: Option<i64>,
-}
-
-fn build_client() -> Client {
-    Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!(
-            env!("CARGO_PKG_NAME"),
-            "/",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .build()
-        .expect("Yahoo HTTP client should build")
 }
 
 #[derive(Debug, Deserialize)]

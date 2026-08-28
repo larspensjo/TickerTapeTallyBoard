@@ -1,0 +1,63 @@
+{
+  "data": {
+    "priceHistory": {
+      "headers": {
+        "date": "Date",
+        "close": "Closing price"
+      },
+      "rows": [
+        {
+          "date": "2026-01-02",
+          "high": "",
+          "low": "",
+          "close": "",
+          "atap": "",
+          "totalVolume": "",
+          "turnover": "",
+          "duration": "",
+          "yield": "",
+          "ycp": "",
+          "priceAPA": "",
+          "volumeAPA": "",
+          "turnoverAPA": ""
+        },
+        {
+          "date": "2026-01-03",
+          "high": "1,610.00",
+          "low": "1,608.00",
+          "close": " 1,609.00 ",
+          "atap": "",
+          "totalVolume": "",
+          "turnover": "",
+          "duration": "",
+          "yield": "",
+          "ycp": "",
+          "priceAPA": "",
+          "volumeAPA": "",
+          "turnoverAPA": ""
+        },
+        {
+          "date": "2026-01-04",
+          "high": "",
+          "low": "",
+          "close": "",
+          "atap": "",
+          "totalVolume": "",
+          "turnover": "",
+          "duration": "",
+          "yield": "",
+          "ycp": "",
+          "priceAPA": "",
+          "volumeAPA": "",
+          "turnoverAPA": ""
+        }
+      ]
+    }
+  },
+  "messages": null,
+  "status": {
+    "rCode": 200,
+    "bCodeMessage": null,
+    "developerMessage": ""
+  }
+}

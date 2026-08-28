@@ -41,8 +41,9 @@ work needs regardless of whether prices arrive from a feed or a keyboard.
 
 ## Verified provider facts (probed live)
 
-These are the facts the implementation may rely on. Raw captures are being
-copied into `backend/tests/fixtures/market_data/` in the provider phase.
+These are the facts the implementation may rely on. Raw captures now live in
+`backend/tests/fixtures/market_data/`, and `scripts/probe-nasdaq-nordic.ps1`
+re-checks every fact here against the live endpoint.
 
 - `GET /search?searchText=<ISIN>` →
   `{"data":[{"group":"Warrants","instruments":[{"orderbookId":"TX2997672","fullName":"AVA SAMSUNG TRACKER","isin":"JE00BJ7HNC92","symbol":"AVA SAMSUNG TRACKER","assetClass":"TRACKER_CERTIFICATES","currency":"SEK"}]}],"messages":null,"status":{…}}`
@@ -54,6 +55,19 @@ copied into `backend/tests/fixtures/market_data/` in the provider phase.
 - **The price-history payload carries no currency.** Currency is only available
   from `search`. This is load-bearing — see *Where Nasdaq's quote currency comes
   from* below.
+- **A search that matches nothing is a success, not an error.** `GET
+  /search?searchText=<unknown>` →  HTTP 200 with
+  `{"data":null,"messages":{"code":"NO_INST_FOUND","message":"No instruments found"},"status":{"rCode":200,"bCodeMessage":null,…}}`.
+  Both `rCode` and the HTTP status are 200 and `bCodeMessage` is null; the only
+  marker is `data: null` plus a `messages` **object** (on a search that does
+  match, `messages` is null and `data` is the group array). The search client
+  therefore returns an empty match list here, never a provider error. This is
+  load-bearing for the phases that branch on "no candidates" versus "the
+  provider failed" — auto-connect leaves such an instrument unmapped rather
+  than reporting a failure, and the add-instrument lookup owes the user
+  `no_match` rather than `provider_unavailable`. Verified live against three
+  unrelated nonsense queries; pinned by
+  `nasdaq_search_no_match.json` and by a probe check.
 - All numbers are strings with comma thousands separators (`"1,609.00"`), and
   absent fields are empty strings (`""`).
 - Requires only a non-default `User-Agent`. No key, auth, cookies, Origin or
@@ -66,11 +80,12 @@ copied into `backend/tests/fixtures/market_data/` in the provider phase.
   `TX50143` (SHARES, EUR, Helsinki) and `TX69` (SHARES, SEK, Stockholm).
 - **Nasdaq price history is split-adjusted on the same basis as Yahoo.** Probed
   Investor B (`TX76`) across its May 2021 4:1 split: no discontinuity, and all
-  39 overlapping trading days match Yahoo's adjusted `INVE-B.ST` series to
-  0.000. This matters because the 2026-06-19 split-adjusted-quantities decision
-  normalizes ledger quantities on the stated rationale that provider closes are
-  split-adjusted; had Nasdaq been unadjusted, every Nasdaq-priced instrument
-  with a split would have been silently mis-valued in money of record. It is
+  128 overlapping trading days agree with Yahoo's adjusted `INVE-B.ST` series
+  within 0.1%; one day differs by 0.026%. This matters because the 2026-06-19
+  split-adjusted-quantities decision normalizes ledger quantities on the stated
+  rationale that provider closes are split-adjusted; had Nasdaq been unadjusted,
+  every Nasdaq-priced instrument with a split would have been silently
+  mis-valued in money of record. It is
   not. No design work follows, but the evidence is pinned by a fixture-backed
   test and re-checked live by the probe script.
 - `GET /instruments/{orderbookId}/info?assetClass=…` returns an intraday last
@@ -511,6 +526,8 @@ Biome and `vitest run`), then `npm run fmt`. When launching npm through
 
 ### Phase 1 — One resolved price source (refactor; no user-visible change)
 
+**Status: DONE** — commit `f2c9f5b`.
+
 No Nasdaq rows exist yet, so this phase must be behavior-preserving apart from
 one additive response field.
 
@@ -609,6 +626,39 @@ Verify:
 
 ### Phase 2 — Nasdaq Nordic provider client (parsing only; not yet reachable)
 
+**Status: DONE.** Backend sequence green (430 unit + 53 integration tests,
+clippy clean under `-D warnings`, `cargo fmt --check` clean). The external
+network check passed: `scripts/probe-nasdaq-nordic.ps1`, 51 checks, 0 failures,
+including the live Investor B split cross-check at 128 overlapping days and 0
+mismatches. Reviewed by a Claude implementation reviewer; eight findings
+applied, four advisories deliberately skipped.
+
+Five things differ from this section as originally written, all recorded where
+they belong rather than only here:
+
+- The split-adjustment guard asserts a **0.1% relative tolerance**, not exact
+  equality. A live re-probe disproved the original "matches to 0.000" claim:
+  2021-06-08 differs by ~0.026% (Nasdaq 194.90 vs Yahoo 194.949996948242), an
+  ordinary closing-price convention difference. The *Verified provider facts*
+  bullet and step 5 below were corrected to match. A 4× unadjusted divergence
+  still fails this tolerance by three orders of magnitude.
+- **A no-match search returns an empty list, not an error** — see the
+  `NO_INST_FOUND` bullet under *Verified provider facts*. The first
+  implementation mapped it to a provider error; the live probe caught it. This
+  is the one behavior here that later phases branch on.
+- `nasdaq_price_history_astrazeneca.json` was added beyond the original fixture
+  list because it is the **only real capture containing comma-thousands
+  closes** (AVA trades near 123 SEK, Investor B near 180). It is also the
+  second instrument this feature exists to fix.
+- `nasdaq_price_history_synthetic_gaps.json` is **hand-authored, not a
+  capture** — no real response carries an empty close, so the skip and
+  `NoDataInRange` paths had no live data to test against.
+- Provider clients still **cannot distinguish a transport failure from a
+  malformed response**; both surface as `ProviderMissingReason::ProviderError`
+  with no HTTP status. Deferred deliberately, and recorded as a prerequisite at
+  the top of the multi-provider refresh section below, which owns the
+  `Unavailable` status that consumes the distinction.
+
 1. `providers/http.rs` — extract the duplicated `build_client()` from
    `yahoo.rs` and `frankfurter.rs`; both call the shared one.
 2. `providers/nasdaq_nordic.rs` — `NasdaqNordicClient` with
@@ -629,8 +679,10 @@ Verify:
    - Typed envelope handling: `status.rCode >= 400` or a non-empty
      `status.bCodeMessage` maps to a `ProviderError` carrying the Nasdaq error
      code and message; `"Instrument not found"` maps to
-     `ProviderMissingReason::NotListed`. A transport failure maps to the
-     reason that the refresh layer renders as `Unavailable`.
+     `ProviderMissingReason::NotListed`. Transport failures and malformed
+     responses currently both map to `ProviderMissingReason::ProviderError`
+     without an HTTP status; the reporting distinction is deferred to the
+     multi-provider refresh work described below.
    - Number parsing: one helper stripping `,`, ASCII space and U+00A0 before
      `Decimal::from_str`; failures produce a `ProviderError` naming the field
      and the row date, never a silent skip.
@@ -641,28 +693,37 @@ Verify:
    site (Yahoo, the fakes, the tests) is updated.
 4. Fixtures into `backend/tests/fixtures/market_data/`:
    `nasdaq_search_ava_samsung.json`, `nasdaq_search_ericsson_ambiguous.json`,
-   `nasdaq_price_history_ava_samsung.json`, `nasdaq_error_not_found.json`,
-   `nasdaq_price_history_investor_b_split.json`, `yahoo_inve_b_adjusted.json`.
+   `nasdaq_price_history_ava_samsung.json`,
+   `nasdaq_price_history_astrazeneca.json`, `nasdaq_search_no_match.json`,
+   `nasdaq_error_not_found.json`,
+   `nasdaq_price_history_investor_b_split.json`,
+   `nasdaq_price_history_synthetic_gaps.json`, `yahoo_inve_b_adjusted.json`.
+   All are raw live captures except `nasdaq_price_history_synthetic_gaps.json`,
+   which is hand-authored; the captures are byte-preserved and must not be
+   reformatted.
 5. **Split-adjustment guard test** — parse the Investor B Nasdaq fixture and the
    Yahoo `INVE-B.ST` fixture, intersect their dates across the May 2021 4:1
-   split, and assert every overlapping close matches exactly. If Nasdaq ever
-   ships unadjusted history, this test is where the parsing side of the change
-   is caught; the live side is the probe script.
+   split, and assert every overlapping close agrees within a 0.1% relative
+   tolerance. If Nasdaq ever ships unadjusted history, this test is where the
+   parsing side of the change is caught; the live side is the probe script.
 6. `scripts/probe-nasdaq-nordic.ps1`, following the
    `scripts/probe-connectivity.ps1` precedent (comment-based help, params,
    `$ErrorActionPreference = "Stop"`, output under `.local/logs/`): hits
-   `search`, `price-history` and the not-found case for pinned ISINs, asserts
-   the expected JSON paths and field names still exist, re-runs the Investor B
-   vs Yahoo split cross-check live, and prints a pass/fail summary. This is the
-   only thing that detects endpoint *shape drift*, which fixtures cannot.
+   `search`, a no-match search, `price-history` and the not-found case for pinned
+   ISINs, asserts the expected JSON paths and field names still exist, re-runs
+   the Investor B vs Yahoo split cross-check live, and prints a pass/fail
+   summary. This is the only thing that detects endpoint *shape drift*, which
+   fixtures cannot.
 
 Tests:
-- Fixture parse tests: row count, first and last date, exact decimal for a
-  comma-thousands value (`"1,609.00"` → `1609.00`), empty-close rows skipped,
-  currency taken from the request.
+- Fixture parse tests: row count, first and last date, exact decimal for the
+  AstraZeneca comma-thousands value (`"1,369.00"` → `1369.00`), empty-close
+  rows skipped, currency taken from the request.
 - Ambiguous-search fixture yields two matches with distinct currencies and
   orderbook ids.
 - Not-found fixture maps to `NotListed`, not a parse failure.
+- The three search outcomes stay distinguishable: a search with matches, a
+  no-match search (empty list, no error) and a genuine error envelope.
 - The split-adjustment guard test above.
 - A URL-construction test pinning the query parameter names and date format.
 
@@ -679,6 +740,14 @@ Verify:
 
 This is where the feature lands on the backend: after this phase the six
 instruments have stored prices and are valued.
+
+Reporting prerequisite: provider clients currently cannot distinguish a
+transport failure from a malformed response; both surface as
+`ProviderMissingReason::ProviderError` with no HTTP status. Nasdaq and Yahoo
+must gain a distinguishable marker at the same time the `Unavailable`
+refresh-item status is introduced. Without that marker, `Unavailable` would
+also fire on a provider schema change and misreport a format change as an
+outage.
 
 1. `MarketDataService`: the provider registry and ordered search-provider list;
    `live()` registers Yahoo chart, Frankfurter, Yahoo search and Nasdaq (price +

@@ -10,9 +10,12 @@ use std::{
 use tokio::sync::Notify;
 
 pub mod frankfurter;
+pub(crate) mod http;
+pub mod nasdaq_nordic;
 pub mod yahoo;
 
 pub use frankfurter::FrankfurterClient;
+pub use nasdaq_nordic::NasdaqNordicClient;
 pub use yahoo::{YahooChartClient, YahooSearchClient};
 
 pub const PRICE_PROVIDER_PRECEDENCE: &[MarketDataProvider] =
@@ -137,6 +140,8 @@ pub struct SymbolSearchMatch {
     pub quote_type: Option<String>,
     pub exchange: Option<String>,
     pub name: Option<String>,
+    pub asset_class: Option<String>,
+    pub currency: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,12 +233,8 @@ pub type ProviderResult<T> = Result<T, ProviderError>;
 
 #[async_trait]
 pub trait PriceProvider: Send + Sync {
-    async fn daily_history(
-        &self,
-        symbol: &str,
-        start: NaiveDate,
-        end: NaiveDate,
-    ) -> ProviderResult<Vec<DailyClose>>;
+    async fn daily_history(&self, request: &PriceHistoryRequest)
+        -> ProviderResult<Vec<DailyClose>>;
 }
 
 #[async_trait]
@@ -255,6 +256,8 @@ pub trait SymbolSearchProvider: Send + Sync {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceHistoryRequest {
     pub symbol: String,
+    pub asset_class: Option<String>,
+    pub quote_currency: Option<String>,
     pub start: NaiveDate,
     pub end: NaiveDate,
 }
@@ -331,25 +334,19 @@ impl Default for FakePriceProvider {
 impl PriceProvider for FakePriceProvider {
     async fn daily_history(
         &self,
-        symbol: &str,
-        start: NaiveDate,
-        end: NaiveDate,
+        request: &PriceHistoryRequest,
     ) -> ProviderResult<Vec<DailyClose>> {
         let (gate, response) = {
             let mut state = self
                 .state
                 .lock()
                 .expect("fake price provider mutex poisoned");
-            state.calls.push(PriceHistoryRequest {
-                symbol: symbol.to_owned(),
-                start,
-                end,
-            });
+            state.calls.push(request.clone());
             let gate = state.next_call_gate.take();
             let response = state.responses.pop_front().unwrap_or_else(|| {
                 Err(ProviderError::provider_error(
                     self.provider.as_str(),
-                    format!("no fake price response configured for {symbol}"),
+                    format!("no fake price response configured for {}", request.symbol),
                 ))
             });
             (gate, response)
@@ -537,11 +534,13 @@ mod tests {
         }]));
 
         let prices = price
-            .daily_history(
-                "MSFT",
-                NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
-                NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
-            )
+            .daily_history(&PriceHistoryRequest {
+                symbol: "MSFT".to_owned(),
+                asset_class: None,
+                quote_currency: None,
+                start: NaiveDate::from_ymd_opt(2026, 6, 10).expect("date should be valid"),
+                end: NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid"),
+            })
             .await
             .expect("fake price call should succeed");
         assert_eq!(prices.len(), 1);
@@ -572,6 +571,8 @@ mod tests {
             quote_type: Some("EQUITY".to_owned()),
             exchange: Some("NMS".to_owned()),
             name: Some("Microsoft Corporation".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
 
         let matches = search.search("US5949181045").await.expect("search");

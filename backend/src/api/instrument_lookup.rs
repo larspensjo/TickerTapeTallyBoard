@@ -82,6 +82,8 @@ mod tests {
                 quote_type: Some("EQUITY".to_owned()),
                 exchange: Some("NMS".to_owned()),
                 name: Some("Microsoft Corporation".to_owned()),
+                asset_class: None,
+                currency: None,
             },
             SymbolSearchMatch {
                 provider: MarketDataProvider::Yahoo,
@@ -89,6 +91,8 @@ mod tests {
                 quote_type: Some("OPTION".to_owned()),
                 exchange: Some("NMS".to_owned()),
                 name: Some("Unsupported".to_owned()),
+                asset_class: None,
+                currency: None,
             },
         ]));
 
@@ -120,6 +124,8 @@ mod tests {
             quote_type: Some("OPTION".to_owned()),
             exchange: Some("NMS".to_owned()),
             name: Some("Microsoft Option".to_owned()),
+            asset_class: None,
+            currency: None,
         }]));
 
         let state = AppState::with_market_data(
