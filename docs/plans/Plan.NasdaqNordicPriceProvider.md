@@ -1054,9 +1054,18 @@ aggregates, so "nothing else changed" must be checked, not asserted.
    conventions): dumps `/api/gains?include_closed=true`,
    `/api/portfolio/value-history` and `/api/holdings` to timestamped files under
    `.local/aggregates/`, and given two capture directories prints a per-row diff
-   of `market_value_base`, `total_return_base` and the value-history points.
+   of the gains fields and the value-history points.
    This is the tool the verification obligation needs, and it stays useful for
    every future change to the valuation read path.
+
+   **Done.** The diff covers all four fields named in the stop-condition list
+   below, not the two originally written here — those two lists contradicted
+   each other, and the stop-condition list is the acceptance bar. Diff mode also
+   prints both captures' gains request metadata and refuses to compare captures
+   whose report period, percentage method, closed-position setting or base
+   currency differ, because the two captures are by construction taken at
+   different times against different backend instances and several of those
+   inputs otherwise default to "today".
 2. Capture **before**: the backfill has already run, so this capture must come
    from the pre-backfill database backup rather than from the live file.
 3. ~~Run a `Backfill` refresh against the real database.~~ **Already done** (run
@@ -1105,6 +1114,45 @@ Verify:
   rebalance ladder now includes the newly-eligible instruments and that its
   warning-stale notice behaves sensibly.
 
+**Outcome: both stop conditions clear.** The before state was restored from the
+`.local` backup archive; it holds no Nasdaq price rows at all, confirming it
+predates the backfill. Both captures were taken from separate backend instances
+with market-data refresh and launch refresh disabled, read requests only; the
+live ledger's hash was identical before and after, so the exercise did not touch
+it.
+
+The first comparison, valuing both sides at the backfill date, appeared to hit
+the stop condition: twenty-one already-working instruments moved. That was a
+baseline artifact, not a valuation change. The backup was taken on the morning of
+the backfill day, before that day's closes and FX rates existed, so every
+Yahoo-priced holding was being valued one day apart on the two sides — e.g.
+Rambus priced from the 27th at 91.11 before versus the 28th at 85.16 after, with
+USD/SEK likewise a day apart.
+
+Re-valuing both sides at a date whose price coverage is identical on both isolates
+the change:
+
+- Gains: exactly one row changed, instrument 32, `missing_price` → priced. All
+  thirty-six other rows unchanged across all four stop-condition fields.
+- Value-history: thirty-nine of 313 points changed, every one with the same
+  signature — `excluded_count` 1 → 0, `included_count` +1, `incomplete` true →
+  false — which is instrument 32 entering the valuation population and nothing
+  else.
+- History begins 2025-06-12, the earliest changed point is 2025-06-16 where
+  instrument 32's position starts, and no point before it changed.
+
+Instrument 32's holding pattern explains the two clusters of changed points: held
+mid-June to end-July 2025, absent for thirteen months, re-bought shortly before
+the backfill.
+
+**Method note for anyone repeating this:** align the valuation date across the two
+captures to one where both databases have the same price coverage. Comparing at a
+date only one side has priced produces a portfolio-wide false positive. The tool's
+metadata refusal catches mismatched request parameters but cannot detect this,
+because both captures legitimately report the same requested period.
+
+UI walk-through completed and confirmed working.
+
 ---
 
 ### Phase 7 — Documents, decision-log entries, version bumps, final sweep
@@ -1132,9 +1180,12 @@ Verify:
    and that a Nasdaq mapping without a recorded currency is never fetched.
 3. `docs/DecisionLog.md`: the entries listed below.
 4. Version bumps (one release for the whole feature; intermediate phases are not
-   released): `backend/Cargo.toml` `0.14.2 → 0.15.0`,
-   `frontend/package.json` `0.22.11 → 0.23.0` plus the matching
-   `frontend/package-lock.json` version fields.
+   released). **The numbers written here during planning are stale — both
+   manifests moved during the earlier phases.** Read the current values and
+   decide the targets against them: `backend/Cargo.toml` is at `0.16.0` (not the
+   planned `0.14.2`) and `frontend/package.json` is at `0.22.13` (not the planned
+   `0.22.11`), plus the matching `frontend/package-lock.json` version fields. The
+   intent — one release covering the whole feature — is unchanged.
 5. Full verification sweep on both stacks.
 
 Verify:
