@@ -60,7 +60,8 @@ instruments      id, symbol, exchange, name, type (STOCK|ETF|FUND),
 transactions     id, instrument_id (nullable for cash tx), type, trade_date,
                  quantity, price, fees, currency, fx_rate_to_base (nullable),
                  note, import_batch_id (nullable)
-prices           instrument_id, date, close, currency        -- EOD cache
+prices           instrument_id, provider, provider_symbol, date, close, currency
+                                                               -- EOD cache; keyed by provider, so several providers can cover one instrument
 fx_rates         base, quote, date, rate                     -- EOD cache
 import_batches   id, source (SHARESIGHT|CSV|MANUAL), imported_at, raw_file_hash
 settings         key, value (base_currency, data provider keys, …)
@@ -70,9 +71,24 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
 
 ### Market data
 - **Requirement:** EOD closes for Stockholm-listed (ST) and US-listed instruments, plus daily FX (USD/SEK, EUR/SEK).
-- **Approach:** provider behind a Rust trait (`PriceProvider`) so the source is swappable. Candidates: Yahoo Finance unofficial API (free, good Nordic coverage, unofficial), Twelve Data / Alpha Vantage (official free tiers, rate-limited — fine for EOD), EODHD (paid, reliable). FX from the same provider or ECB reference rates (free, official).
-- All fetched data is cached in SQLite; the app never re-fetches a (instrument, date) it already has. Scheduled fetch once daily after market close; manual "refresh now" button.
-- **Decision needed (Tech Lead):** pick primary provider in Phase 0 spike; the trait keeps the cost of being wrong low.
+- **Providers and resolution:** Yahoo Finance and Nasdaq Nordic are the automatic EOD price providers, with Yahoo first in precedence and each implementation behind the Rust `PriceProvider` trait. For each date, the highest-precedence enabled source with a stored row wins. Nasdaq is auto-connected only for instruments without an enabled Yahoo mapping; a second source on an instrument with an enabled Yahoo mapping must be hand-mapped. A disabled mapping counts as no source, and rows stored behind it are never promoted into valuation.
+- **Nasdaq Nordic:** Nasdaq's `api.nasdaq.com/api/nordic` interface is an undocumented internal API with no SLA, so the client is treated as best-effort. A provider outage or a stored mapping whose provider has no registered client is reported as an explicit `Unavailable` refresh item (serialized as `unavailable`). On backfill, Nasdaq rows that begin more than five calendar days after the requested start produce the `history_clamped` reason on a `Fetched` item. This warning-only heuristic can also be triggered by a recently listed instrument or a long holiday stretch, so it is not proof of a clamp. There is no per-instrument history-start marker; dates without usable rows flow through the existing value-history `incomplete` / `excluded_count` handling.
+- **Ambiguous instruments:** The authoritative signal that an instrument needs a hand mapping is a price refresh item with status `Ambiguous` (serialized as `ambiguous`). The asset page shows `No price source` when no provider-symbol rows exist, or `Price sources disabled` when rows exist but all are disabled. Ambiguity is visible only in `engine.log` or the raw refresh response because no UI renders refresh items.
+
+  Search Nasdaq by the instrument ISIN at `https://api.nasdaq.com/api/nordic/search?searchText=<ISIN>`. In `data[].instruments[]`, select the intended listing and copy its `orderbookId`, `assetClass`, and `currency`. Replace `123` below with the `instrument_id` from the `ambiguous` refresh item or the `instrument_id=` field in the corresponding `engine.log` warning, then run this against the locally running app (whose default port is 8080):
+
+  ```powershell
+  curl.exe -X PUT "http://localhost:8080/api/instruments/123/provider-symbols/NASDAQ_NORDIC" -H "Content-Type: application/json" -d '{"provider_symbol":"TX2997672","asset_class":"TRACKER_CERTIFICATES","currency":"SEK","enabled":true}'
+  ```
+
+  Here `provider_symbol` is the selected `orderbookId`, `asset_class` is its `assetClass`, and `currency` is its `currency`; both `asset_class` and `currency` are required. The mapping does not fetch prices by itself. Backfill the newly mapped instrument from the portfolio's earliest transaction through today with:
+
+  ```powershell
+  curl.exe -X POST "http://localhost:8080/api/prices/refresh" -H "Content-Type: application/json" -d '{"mode":"backfill"}'
+  ```
+
+  The ordinary **Refresh prices** button sends `mode: "latest"` and fills only the 14-calendar-day window ending today.
+- Fetched data is cached in SQLite and valuation reads the stored rows; refreshes fetch each enabled provider mapping and upsert its returned rows. Refresh runs as a background job at application launch and on demand from the manual refresh action; there is no scheduled fetch.
 
 ### Sharesight import
 Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date, type (buy/sell/adjustment), quantity, price, fees, exchange rate, and trade value. Importer parses the export (convert XLS→CSV or parse XLS directly via `calamine` crate), maps rows to ledger transactions, matches/creates instruments, and tags everything with an `import_batch_id` so a bad import can be rolled back atomically. Dividends may need a second report (Taxable Income / dividend report) or manual entry — verify during Phase 0 spike.
@@ -104,7 +120,7 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Deliverable:** full historical portfolio loaded from Sharesight; spot-check positions against Sharesight's own numbers as acceptance test.
 
 ### Phase 3 — Prices, FX & valuation ✅ Done (2026-06-18)
-- `PriceProvider` trait + chosen implementation; FX rate fetching; SQLite caching; daily scheduled job + manual refresh.
+- `PriceProvider` trait + chosen implementations; FX rate fetching; SQLite caching; background refresh at application launch and on demand.
 - Holdings view gains market value, unrealized P&L, day change — all in base currency with native-currency detail.
 - Backfill historical prices for charting.
 - **Deliverable:** live (EOD) portfolio valuation in SEK.
@@ -128,7 +144,7 @@ Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index
 | # | Risk / question | Mitigation |
 |---|---|---|
 | 1 | Sharesight export may not include dividends or fund transactions cleanly | Phase 0 Spike A with real data before committing import design |
-| 2 | Free price providers: rate limits, Nordic fund coverage gaps, unofficial APIs breaking | Provider trait; cache aggressively; budget option (EODHD) as fallback |
+| 2 | Free price providers: rate limits, Nordic fund coverage gaps, unofficial APIs breaking | Provider trait; cache aggressively; budget option (EODHD) as fallback; probe Nasdaq endpoint shape with `scripts/probe-nasdaq-nordic.ps1` |
 | 3 | FX correctness (trade-date vs. valuation-date rates) is the most common bug source in multi-currency P&L | Encode rules in one tested valuation module; unit tests with known fixtures |
 | 4 | Corporate actions (splits) silently corrupt derived positions if ignored | SPLIT transaction type exists in schema from day one; handling can ship post-v1 |
 | 5 | Scope creep toward realtime data | Explicit non-goal; EOD only in v1 |

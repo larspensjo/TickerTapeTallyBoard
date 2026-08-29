@@ -27,8 +27,11 @@ tax calculation.
 
 ## Provider Rules
 
-- Equity EOD/history provider: Yahoo Finance chart endpoint, per the market-data
-  decision.
+- Equity EOD/history providers: Yahoo Finance chart endpoint and Nasdaq Nordic,
+  per the market-data decision.
+- Nasdaq Nordic price-row currency comes from the mapping because its price-history
+  payload carries no currency; a `NASDAQ_NORDIC` mapping without a recorded
+  currency is never fetched.
 - FX provider: Frankfurter v2 pinned to `providers=ECB` when supported for the
   needed date and pair.
 - Frankfurter returns rates in the app's canonical shape when requested as
