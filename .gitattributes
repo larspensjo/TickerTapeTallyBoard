@@ -1,0 +1,6 @@
+# sqlx hashes migration files byte-for-byte and records the checksum in
+# _sqlx_migrations. Letting core.autocrlf rewrite line endings on checkout
+# changes those bytes and makes the backend fail at startup with
+# Migrate(VersionMismatch(N)) even though the SQL is unchanged.
+# Pin migrations to LF so the checked-out bytes always match the stored blob.
+backend/migrations/*.sql text eol=lf
