@@ -5,10 +5,14 @@
 
 mod attribution;
 mod availability;
+mod cash_flow;
 mod conviction;
 mod day_change;
+mod holding_period_return;
 mod market_snapshot;
+mod money_weighted_return;
 mod performance;
+mod period_amounts;
 mod position;
 mod price_history;
 mod price_resolution;
@@ -24,12 +28,12 @@ pub use conviction::{
     ConvictionTargetOutput, MarketValueState, TargetField, TargetReason, TargetStatus,
 };
 
+pub use cash_flow::{actual_period_cash_flows, period_cash_flows, CashFlow};
+pub use money_weighted_return::{compute_money_weighted_return, MoneyWeightedReturn};
 #[allow(unused_imports)]
 pub use performance::{
-    actual_period_cash_flows, apply_annualisation, compute_modified_dietz,
-    compute_modified_dietz_denominator, compute_money_weighted_return, compute_period_amounts,
-    period_cash_flows, reconstruct_period, CashFlow, DisplayPercentKind, MoneyWeightedReturn,
-    PeriodAmounts, PeriodLedger,
+    apply_annualisation, compute_modified_dietz, compute_modified_dietz_denominator,
+    compute_period_amounts, reconstruct_period, DisplayPercentKind, PeriodAmounts, PeriodLedger,
 };
 #[allow(unused_imports)]
 pub use position::{
