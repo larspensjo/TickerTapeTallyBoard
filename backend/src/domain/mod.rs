@@ -3,13 +3,20 @@
 
 #![allow(dead_code)]
 
+mod attribution;
+mod availability;
 mod conviction;
+mod day_change;
+mod market_snapshot;
 mod performance;
 mod position;
+mod price_history;
 mod price_resolution;
 mod rebalance;
 mod transaction;
 mod valuation;
+mod valuation_summary;
+mod value_history;
 
 #[allow(unused_imports)]
 pub use conviction::{
@@ -43,7 +50,8 @@ pub use transaction::{
 };
 #[allow(unused_imports)]
 pub use valuation::{
-    build_price_history, build_value_history, summarize_holdings, value_position, Availability,
-    DataFreshness, FxApplied, FxCandidate, FxSnapshot, PriceCandidate, PricePoint, PriceSnapshot,
-    ValuationReason, ValuationSummary, ValueHistoryInstrument, ValueHistoryPoint, ValuedHolding,
+    build_price_history, summarize_holdings, value_position, Availability, DataFreshness,
+    FxApplied, FxCandidate, FxSnapshot, PriceCandidate, PricePoint, PriceSnapshot, ValuationReason,
+    ValuationSummary, ValuedHolding,
 };
+pub use value_history::{build_value_history, ValueHistoryInstrument, ValueHistoryPoint};
