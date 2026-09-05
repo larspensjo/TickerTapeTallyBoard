@@ -382,7 +382,8 @@ export interface PriceStatusResponse {
 export interface HealthResponse {
   status: string;
   version: string;
-  demo: boolean;
+  mode: "production" | "development" | "demo";
+  ledger: { mode: "file" | "memory"; path: string | null };
   build: { package: string; profile: string };
 }
 

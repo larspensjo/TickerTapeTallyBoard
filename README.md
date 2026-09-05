@@ -24,7 +24,7 @@ Run the backend and frontend together:
 
 The script builds both projects, starts the backend on `http://127.0.0.1:8080/`,
 starts Vite on `http://127.0.0.1:5173/`, and stops both processes when it exits.
-By default it uses a disposable local test database under `.local/db/`.
+By default it uses a disposable local test database under `.local/db/`. The script sets development mode and continues to pass that legacy URL explicitly.
 
 For a faster rerun after dependencies and builds are already current:
 
@@ -64,15 +64,18 @@ cargo fmt
 
 Configuration:
 
-- `TTTB_HOST`: backend bind IP address, default `127.0.0.1`
+- `TTTB_MODE`: `production`, `development`, or `demo`; default `production`.
+- `TTTB_HOST`: backend bind IP address, default `127.0.0.1`; only `127.0.0.0/8` and `::1` are accepted. LAN exposure is separate future work.
 - `TTTB_PORT`: backend port, default `8080`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
-- `TTTB_DATABASE_URL`: backend SQLite database URL
+- `TTTB_DATABASE_URL`: backend SQLite database URL. When omitted, production uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio.sqlite` and development uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
+- `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
 - `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
 - `TTTB_PRODUCTION_DATABASE_URL`: startup-script production database URL
 - `TTTB_LOCAL_DATABASE_URL`: startup-script local test database URL
+- `TTTB_DEMO_MODE`: retired; use `TTTB_MODE=demo`.
 
 ## Frontend Commands
 

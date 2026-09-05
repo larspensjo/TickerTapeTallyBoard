@@ -35,7 +35,7 @@ use crate::state::AppState;
 pub use error::ApiError;
 
 pub fn reject_demo_mutation(state: &AppState) -> Result<(), ApiError> {
-    if state.demo_mode {
+    if state.is_demo() {
         return Err(ApiError::demo_read_only());
     }
     Ok(())
@@ -128,7 +128,7 @@ async fn demo_read_only_layer(
     request: Request<Body>,
     next: Next,
 ) -> Result<axum::response::Response, ApiError> {
-    if state.demo_mode && is_mutating_method(request.method()) {
+    if state.is_demo() && is_mutating_method(request.method()) {
         return Err(ApiError::demo_read_only());
     }
 
@@ -173,7 +173,7 @@ mod tests {
     async fn demo_mode_rejects_mutating_routes() {
         let state = crate::state::AppState::for_tests()
             .await
-            .with_demo_mode(true);
+            .with_mode(crate::config::Mode::Demo);
 
         for (method, uri, body) in [
             (

@@ -665,7 +665,7 @@ mod tests {
             pool,
             std::sync::Arc::new(crate::market_data::MarketDataService::live()),
         )
-        .with_demo_mode(true);
+        .with_mode(crate::config::Mode::Demo);
 
         let holdings = get_json(&state, "/api/holdings").await;
         assert_eq!(
@@ -717,7 +717,7 @@ mod tests {
             pool,
             std::sync::Arc::new(crate::market_data::MarketDataService::live()),
         )
-        .with_demo_mode(true);
+        .with_mode(crate::config::Mode::Demo);
 
         let holdings = get_json(&state, "/api/holdings").await;
         let holdings = holdings["holdings"].as_array().expect("holdings array");

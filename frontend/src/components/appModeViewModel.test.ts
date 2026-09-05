@@ -3,7 +3,7 @@ import { appModeViewModel } from "./appModeViewModel";
 
 describe("appModeViewModel", () => {
   it("shows mutation controls and import navigation outside demo mode", () => {
-    const model = appModeViewModel(false);
+    const model = appModeViewModel("production");
 
     expect(model.showDemoBadge).toBe(false);
     expect(model.canMutate).toBe(true);
@@ -18,7 +18,7 @@ describe("appModeViewModel", () => {
   });
 
   it("shows the demo badge and hides mutation entry points in demo mode", () => {
-    const model = appModeViewModel(true);
+    const model = appModeViewModel("demo");
 
     expect(model.showDemoBadge).toBe(true);
     expect(model.canMutate).toBe(false);

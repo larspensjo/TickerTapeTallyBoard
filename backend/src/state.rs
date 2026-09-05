@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use sqlx::sqlite::SqlitePool;
 
-use crate::market_data::MarketDataService;
+use crate::{config::Mode, market_data::MarketDataService};
 
 /// Shared application state injected into axum handlers via `State`.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub market_data: Arc<MarketDataService>,
-    pub demo_mode: bool,
+    pub mode: Mode,
+    pub ledger_path: Option<PathBuf>,
 }
 
 impl AppState {
@@ -17,13 +18,23 @@ impl AppState {
         Self {
             pool,
             market_data,
-            demo_mode: false,
+            mode: Mode::Production,
+            ledger_path: None,
         }
     }
 
-    pub fn with_demo_mode(mut self, demo_mode: bool) -> Self {
-        self.demo_mode = demo_mode;
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
         self
+    }
+
+    pub fn with_ledger_path(mut self, path: Option<PathBuf>) -> Self {
+        self.ledger_path = path;
+        self
+    }
+
+    pub fn is_demo(&self) -> bool {
+        self.mode.is_demo()
     }
 
     pub fn with_market_data(pool: SqlitePool, market_data: MarketDataService) -> Self {

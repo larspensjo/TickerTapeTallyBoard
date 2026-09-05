@@ -6,6 +6,7 @@ param(
     [int]$FrontendPort = 5173,
     [switch]$NoBrowser,
     [switch]$Demo,
+    [switch]$InitLedger,
     [switch]$ProductionDb,
     [string]$LocalDatabaseUrl,
     [string]$ProductionDatabaseUrl
@@ -387,15 +388,17 @@ Remove-Item $BackendStdout, $BackendStderr, $FrontendStdout, $FrontendStderr -Er
 
 $PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
 $PreviousBackendPort = $env:TTTB_PORT
-$PreviousDemoMode = $env:TTTB_DEMO_MODE
+$PreviousMode = $env:TTTB_MODE
+$PreviousCreateLedgerIfMissing = $env:TTTB_CREATE_LEDGER_IF_MISSING
 if ($Demo) {
     Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue
-    $env:TTTB_DEMO_MODE = "1"
+    $env:TTTB_MODE = "demo"
 }
 else {
     $env:TTTB_DATABASE_URL = $Database.Url
-    Remove-Item Env:\TTTB_DEMO_MODE -ErrorAction SilentlyContinue
+    $env:TTTB_MODE = "development"
 }
+$env:TTTB_CREATE_LEDGER_IF_MISSING = if ($InitLedger) { "1" } else { "0" }
 $env:TTTB_PORT = $BackendPort
 
 $backendProcess = $null
@@ -469,10 +472,17 @@ finally {
         $env:TTTB_PORT = $PreviousBackendPort
     }
 
-    if ($null -eq $PreviousDemoMode) {
-        Remove-Item Env:\TTTB_DEMO_MODE -ErrorAction SilentlyContinue
+    if ($null -eq $PreviousMode) {
+        Remove-Item Env:\TTTB_MODE -ErrorAction SilentlyContinue
     }
     else {
-        $env:TTTB_DEMO_MODE = $PreviousDemoMode
+        $env:TTTB_MODE = $PreviousMode
+    }
+
+    if ($null -eq $PreviousCreateLedgerIfMissing) {
+        Remove-Item Env:\TTTB_CREATE_LEDGER_IF_MISSING -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TTTB_CREATE_LEDGER_IF_MISSING = $PreviousCreateLedgerIfMissing
     }
 }

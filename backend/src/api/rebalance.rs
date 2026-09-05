@@ -850,7 +850,9 @@ mod tests {
 
     #[tokio::test]
     async fn demo_mode_allows_rebalance_get() {
-        let state = AppState::for_tests().await.with_demo_mode(true);
+        let state = AppState::for_tests()
+            .await
+            .with_mode(crate::config::Mode::Demo);
         let (status, body) = send(&state, "GET", "/api/rebalance?amount=0", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
         assert_plan_status(&body, "unavailable");

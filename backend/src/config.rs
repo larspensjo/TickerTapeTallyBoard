@@ -6,26 +6,47 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub use crate::mode::Mode;
+
+use crate::ledger::{resolve, LedgerLocation, LedgerLocationError};
+
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DEFAULT_PORT: u16 = 8080;
-const DEFAULT_DATABASE_URL: &str = "sqlite://tttb-ledger.sqlite";
 const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
+pub const MODE_ENV: &str = "TTTB_MODE";
+pub const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
+pub const CREATE_LEDGER_IF_MISSING_ENV: &str = "TTTB_CREATE_LEDGER_IF_MISSING";
 const HOST_ENV: &str = "TTTB_HOST";
-const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
-const DEMO_MODE_ENV: &str = "TTTB_DEMO_MODE";
+const LOCAL_APP_DATA_ENV: &str = "LOCALAPPDATA";
 const MARKET_DATA_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_REFRESH_ENABLED";
 const MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED";
 const PORT_ENV: &str = "TTTB_PORT";
 const HOSTING_PORT_ENV: &str = "PORT";
 const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
 
+impl Mode {
+    pub fn asset_policy(self) -> AssetPolicy {
+        match self {
+            Self::Production => AssetPolicy::Required,
+            Self::Development | Self::Demo => AssetPolicy::Optional,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetPolicy {
+    Required,
+    Optional,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
-    pub database_url: String,
+    pub ledger: LedgerLocation,
     pub static_assets_dir: PathBuf,
-    pub demo_mode: bool,
+    pub mode: Mode,
+    pub create_ledger_if_missing: bool,
     pub market_data_refresh_enabled: bool,
     pub launch_refresh_enabled: bool,
 }
@@ -46,11 +67,21 @@ impl AppConfig {
                 .unwrap_or(DEFAULT_PORT),
         };
 
-        let database_url =
-            read_optional(DATABASE_URL_ENV)?.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned());
+        let mode = read_optional(MODE_ENV)?
+            .map(|value| parse_mode(MODE_ENV, &value))
+            .transpose()?
+            .unwrap_or(Mode::Production);
 
-        let demo_mode = read_optional(DEMO_MODE_ENV)?
-            .map(|value| parse_bool(DEMO_MODE_ENV, &value))
+        let database_url = match read_optional(DATABASE_URL_ENV)? {
+            Some(url) => url,
+            None if mode.is_demo() => "sqlite::memory:".to_owned(),
+            None => default_database_url(mode)?,
+        };
+
+        let ledger = resolve(&database_url, mode).map_err(ConfigError::from_location)?;
+
+        let create_ledger_if_missing = read_optional(CREATE_LEDGER_IF_MISSING_ENV)?
+            .map(|value| parse_bool(CREATE_LEDGER_IF_MISSING_ENV, &value))
             .transpose()?
             .unwrap_or(false);
 
@@ -71,9 +102,10 @@ impl AppConfig {
         Ok(Self {
             host,
             port,
-            database_url,
+            ledger,
             static_assets_dir,
-            demo_mode,
+            mode,
+            create_ledger_if_missing,
             market_data_refresh_enabled,
             launch_refresh_enabled,
         })
@@ -87,39 +119,79 @@ impl AppConfig {
         &self.static_assets_dir
     }
 
-    pub fn database_url(&self) -> &str {
-        &self.database_url
+    pub fn asset_policy(&self) -> AssetPolicy {
+        self.mode.asset_policy()
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            host: DEFAULT_HOST,
-            port: DEFAULT_PORT,
-            database_url: DEFAULT_DATABASE_URL.to_owned(),
-            static_assets_dir: PathBuf::from(DEFAULT_STATIC_ASSETS_DIR),
-            demo_mode: false,
-            market_data_refresh_enabled: true,
-            launch_refresh_enabled: true,
-        }
-    }
+fn default_database_url(mode: Mode) -> Result<String, ConfigError> {
+    let root = read_optional(LOCAL_APP_DATA_ENV)?.ok_or_else(|| {
+        ConfigError::value(
+            LOCAL_APP_DATA_ENV,
+            String::new(),
+            "must be set when TTTB_DATABASE_URL is not provided outside demo mode",
+        )
+    })?;
+    let file = match mode {
+        Mode::Production => "portfolio.sqlite",
+        Mode::Development => "portfolio-dev.sqlite",
+        Mode::Demo => unreachable!(),
+    };
+    Ok(format!(
+        "sqlite://{}",
+        PathBuf::from(root)
+            .join("TickerTapeTallyBoard")
+            .join(file)
+            .to_string_lossy()
+            .replace('\\', "/")
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
-    variable: &'static str,
-    value: String,
-    message: &'static str,
+    pub(crate) variable: &'static str,
+    pub(crate) value: String,
+    pub(crate) message: &'static str,
+    location: Option<LedgerLocationError>,
+}
+
+impl ConfigError {
+    fn value(variable: &'static str, value: String, message: &'static str) -> Self {
+        Self {
+            variable,
+            value,
+            message,
+            location: None,
+        }
+    }
+
+    fn from_location(error: LedgerLocationError) -> Self {
+        Self {
+            variable: DATABASE_URL_ENV,
+            value: String::new(),
+            message: "must be a supported ledger location for the selected mode",
+            location: Some(error),
+        }
+    }
+
+    pub(crate) fn into_location(mut self) -> Result<LedgerLocationError, Self> {
+        match self.location.take() {
+            Some(error) => Ok(error),
+            None => Err(self),
+        }
+    }
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "invalid {} value {:?}: {}",
-            self.variable, self.value, self.message
-        )
+        match &self.location {
+            Some(error) => write!(formatter, "{error}"),
+            None => write!(
+                formatter,
+                "invalid {} value {:?}: {}",
+                self.variable, self.value, self.message
+            ),
+        }
     }
 }
 
@@ -134,46 +206,63 @@ fn read_optional_result(
     result: Result<String, env::VarError>,
 ) -> Result<Option<String>, ConfigError> {
     match result {
-        Ok(value) if value.trim().is_empty() => Err(ConfigError {
-            variable,
-            value,
-            message: "must not be empty",
-        }),
+        Ok(value) if value.trim().is_empty() => {
+            Err(ConfigError::value(variable, value, "must not be empty"))
+        }
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
-        Err(env::VarError::NotUnicode(value)) => Err(ConfigError {
+        Err(env::VarError::NotUnicode(value)) => Err(ConfigError::value(
             variable,
-            value: value.to_string_lossy().into_owned(),
-            message: "must be valid Unicode",
-        }),
+            value.to_string_lossy().into_owned(),
+            "must be valid Unicode",
+        )),
     }
 }
 
 fn parse_host(variable: &'static str, value: &str) -> Result<IpAddr, ConfigError> {
-    value.parse().map_err(|_| ConfigError {
-        variable,
-        value: value.to_owned(),
-        message: "must be an IP address",
-    })
+    let host: IpAddr = value
+        .parse()
+        .map_err(|_| ConfigError::value(variable, value.to_owned(), "must be an IP address"))?;
+
+    if host.is_loopback() {
+        Ok(host)
+    } else {
+        Err(ConfigError::value(
+            variable,
+            value.to_owned(),
+            "must be a loopback address; LAN exposure is separate future work",
+        ))
+    }
 }
 
 fn parse_port(variable: &'static str, value: &str) -> Result<u16, ConfigError> {
-    value.parse().map_err(|_| ConfigError {
-        variable,
-        value: value.to_owned(),
-        message: "must be a TCP port number",
-    })
+    value
+        .parse()
+        .map_err(|_| ConfigError::value(variable, value.to_owned(), "must be a TCP port number"))
 }
 
 fn parse_bool(variable: &'static str, value: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(ConfigError {
+        _ => Err(ConfigError::value(
             variable,
-            value: value.to_owned(),
-            message: "must be a boolean value",
-        }),
+            value.to_owned(),
+            "must be a boolean value",
+        )),
+    }
+}
+
+fn parse_mode(variable: &'static str, value: &str) -> Result<Mode, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "production" => Ok(Mode::Production),
+        "development" => Ok(Mode::Development),
+        "demo" => Ok(Mode::Demo),
+        _ => Err(ConfigError::value(
+            variable,
+            value.to_owned(),
+            "must be production, development, or demo",
+        )),
     }
 }
 
@@ -183,39 +272,88 @@ mod tests {
     use std::{
         env,
         ffi::OsString,
+        fs,
         sync::{Mutex, MutexGuard},
+        time::{SystemTime, UNIX_EPOCH},
     };
+
+    use crate::startup_error::StartupError;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    const ALL: &[&str] = &[
+        HOST_ENV,
+        DATABASE_URL_ENV,
+        MODE_ENV,
+        CREATE_LEDGER_IF_MISSING_ENV,
+        LOCAL_APP_DATA_ENV,
+        MARKET_DATA_REFRESH_ENABLED_ENV,
+        MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV,
+        PORT_ENV,
+        HOSTING_PORT_ENV,
+        STATIC_ASSETS_DIR_ENV,
+    ];
+
     #[test]
-    fn default_config_uses_local_backend_port() {
-        let config = AppConfig::default();
+    fn mode_defaults_and_asset_policy() {
+        let _guard = TestEnv::new(&[(LOCAL_APP_DATA_ENV, Some("C:/temp/appdata"))]);
+
+        let config = AppConfig::from_env().expect("config should load");
 
         assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.port, 8080);
         assert_eq!(config.socket_addr().to_string(), "127.0.0.1:8080");
-        assert_eq!(config.database_url, DEFAULT_DATABASE_URL);
+        assert_eq!(config.mode, Mode::Production);
+        assert_eq!(config.asset_policy(), AssetPolicy::Required);
+        assert_eq!(Mode::Development.asset_policy(), AssetPolicy::Optional);
+        assert_eq!(Mode::Demo.asset_policy(), AssetPolicy::Optional);
         assert_eq!(
             config.static_assets_dir,
             PathBuf::from(DEFAULT_STATIC_ASSETS_DIR)
         );
-        assert!(!config.demo_mode);
+        assert!(!config.create_ledger_if_missing);
         assert!(config.market_data_refresh_enabled);
         assert!(config.launch_refresh_enabled);
     }
 
     #[test]
+    fn modes_have_expected_defaults_and_demo_ignores_url_without_touching_it() {
+        for (mode, file) in [
+            ("production", "portfolio.sqlite"),
+            ("development", "portfolio-dev.sqlite"),
+        ] {
+            let _guard = TestEnv::new(&[
+                (MODE_ENV, Some(mode)),
+                (LOCAL_APP_DATA_ENV, Some("C:/temp/appdata")),
+            ]);
+
+            assert!(AppConfig::from_env()
+                .expect("config should load")
+                .ledger
+                .url
+                .ends_with(file));
+        }
+
+        let path = unique_path("ignored-demo-ledger", "sqlite");
+        let database_url = sqlite_url(&path);
+        let _guard = TestEnv::new(&[
+            (MODE_ENV, Some("demo")),
+            (DATABASE_URL_ENV, Some(&database_url)),
+        ]);
+
+        let config = AppConfig::from_env().expect("demo config should load");
+
+        assert!(config.ledger.path.is_none());
+        assert_ne!(config.ledger.url, database_url);
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn from_env_uses_tttb_port_before_hosting_port() {
         let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, None),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
+            (MODE_ENV, Some("demo")),
             (PORT_ENV, Some("9090")),
             (HOSTING_PORT_ENV, Some("3000")),
-            (STATIC_ASSETS_DIR_ENV, None),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
@@ -227,21 +365,16 @@ mod tests {
     #[test]
     fn from_env_uses_hosting_port_when_tttb_port_is_missing() {
         let _guard = TestEnv::new(&[
-            (HOST_ENV, Some("0.0.0.0")),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, None),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
-            (PORT_ENV, None),
+            (HOST_ENV, Some("127.0.0.2")),
+            (MODE_ENV, Some("demo")),
             (HOSTING_PORT_ENV, Some("3000")),
-            (STATIC_ASSETS_DIR_ENV, None),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
 
         assert_eq!(
             config.host,
-            "0.0.0.0".parse::<IpAddr>().expect("valid test IP")
+            "127.0.0.2".parse::<IpAddr>().expect("valid test IP")
         );
         assert_eq!(config.port, 3000);
     }
@@ -249,13 +382,7 @@ mod tests {
     #[test]
     fn from_env_uses_static_assets_dir_override() {
         let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, None),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
-            (PORT_ENV, None),
-            (HOSTING_PORT_ENV, None),
+            (MODE_ENV, Some("demo")),
             (STATIC_ASSETS_DIR_ENV, Some("C:/tttb/static")),
         ]);
 
@@ -266,20 +393,24 @@ mod tests {
 
     #[test]
     fn from_env_uses_database_url_override() {
+        let database_url = sqlite_url(&unique_path("database-override", "sqlite"));
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some(&database_url))]);
+
+        let config = AppConfig::from_env().expect("config should load");
+
+        assert_eq!(config.ledger.url, database_url);
+    }
+
+    #[test]
+    fn from_env_uses_create_ledger_flag() {
         let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, Some("sqlite:///tmp/tttb.sqlite")),
-            (DEMO_MODE_ENV, None),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
-            (PORT_ENV, None),
-            (HOSTING_PORT_ENV, None),
-            (STATIC_ASSETS_DIR_ENV, None),
+            (MODE_ENV, Some("demo")),
+            (CREATE_LEDGER_IF_MISSING_ENV, Some("1")),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
 
-        assert_eq!(config.database_url, "sqlite:///tmp/tttb.sqlite");
+        assert!(config.create_ledger_if_missing);
     }
 
     #[test]
@@ -314,6 +445,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_host_rejects_non_loopback_with_guidance() {
+        let error = parse_host(HOST_ENV, "0.0.0.0").expect_err("host must be loopback");
+        let message = error.to_string();
+
+        assert!(message.contains("0.0.0.0"));
+        assert!(message.contains("loopback"));
+        assert!(message.contains("LAN exposure is separate future work"));
+    }
+
+    #[test]
+    fn parse_host_accepts_ipv4_and_ipv6_loopback() {
+        for host in ["127.0.0.1", "127.0.0.2", "::1"] {
+            assert!(parse_host(HOST_ENV, host).is_ok(), "{host}");
+        }
+    }
+
+    #[test]
     fn parse_port_rejects_non_port_values() {
         let error = parse_port(PORT_ENV, "70000").expect_err("port must fit in u16");
 
@@ -333,60 +481,76 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_demo_mode_flag() {
-        let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, Some("yes")),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
-            (PORT_ENV, None),
-            (HOSTING_PORT_ENV, None),
-            (STATIC_ASSETS_DIR_ENV, None),
-        ]);
+    fn unknown_mode_is_rejected() {
+        let _guard = TestEnv::new(&[(MODE_ENV, Some("staging"))]);
 
-        let config = AppConfig::from_env().expect("config should load");
+        let error = AppConfig::from_env().expect_err("unknown mode should fail");
 
-        assert!(config.demo_mode);
-    }
-
-    #[test]
-    fn from_env_rejects_invalid_demo_mode_flag() {
-        let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, Some("maybe")),
-            (MARKET_DATA_REFRESH_ENABLED_ENV, None),
-            (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, None),
-            (PORT_ENV, None),
-            (HOSTING_PORT_ENV, None),
-            (STATIC_ASSETS_DIR_ENV, None),
-        ]);
-
-        let error = AppConfig::from_env().expect_err("invalid demo flag should fail");
-
-        assert_eq!(error.variable, DEMO_MODE_ENV);
-        assert_eq!(error.value, "maybe");
-        assert_eq!(error.message, "must be a boolean value");
+        assert_eq!(error.variable, MODE_ENV);
+        assert_eq!(error.value, "staging");
+        assert_eq!(error.message, "must be production, development, or demo");
     }
 
     #[test]
     fn from_env_uses_refresh_flags() {
         let _guard = TestEnv::new(&[
-            (HOST_ENV, None),
-            (DATABASE_URL_ENV, None),
-            (DEMO_MODE_ENV, None),
+            (MODE_ENV, Some("demo")),
             (MARKET_DATA_REFRESH_ENABLED_ENV, Some("false")),
             (MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV, Some("1")),
-            (PORT_ENV, None),
-            (HOSTING_PORT_ENV, None),
-            (STATIC_ASSETS_DIR_ENV, None),
         ]);
 
         let config = AppConfig::from_env().expect("config should load");
 
         assert!(!config.market_data_refresh_enabled);
         assert!(config.launch_refresh_enabled);
+    }
+
+    #[test]
+    fn local_app_data_is_required_outside_demo_without_override() {
+        let _guard = TestEnv::new(&[]);
+
+        let error = AppConfig::from_env().expect_err("missing app data should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("LOCALAPPDATA"));
+        assert!(message.contains("TTTB_DATABASE_URL"));
+    }
+
+    #[test]
+    fn in_memory_production_url_becomes_typed_startup_error() {
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some("sqlite::memory:"))]);
+
+        let error = StartupError::from(AppConfig::from_env().expect_err("memory should fail"));
+
+        assert!(matches!(
+            error,
+            StartupError::LedgerMustBeFileBacked {
+                mode: Mode::Production,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unsupported_url_becomes_typed_startup_error() {
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some("postgres://ledger"))]);
+
+        let error = StartupError::from(AppConfig::from_env().expect_err("URL should fail"));
+
+        assert!(matches!(error, StartupError::LedgerUnsupportedUrl { .. }));
+    }
+
+    #[test]
+    fn directory_path_becomes_typed_startup_error() {
+        let directory = unique_path("ledger-directory", "dir");
+        fs::create_dir_all(&directory).expect("test directory should be created");
+        let database_url = sqlite_url(&directory);
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some(&database_url))]);
+
+        let error = StartupError::from(AppConfig::from_env().expect_err("directory should fail"));
+
+        assert!(matches!(error, StartupError::LedgerNotAFile { .. }));
+        fs::remove_dir(directory).expect("test directory should be removed");
     }
 
     struct TestEnv {
@@ -397,10 +561,14 @@ mod tests {
     impl TestEnv {
         fn new(values: &[(&'static str, Option<&str>)]) -> Self {
             let lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
-            let saved = values
+            let saved = ALL
                 .iter()
-                .map(|(variable, _)| (*variable, env::var_os(variable)))
+                .map(|variable| (*variable, env::var_os(variable)))
                 .collect();
+
+            for variable in ALL {
+                env::remove_var(variable);
+            }
 
             for (variable, value) in values {
                 match value {
@@ -422,5 +590,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn unique_path(stem: &str, extension: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after UNIX_EPOCH")
+            .as_nanos();
+        env::current_dir()
+            .expect("current directory should resolve")
+            .join("target")
+            .join("test-config")
+            .join(format!("{stem}-{unique}.{extension}"))
+    }
+
+    fn sqlite_url(path: &Path) -> String {
+        format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"))
     }
 }

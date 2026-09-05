@@ -4,11 +4,13 @@ export interface AppModeViewModel {
   navItems: { to: string; label: string; end?: boolean }[];
 }
 
-export function appModeViewModel(demo: boolean | undefined): AppModeViewModel {
-  const canMutate = demo === false;
+export function appModeViewModel(
+  mode: "production" | "development" | "demo" | undefined,
+): AppModeViewModel {
+  const canMutate = mode !== undefined && mode !== "demo";
 
   return {
-    showDemoBadge: demo === true,
+    showDemoBadge: mode === "demo",
     canMutate,
     navItems: [
       { to: "/", label: "Dashboard", end: true },

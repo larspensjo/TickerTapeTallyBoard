@@ -20,7 +20,7 @@ pub async fn lookup(
         return Err(ApiError::bad_request("invalid_query", "query is required"));
     }
 
-    if state.demo_mode {
+    if state.is_demo() {
         crate::engine_info!("instrument lookup unavailable in demo mode query={query}");
         return Ok(Json(SymbolSearchLookupResponse::provider_unavailable(
             query,
@@ -321,7 +321,7 @@ mod tests {
             db::memory_pool().await.expect("memory pool"),
             std::sync::Arc::new(MarketDataService::live()),
         )
-        .with_demo_mode(true);
+        .with_mode(crate::config::Mode::Demo);
 
         let (status, body) = send(&state, "/api/instruments/lookup?query=MSFT").await;
 

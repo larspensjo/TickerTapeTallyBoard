@@ -5,6 +5,6 @@ export function useAppMode() {
   const healthQuery = useHealth();
 
   return appModeViewModel(
-    healthQuery.isSuccess ? healthQuery.data.demo : undefined,
+    healthQuery.isSuccess ? healthQuery.data.mode : undefined,
   );
 }

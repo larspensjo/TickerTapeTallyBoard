@@ -144,16 +144,25 @@ button {
   background: var(--accent);
 }
 
-.demo-badge {
+.demo-badge,
+.mode-chip {
   justify-self: start;
   padding: 2px var(--space-2);
-  border: 1px solid rgba(244, 176, 0, 0.36);
   border-radius: var(--radius-pill);
-  background: var(--warning-soft);
-  color: var(--warning);
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.04em;
+}
+
+.demo-badge {
+  border: 1px solid rgba(244, 176, 0, 0.36);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.mode-chip {
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
 }
 
 .app-nav {

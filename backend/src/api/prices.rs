@@ -214,7 +214,7 @@ mod tests {
             pool,
             MarketDataService::with_providers(price_provider.clone(), fx_provider.clone()),
         )
-        .with_demo_mode(true);
+        .with_mode(crate::config::Mode::Demo);
 
         let (status, body) = send(
             &state,

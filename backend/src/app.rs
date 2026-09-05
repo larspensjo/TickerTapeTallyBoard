@@ -1,89 +1,168 @@
 use std::sync::Arc;
 
-use crate::{config::AppConfig, state::AppState};
+use crate::{
+    config::{AppConfig, AssetPolicy},
+    startup_error::StartupError,
+    state::AppState,
+};
 
-pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let address = config.socket_addr();
+pub async fn run() -> Result<(), StartupError> {
+    match run_inner().await {
+        Ok(()) => Ok(()),
+        Err(failure) => {
+            if failure.logging_initialized {
+                crate::engine_error!("startup failed: {}", failure.error);
+            } else {
+                eprintln!("startup failed: {}", failure.error);
+            }
+            Err(failure.error)
+        }
+    }
+}
+
+async fn run_inner() -> Result<(), StartupFailure> {
+    let config = AppConfig::from_env().map_err(StartupFailure::before_logging)?;
+    crate::engine_logging::initialize();
+    run_config(config)
+        .await
+        .map_err(StartupFailure::after_logging)
+}
+
+struct StartupFailure {
+    error: StartupError,
+    logging_initialized: bool,
+}
+
+impl StartupFailure {
+    fn before_logging(error: impl Into<StartupError>) -> Self {
+        Self {
+            error: error.into(),
+            logging_initialized: false,
+        }
+    }
+
+    fn after_logging(error: StartupError) -> Self {
+        Self {
+            error,
+            logging_initialized: true,
+        }
+    }
+}
+
+async fn run_config(config: AppConfig) -> Result<(), StartupError> {
     let state = build_state(&config).await?;
-    let _ = spawn_launch_refresh(&config, state.clone());
-    let router = if config.static_assets_dir().is_dir() {
-        crate::engine_info!(
-            "serving frontend assets from {}",
-            config.static_assets_dir().display()
-        );
-        crate::api::router_with_static_assets(config.static_assets_dir(), state)
-    } else {
-        crate::engine_warn!(
-            "frontend assets not found at {}; serving backend routes only",
-            config.static_assets_dir().display()
-        );
-        crate::api::router(state)
-    };
-
-    let listener = tokio::net::TcpListener::bind(address).await?;
-    let local_address = listener.local_addr()?;
-
-    crate::engine_info!("backend listening on {local_address}");
-
+    let router = router_for_assets(&config, state.clone())?;
+    let address = config.socket_addr();
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .map_err(|source| StartupError::PortUnavailable {
+            address: address.to_string(),
+            source,
+        })?;
+    crate::engine_info!(
+        "backend listening on {}",
+        listener
+            .local_addr()
+            .map_err(|source| StartupError::PortUnavailable {
+                address: address.to_string(),
+                source
+            })?
+    );
+    let _refresh = spawn_launch_refresh(&config, state.clone());
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
-
+        .await
+        .map_err(|source| StartupError::PortUnavailable {
+            address: address.to_string(),
+            source,
+        })?;
     crate::engine_info!("backend shutdown complete");
-
     Ok(())
 }
 
-async fn build_state(
-    config: &AppConfig,
-) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = if config.demo_mode {
+fn router_for_assets(config: &AppConfig, state: AppState) -> Result<axum::Router, StartupError> {
+    match static_assets_available(config.static_assets_dir()) {
+        true => {
+            crate::engine_info!(
+                "serving frontend assets from {}",
+                config.static_assets_dir().display()
+            );
+            Ok(crate::api::router_with_static_assets(
+                config.static_assets_dir(),
+                state,
+            ))
+        }
+        false if config.asset_policy() == AssetPolicy::Required => {
+            Err(StartupError::StaticAssetsMissing {
+                dir: config.static_assets_dir.clone(),
+            })
+        }
+        false => {
+            crate::engine_warn!(
+                "frontend assets not found at {}; serving backend routes only",
+                config.static_assets_dir().display()
+            );
+            Ok(crate::api::router(state))
+        }
+    }
+}
+
+fn static_assets_available(dir: &std::path::Path) -> bool {
+    std::fs::metadata(dir.join("index.html"))
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
+    let pool = if config.mode.is_demo() {
         crate::engine_info!("starting in DEMO mode (in-memory, seeded, read-only)");
-        let pool = crate::db::memory_pool().await?;
-        crate::demo::seed(&pool).await?;
-        sqlx::query("PRAGMA query_only = ON").execute(&pool).await?;
+        let pool =
+            crate::db::memory_pool()
+                .await
+                .map_err(|source| StartupError::LedgerOpenFailed {
+                    path: None,
+                    source: Box::new(source),
+                })?;
+        crate::demo::seed(&pool)
+            .await
+            .map_err(|source| StartupError::LedgerOpenFailed { path: None, source })?;
+        sqlx::query("PRAGMA query_only = ON")
+            .execute(&pool)
+            .await
+            .map_err(|source| StartupError::LedgerOpenFailed {
+                path: None,
+                source: Box::new(source),
+            })?;
         pool
     } else {
-        let pool = crate::db::connect(config.database_url()).await?;
-        crate::engine_info!("database ready at {}", config.database_url());
-        pool
+        crate::ledger::open(config).await?.pool
     };
-
     Ok(AppState::new(
         pool,
         Arc::new(crate::market_data::MarketDataService::live()),
     )
-    .with_demo_mode(config.demo_mode))
+    .with_mode(config.mode)
+    .with_ledger_path(config.ledger.path.clone()))
 }
 
 fn spawn_launch_refresh(
     config: &AppConfig,
     state: AppState,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    if state.demo_mode {
+    if state.is_demo() {
         crate::engine_info!("demo mode active; skipping launch refresh");
         return None;
     }
-
-    if !config.market_data_refresh_enabled {
-        crate::engine_info!(
-            "market data refresh disabled by configuration; skipping launch refresh"
-        );
-        return None;
-    }
-
-    if !config.launch_refresh_enabled {
+    if !config.market_data_refresh_enabled || !config.launch_refresh_enabled {
         crate::engine_info!("launch refresh disabled by configuration; skipping startup refresh");
         return None;
     }
-
     Some(tokio::spawn(async move {
         let request = crate::market_data::RefreshPricesRequest {
             mode: crate::market_data::RefreshMode::Latest,
             start_date: None,
             end_date: None,
         };
-
         if let Err(error) = state
             .market_data
             .refresh(
@@ -109,14 +188,22 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::{
+        fs,
+        net::{IpAddr, Ipv4Addr},
+        path::PathBuf,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
     use tokio::sync::Notify;
 
     use crate::{
+        config::Mode,
         db::{self, instruments, provider_symbols, transactions},
+        ledger::{memory, LedgerLocation},
         market_data::MarketDataService,
         providers::{
             DailyClose, FakeFxRateProvider, FakePriceProvider, FxProvider, FxRate,
@@ -124,6 +211,19 @@ mod tests {
         },
         state::AppState,
     };
+
+    fn test_config(mode: Mode, ledger: LedgerLocation) -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 8080,
+            ledger,
+            static_assets_dir: PathBuf::from("target/test-assets"),
+            mode,
+            create_ledger_if_missing: false,
+            market_data_refresh_enabled: true,
+            launch_refresh_enabled: true,
+        }
+    }
 
     async fn seeded_state() -> (AppState, FakePriceProvider, Arc<Notify>) {
         let pool = db::memory_pool().await.expect("memory pool");
@@ -204,11 +304,7 @@ mod tests {
     #[tokio::test]
     async fn launch_refresh_spawns_background_job() {
         let (state, price_provider, gate) = seeded_state().await;
-        let config = AppConfig {
-            market_data_refresh_enabled: true,
-            launch_refresh_enabled: true,
-            ..AppConfig::default()
-        };
+        let config = test_config(Mode::Production, memory());
 
         let handle = spawn_launch_refresh(&config, state.clone())
             .expect("launch refresh should be scheduled");
@@ -246,11 +342,8 @@ mod tests {
     #[tokio::test]
     async fn launch_refresh_is_skipped_when_disabled() {
         let (state, _, _) = seeded_state().await;
-        let config = AppConfig {
-            market_data_refresh_enabled: true,
-            launch_refresh_enabled: false,
-            ..AppConfig::default()
-        };
+        let mut config = test_config(Mode::Production, memory());
+        config.launch_refresh_enabled = false;
 
         assert!(spawn_launch_refresh(&config, state).is_none());
     }
@@ -258,27 +351,19 @@ mod tests {
     #[tokio::test]
     async fn launch_refresh_is_skipped_in_demo_mode() {
         let (state, _, _) = seeded_state().await;
-        let state = state.with_demo_mode(true);
-        let config = AppConfig {
-            market_data_refresh_enabled: true,
-            launch_refresh_enabled: true,
-            demo_mode: true,
-            ..AppConfig::default()
-        };
+        let state = state.with_mode(Mode::Demo);
+        let config = test_config(Mode::Demo, memory());
 
         assert!(spawn_launch_refresh(&config, state).is_none());
     }
 
     #[tokio::test]
     async fn demo_state_is_seeded_and_query_only() {
-        let config = AppConfig {
-            demo_mode: true,
-            ..AppConfig::default()
-        };
+        let config = test_config(Mode::Demo, memory());
 
         let state = build_state(&config).await.expect("demo state should build");
 
-        assert!(state.demo_mode);
+        assert!(state.is_demo());
         let instruments = db::instruments::list(&state.pool)
             .await
             .expect("seeded instruments should list");
@@ -292,5 +377,58 @@ mod tests {
         .await;
 
         assert!(write_result.is_err());
+    }
+
+    #[test]
+    fn asset_availability_requires_non_empty_index() {
+        let directory = unique_assets_dir("availability");
+        fs::create_dir_all(&directory).expect("test assets directory should be created");
+
+        assert!(!static_assets_available(&directory));
+        fs::write(directory.join("index.html"), "ok").expect("test index should be written");
+        assert!(static_assets_available(&directory));
+
+        fs::remove_dir_all(directory).expect("test assets directory should be removed");
+    }
+
+    #[tokio::test]
+    async fn required_assets_reject_an_empty_directory() {
+        let directory = unique_assets_dir("required");
+        fs::create_dir_all(&directory).expect("test assets directory should be created");
+        let mut config = test_config(Mode::Production, memory());
+        config.static_assets_dir = directory.clone();
+        let state = AppState::for_tests().await;
+
+        let result = router_for_assets(&config, state);
+
+        assert!(matches!(
+            result,
+            Err(StartupError::StaticAssetsMissing { .. })
+        ));
+        fs::remove_dir_all(directory).expect("test assets directory should be removed");
+    }
+
+    #[tokio::test]
+    async fn optional_assets_build_an_api_only_router_for_an_empty_directory() {
+        let directory = unique_assets_dir("optional");
+        fs::create_dir_all(&directory).expect("test assets directory should be created");
+        let mut config = test_config(Mode::Development, memory());
+        config.static_assets_dir = directory.clone();
+        let state = AppState::for_tests().await;
+
+        let result = router_for_assets(&config, state);
+
+        assert!(result.is_ok());
+        fs::remove_dir_all(directory).expect("test assets directory should be removed");
+    }
+
+    fn unique_assets_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after UNIX_EPOCH")
+            .as_nanos();
+        PathBuf::from("target")
+            .join("test-assets")
+            .join(format!("{name}-{unique}"))
     }
 }

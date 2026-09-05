@@ -14,7 +14,7 @@ pub mod transactions;
 
 pub mod testing;
 
-pub use pool::connect;
+pub use pool::{migrate, open, pending_migrations, CreateMissing, OpenError, OpenedLedger};
 
 /// A migrated single-connection in-memory pool, for examples and integration tests.
 pub async fn memory_pool() -> Result<SqlitePool, sqlx::Error> {
