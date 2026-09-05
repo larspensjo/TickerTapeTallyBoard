@@ -7,7 +7,7 @@ A portfolio management application
 - Node.js and npm
 - PowerShell on Windows
 
-## Local Development
+## Running the application
 
 Install frontend dependencies once:
 
@@ -16,15 +16,40 @@ cd frontend
 npm install
 ```
 
-Run the backend and frontend together:
+Run the production composition:
 
 ```powershell
 .\scripts\start.ps1
 ```
 
-The script builds both projects, starts the backend on `http://127.0.0.1:8080/`,
-starts Vite on `http://127.0.0.1:5173/`, and stops both processes when it exits.
-By default it uses a disposable local test database under `.local/db/`. The script sets development mode and continues to pass that legacy URL explicitly.
+With no flags, the script builds the release backend and `frontend/dist`, then
+runs the release backend as the sole application process at
+`http://127.0.0.1:8480/`. The backend serves the built static frontend. It
+passes `TTTB_DATABASE_URL` explicitly, so the backend opens the legacy ledger
+at `.local/db/tttb-ledger-test.sqlite`. The first release build can take several
+minutes.
+
+The script blocks until Ctrl+C. Run a second PowerShell window when a procedure
+needs a second instance.
+
+For the debug backend plus Vite development loop (including HMR):
+
+```powershell
+.\scripts\start.ps1 -Dev
+```
+
+Vite proxies `/api` to the backend, so the frontend can call `/api/health`
+without a separate development API URL. Development can scan to a free backend
+port and a free Vite port.
+
+For the seeded, in-memory demo:
+
+```powershell
+.\scripts\start.ps1 -Demo
+```
+
+`-Demo` alone uses the release/static composition for a presentation-ready
+demo. It composes with `-Dev` when the Vite loop is wanted.
 
 For a faster rerun after dependencies and builds are already current:
 
@@ -32,24 +57,22 @@ For a faster rerun after dependencies and builds are already current:
 .\scripts\start.ps1 -SkipInstall -SkipBuild
 ```
 
-To run against the production portfolio database instead:
+`-SkipBuild` in the release/static composition can serve a stale
+`frontend/dist` and release binary.
+
+Use `-DatabaseUrl` to explicitly override the non-demo ledger, and `-Port` to
+explicitly override the backend port:
 
 ```powershell
-.\scripts\start.ps1 -ProductionDb
+.\scripts\start.ps1 -DatabaseUrl "sqlite://C:/path/to/ledger.sqlite" -Port 8481
 ```
 
-The default production database path is
-`Documents\TickerTapeTallyBoard\portfolio.sqlite`. Override it with either:
+`-InitLedger` sets `TTTB_CREATE_LEDGER_IF_MISSING=1`. `-NoBackup` sets
+`TTTB_BACKUP_ENABLED=0`; no component consumes this setting. `-NoRefresh`
+disables the launch-time market-data refresh.
 
-```powershell
-.\scripts\start.ps1 -ProductionDb -ProductionDatabaseUrl "sqlite://C:/Users/larsp/Documents/TickerTapeTallyBoard/portfolio.sqlite"
-```
-
-or by setting `TTTB_PRODUCTION_DATABASE_URL`. The local test database can be
-overridden with `-LocalDatabaseUrl` or `TTTB_LOCAL_DATABASE_URL`.
-
-The Vite dev server proxies `/api` to the backend, so the frontend can call
-`/api/health` without a separate development API URL.
+`-ProductionDb`, `-LocalDatabaseUrl`, and `-ProductionDatabaseUrl` are retired
+and fail immediately with the replacement command.
 
 ## Backend Commands
 
@@ -65,16 +88,14 @@ cargo fmt
 Configuration:
 
 - `TTTB_MODE`: `production`, `development`, or `demo`; default `production`.
-- `TTTB_HOST`: backend bind IP address, default `127.0.0.1`; only `127.0.0.0/8` and `::1` are accepted. LAN exposure is separate future work.
-- `TTTB_PORT`: backend port, default `8080`
+- `TTTB_HOST`: backend bind IP address, default `127.0.0.1`; only `127.0.0.0/8` and `::1` are accepted.
+- `TTTB_PORT`: backend port, default `8480`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
 - `TTTB_DATABASE_URL`: backend SQLite database URL. When omitted, production uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio.sqlite` and development uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
 - `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
 - `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
-- `TTTB_PRODUCTION_DATABASE_URL`: startup-script production database URL
-- `TTTB_LOCAL_DATABASE_URL`: startup-script local test database URL
 - `TTTB_DEMO_MODE`: retired; use `TTTB_MODE=demo`.
 
 ## Frontend Commands
@@ -88,29 +109,13 @@ npm run fmt
 npm run build
 ```
 
-## Production-Style Static Serving
+## Static-serving smoke test
 
-The initial production serving model is disk-based static assets. Build the
-frontend first:
-
-```powershell
-cd frontend
-npm run build
-```
-
-Then run the backend from `backend/`. With the default working directory, it
-serves `../frontend/dist` for frontend routes and keeps API routes under `/api`.
+After starting the default production composition, smoke-test both surfaces:
 
 ```powershell
-cd ..\backend
-cargo run
-```
-
-Smoke-test both surfaces:
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing
-Invoke-WebRequest http://127.0.0.1:8080/api/health -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:8480/ -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:8480/api/health -UseBasicParsing
 ```
 
 ## Sharesight Import Spike

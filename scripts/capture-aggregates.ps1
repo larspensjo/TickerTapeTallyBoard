@@ -25,7 +25,7 @@
     before diffing starts.
 
     The backend URL defaults to http://127.0.0.1:<port>, where the port comes
-    from TTTB_PORT or 8080. Override it with -BaseUrl or -Port when capturing
+    from TTTB_PORT or 8480. Override it with -BaseUrl or -Port when capturing
     from a second backend instance backed by a restored database copy.
 
 .EXAMPLE
@@ -47,7 +47,7 @@ param(
 
     [Parameter(ParameterSetName = "Capture")]
     [ValidateRange(1, 65535)]
-    [int]$Port = $(if ($env:TTTB_PORT) { [int]$env:TTTB_PORT } else { 8080 }),
+    [int]$Port = $(if ($env:TTTB_PORT) { [int]$env:TTTB_PORT } else { 8480 }),
 
     [Parameter(ParameterSetName = "Capture")]
     [ValidatePattern('^\d{4}-\d{2}-\d{2}$')]

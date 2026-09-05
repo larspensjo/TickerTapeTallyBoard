@@ -47,7 +47,7 @@ mod tests {
         let path = directory.join(format!("created-{unique}.sqlite"));
         let config = AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 8080,
+            port: 8480,
             ledger: resolve(
                 &format!("sqlite://{}", path.to_string_lossy().replace('\\', "/")),
                 Mode::Production,

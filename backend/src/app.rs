@@ -215,7 +215,7 @@ mod tests {
     fn test_config(mode: Mode, ledger: LedgerLocation) -> AppConfig {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 8080,
+            port: 8480,
             ledger,
             static_assets_dir: PathBuf::from("target/test-assets"),
             mode,

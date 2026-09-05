@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn builds_expected_price_history_and_search_urls() {
-        let client = NasdaqNordicClient::with_base_url("http://localhost:8080/api/nordic/");
+        let client = NasdaqNordicClient::with_base_url("http://localhost:8480/api/nordic/");
         let request = PriceHistoryRequest {
             symbol: "TX271/quoted".to_owned(),
             asset_class: Some("SHARES & CERTIFICATES".to_owned()),

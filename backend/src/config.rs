@@ -11,7 +11,7 @@ pub use crate::mode::Mode;
 use crate::ledger::{resolve, LedgerLocation, LedgerLocationError};
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_PORT: u16 = 8480;
 const DEFAULT_STATIC_ASSETS_DIR: &str = "../frontend/dist";
 pub const MODE_ENV: &str = "TTTB_MODE";
 pub const DATABASE_URL_ENV: &str = "TTTB_DATABASE_URL";
@@ -301,8 +301,8 @@ mod tests {
         let config = AppConfig::from_env().expect("config should load");
 
         assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert_eq!(config.port, 8080);
-        assert_eq!(config.socket_addr().to_string(), "127.0.0.1:8080");
+        assert_eq!(config.port, 8480);
+        assert_eq!(config.socket_addr().to_string(), "127.0.0.1:8480");
         assert_eq!(config.mode, Mode::Production);
         assert_eq!(config.asset_policy(), AssetPolicy::Required);
         assert_eq!(Mode::Development.asset_policy(), AssetPolicy::Optional);

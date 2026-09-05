@@ -2,7 +2,7 @@ import { Agent } from "node:http";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-const backendPort = Number.parseInt(process.env.TTTB_PORT ?? "8080", 10);
+const backendPort = Number.parseInt(process.env.TTTB_PORT ?? "8480", 10);
 const backendTarget = `http://127.0.0.1:${backendPort}`;
 
 // Reuse TCP connections to the backend instead of opening a fresh localhost

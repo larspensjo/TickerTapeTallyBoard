@@ -37,8 +37,8 @@ A self-hosted portfolio tracking application for stocks, ETFs, and funds, runnin
 | Testing | **`cargo test`** + **Vitest** (+ React Testing Library / jsdom) | Pure logic on both sides unit-tested; one runner per stack |
 
 ### Deployment model
-- **Dev:** `cargo run` (API on :8080) + `npm run dev` (Vite on :5173, proxying `/api`).
-- **Prod (home PC):** `npm run build` → static files embedded or served from disk by the Rust binary. One executable + one `.db` file. Backup = copy the file. Runs as a Windows scheduled task or service; reachable at `http://<host>:8080` on the LAN.
+- **Dev:** `cargo run` (API on :8480) + `npm run dev` (Vite on :5173, proxying `/api`).
+- **Prod (home PC):** `npm run build` → static files embedded or served from disk by the Rust binary. One executable + one `.db` file. Backup = copy the file. Runs as a Windows scheduled task or service; reachable at `http://<host>:8480` on the LAN.
 
 ### Testing strategy
 
@@ -75,16 +75,16 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
 - **Nasdaq Nordic:** Nasdaq's `api.nasdaq.com/api/nordic` interface is an undocumented internal API with no SLA, so the client is treated as best-effort. A provider outage or a stored mapping whose provider has no registered client is reported as an explicit `Unavailable` refresh item (serialized as `unavailable`). On backfill, Nasdaq rows that begin more than five calendar days after the requested start produce the `history_clamped` reason on a `Fetched` item. This warning-only heuristic can also be triggered by a recently listed instrument or a long holiday stretch, so it is not proof of a clamp. There is no per-instrument history-start marker; dates without usable rows flow through the existing value-history `incomplete` / `excluded_count` handling.
 - **Ambiguous instruments:** The authoritative signal that an instrument needs a hand mapping is a price refresh item with status `Ambiguous` (serialized as `ambiguous`). The asset page shows `No price source` when no provider-symbol rows exist, or `Price sources disabled` when rows exist but all are disabled. Ambiguity is visible only in `engine.log` or the raw refresh response because no UI renders refresh items.
 
-  Search Nasdaq by the instrument ISIN at `https://api.nasdaq.com/api/nordic/search?searchText=<ISIN>`. In `data[].instruments[]`, select the intended listing and copy its `orderbookId`, `assetClass`, and `currency`. Replace `123` below with the `instrument_id` from the `ambiguous` refresh item or the `instrument_id=` field in the corresponding `engine.log` warning, then run this against the locally running app (whose default port is 8080):
+  Search Nasdaq by the instrument ISIN at `https://api.nasdaq.com/api/nordic/search?searchText=<ISIN>`. In `data[].instruments[]`, select the intended listing and copy its `orderbookId`, `assetClass`, and `currency`. Replace `123` below with the `instrument_id` from the `ambiguous` refresh item or the `instrument_id=` field in the corresponding `engine.log` warning, then run this against the locally running app (whose default port is 8480):
 
   ```powershell
-  curl.exe -X PUT "http://localhost:8080/api/instruments/123/provider-symbols/NASDAQ_NORDIC" -H "Content-Type: application/json" -d '{"provider_symbol":"TX2997672","asset_class":"TRACKER_CERTIFICATES","currency":"SEK","enabled":true}'
+  curl.exe -X PUT "http://localhost:8480/api/instruments/123/provider-symbols/NASDAQ_NORDIC" -H "Content-Type: application/json" -d '{"provider_symbol":"TX2997672","asset_class":"TRACKER_CERTIFICATES","currency":"SEK","enabled":true}'
   ```
 
   Here `provider_symbol` is the selected `orderbookId`, `asset_class` is its `assetClass`, and `currency` is its `currency`; both `asset_class` and `currency` are required. The mapping does not fetch prices by itself. Backfill the newly mapped instrument from the portfolio's earliest transaction through today with:
 
   ```powershell
-  curl.exe -X POST "http://localhost:8080/api/prices/refresh" -H "Content-Type: application/json" -d '{"mode":"backfill"}'
+  curl.exe -X POST "http://localhost:8480/api/prices/refresh" -H "Content-Type: application/json" -d '{"mode":"backfill"}'
   ```
 
   The ordinary **Refresh prices** button sends `mode: "latest"` and fills only the 14-calendar-day window ending today.

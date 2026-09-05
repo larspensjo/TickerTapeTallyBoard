@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [int]$FrontendPort = 5173,
-    [int]$BackendPort = $(if ($env:TTTB_PORT) { [int]$env:TTTB_PORT } else { 8080 }),
+    [int]$BackendPort = $(if ($env:TTTB_PORT) { [int]$env:TTTB_PORT } else { 8480 }),
     [double]$IntervalSeconds = 1,
     [int]$TimeoutSeconds = 5,
     [int]$HeartbeatMinutes = 10
