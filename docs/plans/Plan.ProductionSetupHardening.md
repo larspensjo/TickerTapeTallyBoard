@@ -747,12 +747,14 @@ run build`, naming both the directory and the command; `dist` was restored.
 `/api/health` reported mode `production`, profile `release`, ledger mode `file`
 at the legacy path.
 
-**Not executed (checklist items 2–6).** Back/Forward, the import round trip,
-manual and launch refresh, the charts, and the rendered footer were skipped at
-the maintainer's direction. These are recorded as **not run**, not as passed.
-The release composition's browser-side behaviour therefore remains unverified by
-a human, and the ~2 MB import body limit owned by `Plan.NativeDesktopWindow.md`
-was not exercised.
+**Waived (checklist items 2–6).** Back/Forward, the import round trip, manual
+and launch refresh, the charts, and the rendered footer were **deliberately
+waived by the maintainer as unnecessary**. This is a closed decision, not
+outstanding work: these items are not pending, and the gate is not blocked on
+them. They were not run, so they are recorded as waived rather than passed —
+the release composition's browser-side behaviour has not been observed by a
+human, and the ~2 MB import body limit owned by `Plan.NativeDesktopWindow.md`
+was not exercised. The gate is complete on that basis.
 
 **Defect found and fixed (item 1, server side).** The catch-all index fallback
 answered every unmatched request with the index shell at `200 text/html`,
