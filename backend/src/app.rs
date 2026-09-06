@@ -108,7 +108,7 @@ fn router_for_assets(config: &AppConfig, state: AppState) -> Result<axum::Router
 }
 
 fn static_assets_available(dir: &std::path::Path) -> bool {
-    std::fs::metadata(dir.join("index.html"))
+    std::fs::metadata(crate::api::static_assets::index_path(dir))
         .map(|metadata| metadata.is_file() && metadata.len() > 0)
         .unwrap_or(false)
 }
@@ -385,7 +385,8 @@ mod tests {
         fs::create_dir_all(&directory).expect("test assets directory should be created");
 
         assert!(!static_assets_available(&directory));
-        fs::write(directory.join("index.html"), "ok").expect("test index should be written");
+        fs::write(crate::api::static_assets::index_path(&directory), "ok")
+            .expect("test index should be written");
         assert!(static_assets_available(&directory));
 
         fs::remove_dir_all(directory).expect("test assets directory should be removed");

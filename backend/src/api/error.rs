@@ -1,4 +1,5 @@
-use axum::http::StatusCode;
+use axum::extract::OriginalUri;
+use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
@@ -83,6 +84,17 @@ impl ApiError {
             None => api_error,
         }
     }
+}
+
+pub(crate) async fn unmatched_route(
+    OriginalUri(original_uri): OriginalUri,
+    method: Method,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        format!("No API route matches {} {}", method, original_uri.path()),
+    )
 }
 
 impl IntoResponse for ApiError {

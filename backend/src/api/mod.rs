@@ -12,6 +12,7 @@ mod prices;
 mod provider_symbols;
 mod rebalance;
 mod root;
+pub(crate) mod static_assets;
 #[cfg(test)]
 mod test_support;
 mod transactions;
@@ -21,14 +22,12 @@ mod valued_holdings;
 use axum::{
     body::Body,
     extract::State,
-    http::{Method, Request, StatusCode},
+    http::{Method, Request},
     middleware::{self, Next},
-    response::{Html, IntoResponse},
-    routing::{delete, get, post, put},
+    routing::{any, delete, get, post, put},
     Router,
 };
-use std::{path::Path, sync::Arc};
-use tower_http::services::ServeDir;
+use std::path::Path;
 
 use crate::state::AppState;
 
@@ -42,35 +41,30 @@ pub fn reject_demo_mutation(state: &AppState) -> Result<(), ApiError> {
 }
 
 pub fn router(state: AppState) -> Router {
-    let api = api_router().route_layer(middleware::from_fn_with_state(
-        state.clone(),
-        demo_read_only_layer,
-    ));
-
-    Router::new()
+    api_mount(&state)
         .route("/", get(root::handler))
-        .nest("/api", api)
         .layer(cors::layer())
         .with_state(state)
 }
 
 pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: AppState) -> Router {
     let static_assets_dir = static_assets_dir.as_ref();
+
+    api_mount(&state)
+        .fallback_service(static_assets::service(static_assets_dir))
+        .layer(cors::layer())
+        .with_state(state)
+}
+
+fn api_mount(state: &AppState) -> Router<AppState> {
     let api = api_router().route_layer(middleware::from_fn_with_state(
         state.clone(),
         demo_read_only_layer,
     ));
-    let static_assets = StaticAssets {
-        index_path: Arc::from(static_assets_dir.join("index.html").into_boxed_path()),
-    };
 
     Router::new()
         .nest("/api", api)
-        .fallback_service(
-            ServeDir::new(static_assets_dir).fallback(get(static_index).with_state(static_assets)),
-        )
-        .layer(cors::layer())
-        .with_state(state)
+        .route("/api/", any(error::unmatched_route))
 }
 
 fn api_router() -> Router<AppState> {
@@ -121,6 +115,7 @@ fn api_router() -> Router<AppState> {
             "/transactions/{id}",
             put(transactions::replace).delete(transactions::remove),
         )
+        .fallback(error::unmatched_route)
 }
 
 async fn demo_read_only_layer(
@@ -139,18 +134,6 @@ fn is_mutating_method(method: &Method) -> bool {
     !matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS)
 }
 
-#[derive(Clone)]
-struct StaticAssets {
-    index_path: Arc<Path>,
-}
-
-async fn static_index(State(static_assets): State<StaticAssets>) -> impl IntoResponse {
-    match tokio::fs::read_to_string(static_assets.index_path.as_ref()).await {
-        Ok(index) => Html(index).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,15 +142,7 @@ mod tests {
         http::{header, Request, StatusCode},
     };
     use serde_json::{json, Value};
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
     use tower::ServiceExt;
-
-    static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[tokio::test]
     async fn demo_mode_rejects_mutating_routes() {
@@ -243,176 +218,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_router_serves_frontend_index_for_root() {
-        let fixture = StaticFixture::new();
+    async fn unmatched_api_routes_return_documented_not_found_errors() {
+        let fixture = static_assets::tests::StaticFixture::new();
         let state = crate::state::AppState::for_tests().await;
 
-        let response = router_with_static_assets(fixture.path(), state)
-            .oneshot(
-                Request::builder()
-                    .uri("/")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
+        for router in [
+            router(state.clone()),
+            router_with_static_assets(fixture.path(), state.clone()),
+        ] {
+            for (uri, accept, expected_path) in [
+                (
+                    "/api/does-not-exist?ignored=true",
+                    "*/*",
+                    "/api/does-not-exist",
+                ),
+                ("/api/", "text/html", "/api/"),
+                ("/api/", "*/*", "/api/"),
+            ] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method("GET")
+                            .uri(uri)
+                            .header(header::ACCEPT, accept)
+                            .body(Body::empty())
+                            .expect("request should build"),
+                    )
+                    .await
+                    .expect("request should complete");
 
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should be readable");
-        assert!(
-            String::from_utf8_lossy(&body).contains("TTTB static fixture"),
-            "root should serve built frontend index"
-        );
-    }
-
-    #[tokio::test]
-    async fn static_router_uses_index_fallback_for_frontend_routes() {
-        let fixture = StaticFixture::new();
-        let state = crate::state::AppState::for_tests().await;
-
-        let response = router_with_static_assets(fixture.path(), state)
-            .oneshot(
-                Request::builder()
-                    .uri("/portfolio/holdings")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should be readable");
-        assert!(
-            String::from_utf8_lossy(&body).contains("TTTB static fixture"),
-            "frontend routes should fall back to index.html"
-        );
-    }
-
-    #[tokio::test]
-    async fn static_router_serves_root_static_files_before_spa_fallback() {
-        let fixture = StaticFixture::new();
-        let state = crate::state::AppState::for_tests().await;
-
-        let response = router_with_static_assets(fixture.path(), state)
-            .oneshot(
-                Request::builder()
-                    .uri("/manifest.json")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should be readable");
-        assert!(
-            String::from_utf8_lossy(&body).contains("TTTB manifest fixture"),
-            "root static files should be served before SPA fallback"
-        );
-    }
-
-    #[tokio::test]
-    async fn static_router_serves_asset_files_with_content_type() {
-        let fixture = StaticFixture::new();
-        let state = crate::state::AppState::for_tests().await;
-
-        let response = router_with_static_assets(fixture.path(), state)
-            .oneshot(
-                Request::builder()
-                    .uri("/assets/app.css")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(
-            response
-                .headers()
-                .get(header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|value| value.starts_with("text/css")),
-            "CSS assets should be served with a CSS content type"
-        );
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should be readable");
-        assert!(
-            String::from_utf8_lossy(&body).contains(".fixture"),
-            "asset response should contain the static file body"
-        );
-    }
-
-    #[tokio::test]
-    async fn static_router_keeps_api_routes_available() {
-        let fixture = StaticFixture::new();
-        let state = crate::state::AppState::for_tests().await;
-
-        let response = router_with_static_assets(fixture.path(), state)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/health")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    struct StaticFixture {
-        dir: PathBuf,
-    }
-
-    impl StaticFixture {
-        fn new() -> Self {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock should be after epoch")
-                .as_nanos();
-            let unique = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "tttb-static-fixture-{}-{timestamp}-{unique}",
-                std::process::id()
-            ));
-
-            fs::create_dir_all(dir.join("assets")).expect("fixture directory should be created");
-            fs::write(
-                dir.join("index.html"),
-                "<!doctype html><html><body>TTTB static fixture</body></html>",
-            )
-            .expect("fixture index should be written");
-            fs::write(
-                dir.join("manifest.json"),
-                r#"{"name":"TTTB manifest fixture"}"#,
-            )
-            .expect("fixture manifest should be written");
-            fs::write(dir.join("assets/app.css"), ".fixture { color: white; }")
-                .expect("fixture asset should be written");
-
-            Self { dir }
-        }
-
-        fn path(&self) -> &Path {
-            &self.dir
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri} {accept}");
+                assert_eq!(
+                    response.headers().get(header::CONTENT_TYPE),
+                    Some(&header::HeaderValue::from_static("application/json")),
+                    "{uri} {accept}"
+                );
+                let body = to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("body should be readable");
+                let body: Value = serde_json::from_slice(&body).expect("body should be JSON");
+                assert_eq!(body["error"]["code"], "not_found", "{uri} {accept}");
+                assert_eq!(
+                    body["error"]["message"],
+                    format!("No API route matches GET {expected_path}"),
+                    "{uri} {accept}"
+                );
+            }
         }
     }
 
-    impl Drop for StaticFixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
+    #[tokio::test]
+    async fn api_method_mismatch_remains_method_not_allowed() {
+        let fixture = static_assets::tests::StaticFixture::new();
+        let state = crate::state::AppState::for_tests().await;
+
+        for router in [
+            router(state.clone()),
+            router_with_static_assets(fixture.path(), state.clone()),
+        ] {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/api/instruments/1")
+                        .body(Body::empty())
+                        .expect("request should build"),
+                )
+                .await
+                .expect("request should complete");
+
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         }
     }
 }

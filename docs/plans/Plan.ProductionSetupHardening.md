@@ -733,6 +733,37 @@ confirm production start refuses with a message naming the directory and
 **Decision-log entry lands here, once the gate passes:** *Production Run Model
 And Pinned Loopback Port*.
 
+#### Gate record — 2026-09-06
+
+**Executed automatically (pass).** Deep links `/`, `/board`, `/asset/45`,
+`/import`, plus a query-string and a trailing-slash variant, all served the
+index shell at the HTTP level. Content types correct for CSS, JS, `.woff2`
+(`font/woff2`) and `.woff` (`application/font-woff`); all lazy route chunks and
+all eight font files present; `ETag` set and a conditional GET returned `304`.
+A second start with the port busy refused, naming the occupying process and
+PID. With `frontend/dist` renamed aside, production start refused with
+`startup failed: built frontend assets are missing from …\frontend\dist; run npm
+run build`, naming both the directory and the command; `dist` was restored.
+`/api/health` reported mode `production`, profile `release`, ledger mode `file`
+at the legacy path.
+
+**Not executed (checklist items 2–6).** Back/Forward, the import round trip,
+manual and launch refresh, the charts, and the rendered footer were skipped at
+the maintainer's direction. These are recorded as **not run**, not as passed.
+The release composition's browser-side behaviour therefore remains unverified by
+a human, and the ~2 MB import body limit owned by `Plan.NativeDesktopWindow.md`
+was not exercised.
+
+**Defect found and fixed (item 1, server side).** The catch-all index fallback
+answered every unmatched request with the index shell at `200 text/html`,
+including unmatched `/api/` paths and missing files below the build-output
+path, while the development composition returned `404` for the same requests.
+Fixed under the behaviour recorded in *Unmatched Requests Are Answered By
+Request Kind, Never With The App Shell*: API misses return the standard JSON
+`404`, and the shell is served only to requests that accept `text/html`.
+Verified live against the rebuilt release binary. Backend version 0.16.0 →
+0.16.1.
+
 ---
 
 ### Phase 4 — Launch and pre-migration backups
