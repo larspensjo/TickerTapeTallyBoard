@@ -177,6 +177,7 @@ ring. Primary submit is the accent pill.
 - Status (neutral): `--surface-2` + `--hairline`, `--text-secondary` — e.g. "EOD · 17:30".
 - Semantic soft (reserved): `--up-soft`/`--down-soft`/`--warning-soft` backgrounds
   with the matching text color — only for movers/alerts, never for ordinary cells.
+- Footer `DEV` uses the neutral chip; a failed-backup footer chip uses `--warning-soft`.
 
 **Inputs / selects** — `--surface-2`, `--radius-md`, `--hairline` border,
 placeholder `--text-muted`, focus as in the form.

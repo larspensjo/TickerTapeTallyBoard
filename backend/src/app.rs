@@ -114,7 +114,7 @@ fn static_assets_available(dir: &std::path::Path) -> bool {
 }
 
 async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
-    let pool = if config.mode.is_demo() {
+    let (pool, launch_backup) = if config.mode.is_demo() {
         crate::engine_info!("starting in DEMO mode (in-memory, seeded, read-only)");
         let pool =
             crate::db::memory_pool()
@@ -133,16 +133,18 @@ async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
                 path: None,
                 source: Box::new(source),
             })?;
-        pool
+        (pool, crate::ledger::LaunchBackupOutcome::skipped())
     } else {
-        crate::ledger::open(config).await?.pool
+        let opened = crate::ledger::open(config).await?;
+        (opened.pool, opened.launch_backup)
     };
     Ok(AppState::new(
         pool,
         Arc::new(crate::market_data::MarketDataService::live()),
     )
     .with_mode(config.mode)
-    .with_ledger_path(config.ledger.path.clone()))
+    .with_ledger_path(config.ledger.path.clone())
+    .with_backup(config.backup_dir.clone(), launch_backup))
 }
 
 fn spawn_launch_refresh(
@@ -220,6 +222,8 @@ mod tests {
             static_assets_dir: PathBuf::from("target/test-assets"),
             mode,
             create_ledger_if_missing: false,
+            backup_enabled: false,
+            backup_dir: crate::config::BackupDirectory::Unresolved("test".to_owned()),
             market_data_refresh_enabled: true,
             launch_refresh_enabled: true,
         }
@@ -359,11 +363,19 @@ mod tests {
 
     #[tokio::test]
     async fn demo_state_is_seeded_and_query_only() {
-        let config = test_config(Mode::Demo, memory());
+        let backup_directory = unique_assets_dir("demo-backups");
+        let mut config = test_config(Mode::Demo, memory());
+        config.backup_enabled = true;
+        config.backup_dir = crate::config::BackupDirectory::Resolved(backup_directory.clone());
 
         let state = build_state(&config).await.expect("demo state should build");
 
         assert!(state.is_demo());
+        assert_eq!(
+            state.backup.launch.status,
+            crate::ledger::LaunchBackupStatus::Skipped
+        );
+        assert!(!backup_directory.exists());
         let instruments = db::instruments::list(&state.pool)
             .await
             .expect("seeded instruments should list");
@@ -377,6 +389,7 @@ mod tests {
         .await;
 
         assert!(write_result.is_err());
+        state.pool.close().await;
     }
 
     #[test]

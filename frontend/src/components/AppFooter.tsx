@@ -32,6 +32,11 @@ export function AppFooter() {
       {footer.ledger ? (
         <span title={footer.ledger.tooltip}>{footer.ledger.label}</span>
       ) : null}
+      {footer.backup ? (
+        <span className={footer.backup.className} title={footer.backup.tooltip}>
+          {footer.backup.label}
+        </span>
+      ) : null}
       <span>Manual entry</span>
       <span>SEK base</span>
     </footer>

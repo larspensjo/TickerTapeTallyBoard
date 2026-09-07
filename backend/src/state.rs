@@ -2,7 +2,17 @@ use std::{path::PathBuf, sync::Arc};
 
 use sqlx::sqlite::SqlitePool;
 
-use crate::{config::Mode, market_data::MarketDataService};
+use crate::{
+    config::{BackupDirectory, Mode},
+    ledger::{LaunchBackupOutcome, LaunchBackupStatus},
+    market_data::MarketDataService,
+};
+
+#[derive(Clone)]
+pub struct BackupState {
+    pub directory: BackupDirectory,
+    pub launch: LaunchBackupOutcome,
+}
 
 /// Shared application state injected into axum handlers via `State`.
 #[derive(Clone)]
@@ -11,6 +21,7 @@ pub struct AppState {
     pub market_data: Arc<MarketDataService>,
     pub mode: Mode,
     pub ledger_path: Option<PathBuf>,
+    pub backup: BackupState,
 }
 
 impl AppState {
@@ -20,6 +31,13 @@ impl AppState {
             market_data,
             mode: Mode::Production,
             ledger_path: None,
+            backup: BackupState {
+                directory: BackupDirectory::Unresolved("not configured".to_owned()),
+                launch: LaunchBackupOutcome {
+                    status: LaunchBackupStatus::Skipped,
+                    error: None,
+                },
+            },
         }
     }
 
@@ -30,6 +48,11 @@ impl AppState {
 
     pub fn with_ledger_path(mut self, path: Option<PathBuf>) -> Self {
         self.ledger_path = path;
+        self
+    }
+
+    pub fn with_backup(mut self, directory: BackupDirectory, launch: LaunchBackupOutcome) -> Self {
+        self.backup = BackupState { directory, launch };
         self
     }
 

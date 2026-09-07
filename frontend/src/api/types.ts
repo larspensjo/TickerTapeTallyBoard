@@ -384,6 +384,14 @@ export interface HealthResponse {
   version: string;
   mode: "production" | "development" | "demo";
   ledger: { mode: "file" | "memory"; path: string | null };
+  backup: {
+    directory: string;
+    last_snapshot_at: string | null;
+    snapshot_count: number;
+    launch_status: "succeeded" | "failed" | "skipped" | "disabled";
+    launch_error: string | null;
+    listing_error: string | null;
+  };
   build: { package: string; profile: string };
 }
 

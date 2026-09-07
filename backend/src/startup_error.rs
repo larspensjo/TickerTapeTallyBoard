@@ -3,7 +3,7 @@ use std::{fmt, path::PathBuf};
 use crate::{
     config::{ConfigError, Mode},
     db::OpenError,
-    ledger::{LedgerLocation, LedgerLocationError},
+    ledger::{BackupError, LedgerLocation, LedgerLocationError},
 };
 
 #[derive(Debug)]
@@ -30,6 +30,7 @@ pub enum StartupError {
         path: Option<PathBuf>,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    PreMigrationBackupFailed(Box<BackupError>),
     StaticAssetsMissing {
         dir: PathBuf,
     },
@@ -115,6 +116,9 @@ impl fmt::Display for StartupError {
                 path.as_ref()
                     .map_or_else(|| "in-memory".to_owned(), |path| path.display().to_string())
             ),
+            Self::PreMigrationBackupFailed(failure) => {
+                write!(f, "mandatory pre-migration backup failed: {failure}")
+            }
             Self::StaticAssetsMissing { dir } => write!(
                 f,
                 "built frontend assets are missing from {}; run npm run build",

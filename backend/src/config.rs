@@ -23,6 +23,9 @@ const MARKET_DATA_LAUNCH_REFRESH_ENABLED_ENV: &str = "TTTB_MARKET_DATA_LAUNCH_RE
 const PORT_ENV: &str = "TTTB_PORT";
 const HOSTING_PORT_ENV: &str = "PORT";
 const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
+pub const BACKUP_ENABLED_ENV: &str = "TTTB_BACKUP_ENABLED";
+pub const BACKUP_DIR_ENV: &str = "TTTB_BACKUP_DIR";
+const ONE_DRIVE_ENV: &str = "OneDrive";
 
 impl Mode {
     pub fn asset_policy(self) -> AssetPolicy {
@@ -39,6 +42,30 @@ pub enum AssetPolicy {
     Optional,
 }
 
+/// A backup destination which may intentionally remain unresolved until startup.
+/// Missing OneDrive is a backup failure, not a configuration parsing failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupDirectory {
+    Resolved(PathBuf),
+    Unresolved(String),
+}
+
+impl BackupDirectory {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Resolved(path) => Some(path),
+            Self::Unresolved(_) => None,
+        }
+    }
+
+    pub fn display(&self) -> String {
+        match self {
+            Self::Resolved(path) => path.display().to_string(),
+            Self::Unresolved(reason) => format!("unresolved: {reason}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -47,6 +74,8 @@ pub struct AppConfig {
     pub static_assets_dir: PathBuf,
     pub mode: Mode,
     pub create_ledger_if_missing: bool,
+    pub backup_enabled: bool,
+    pub backup_dir: BackupDirectory,
     pub market_data_refresh_enabled: bool,
     pub launch_refresh_enabled: bool,
 }
@@ -85,6 +114,12 @@ impl AppConfig {
             .transpose()?
             .unwrap_or(false);
 
+        let backup_enabled = read_optional(BACKUP_ENABLED_ENV)?
+            .map(|value| parse_bool(BACKUP_ENABLED_ENV, &value))
+            .transpose()?
+            .unwrap_or(!mode.is_demo());
+        let backup_dir = resolve_backup_dir(mode);
+
         let market_data_refresh_enabled = read_optional(MARKET_DATA_REFRESH_ENABLED_ENV)?
             .map(|value| parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, &value))
             .transpose()?
@@ -106,6 +141,8 @@ impl AppConfig {
             static_assets_dir,
             mode,
             create_ledger_if_missing,
+            backup_enabled,
+            backup_dir,
             market_data_refresh_enabled,
             launch_refresh_enabled,
         })
@@ -121,6 +158,52 @@ impl AppConfig {
 
     pub fn asset_policy(&self) -> AssetPolicy {
         self.mode.asset_policy()
+    }
+}
+
+fn resolve_backup_dir(mode: Mode) -> BackupDirectory {
+    if mode.is_demo() {
+        return BackupDirectory::Unresolved("demo mode does not use backups".to_owned());
+    }
+    if let Some(directory) = backup_directory_from_env(BACKUP_DIR_ENV, &[]) {
+        return directory;
+    }
+    match mode {
+        Mode::Production => {
+            backup_directory_from_env(ONE_DRIVE_ENV, &["TickerTapeTallyBoard", "Backups"])
+                .unwrap_or_else(|| {
+                    BackupDirectory::Unresolved(format!("{ONE_DRIVE_ENV} is not set"))
+                })
+        }
+        Mode::Development => {
+            backup_directory_from_env(LOCAL_APP_DATA_ENV, &["TickerTapeTallyBoard", "backups-dev"])
+                .unwrap_or_else(|| {
+                    BackupDirectory::Unresolved(format!("{LOCAL_APP_DATA_ENV} is not set"))
+                })
+        }
+        Mode::Demo => unreachable!(),
+    }
+}
+
+fn backup_directory_from_env(variable: &'static str, suffix: &[&str]) -> Option<BackupDirectory> {
+    backup_directory_from_result(variable, suffix, env::var(variable))
+}
+
+fn backup_directory_from_result(
+    variable: &'static str,
+    suffix: &[&str],
+    result: Result<String, env::VarError>,
+) -> Option<BackupDirectory> {
+    match read_optional_result(variable, result) {
+        Ok(Some(root)) => {
+            let mut path = PathBuf::from(root);
+            for part in suffix {
+                path.push(part);
+            }
+            Some(BackupDirectory::Resolved(path))
+        }
+        Ok(None) => None,
+        Err(error) => Some(BackupDirectory::Unresolved(error.to_string())),
     }
 }
 
@@ -292,6 +375,9 @@ mod tests {
         PORT_ENV,
         HOSTING_PORT_ENV,
         STATIC_ASSETS_DIR_ENV,
+        BACKUP_ENABLED_ENV,
+        BACKUP_DIR_ENV,
+        ONE_DRIVE_ENV,
     ];
 
     #[test]
@@ -433,6 +519,39 @@ mod tests {
         assert_eq!(error.variable, HOST_ENV);
         assert_eq!(error.value, "not-unicode");
         assert_eq!(error.message, "must be valid Unicode");
+    }
+
+    #[test]
+    fn invalid_backup_path_variables_become_unresolved_instead_of_config_errors() {
+        let cases = [
+            (BACKUP_DIR_ENV, Mode::Production, DATABASE_URL_ENV),
+            (ONE_DRIVE_ENV, Mode::Production, DATABASE_URL_ENV),
+            (LOCAL_APP_DATA_ENV, Mode::Development, DATABASE_URL_ENV),
+        ];
+
+        for (variable, mode, database_variable) in cases {
+            let database_url = sqlite_url(&unique_path("backup-config", "sqlite"));
+            let mode_value = mode.as_str();
+            let _guard = TestEnv::new(&[
+                (MODE_ENV, Some(mode_value)),
+                (database_variable, Some(&database_url)),
+                (variable, Some("   ")),
+            ]);
+
+            let config = AppConfig::from_env().expect("backup path error must not reject config");
+
+            assert!(matches!(config.backup_dir, BackupDirectory::Unresolved(_)));
+        }
+
+        for variable in [BACKUP_DIR_ENV, ONE_DRIVE_ENV, LOCAL_APP_DATA_ENV] {
+            let directory = backup_directory_from_result(
+                variable,
+                &[],
+                Err(env::VarError::NotUnicode(OsString::from("not-unicode"))),
+            )
+            .expect("invalid variable should produce an unresolved directory");
+            assert!(matches!(directory, BackupDirectory::Unresolved(_)));
+        }
     }
 
     #[test]

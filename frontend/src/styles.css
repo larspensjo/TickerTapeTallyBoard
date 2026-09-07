@@ -145,6 +145,7 @@ button {
 }
 
 .demo-badge,
+.backup-warning-chip,
 .mode-chip {
   justify-self: start;
   padding: 2px var(--space-2);
@@ -156,6 +157,11 @@ button {
 
 .demo-badge {
   border: 1px solid rgba(244, 176, 0, 0.36);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.backup-warning-chip {
   background: var(--warning-soft);
   color: var(--warning);
 }
