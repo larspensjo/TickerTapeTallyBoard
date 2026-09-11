@@ -4,7 +4,12 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { apiGet, apiSend, apiSendBytes, apiSendWithStatus } from "./client";
+import {
+  completedRefreshRunKey,
+  isNewlyCompletedRefreshRun,
+} from "./priceRefreshCompletion";
 import { normalizeRebalanceAmount } from "./rebalanceAmount";
 import type {
   Conviction,
@@ -102,13 +107,36 @@ export function useGains(params: GainsParams = {}) {
 
 export type { DateRange, ReturnMethod };
 
+/**
+ * Price status, polled while a refresh runs. When a refresh run finishes that
+ * this page has not seen complete — including one the backend started on its
+ * own, such as the launch refresh — price-derived data is refetched so every
+ * panel reflects the same prices.
+ */
 export function usePriceStatus() {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: ["price-status"],
     queryFn: () => apiGet<PriceStatusResponse>("/api/prices/status"),
     refetchInterval: (query) => (query.state.data?.refreshing ? 2000 : false),
     refetchIntervalInBackground: true,
   });
+
+  const completedRun = query.data
+    ? completedRefreshRunKey(query.data)
+    : undefined;
+  const seenCompletedRun = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (completedRun === undefined) return;
+    const previous = seenCompletedRun.current;
+    seenCompletedRun.current = completedRun;
+    if (isNewlyCompletedRefreshRun(previous, completedRun)) {
+      invalidatePriceDerivedData(queryClient);
+    }
+  }, [completedRun, queryClient]);
+
+  return query;
 }
 
 export function useInstrumentPrices(id: number | null) {
@@ -173,6 +201,16 @@ function invalidatePortfolioData(
   void queryClient.invalidateQueries({ queryKey: ["holdings"] });
   void queryClient.invalidateQueries({ queryKey: ["gains"] });
   void queryClient.invalidateQueries({ queryKey: ["price-status"] });
+  void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
+  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+}
+
+function invalidatePriceDerivedData(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+  void queryClient.invalidateQueries({ queryKey: ["gains"] });
+  void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
   void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
   void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
 }
@@ -307,14 +345,8 @@ export function useRefreshPrices() {
     mutationFn: (input: RefreshPricesInput = { mode: "latest" }) =>
       apiSend<RefreshPricesResult>("POST", "/api/prices/refresh", input),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["gains"] });
+      invalidatePriceDerivedData(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["price-status"] });
-      void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
-      void queryClient.invalidateQueries({
-        queryKey: ["portfolio-value-history"],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
     },
   });
 }

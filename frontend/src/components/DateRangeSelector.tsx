@@ -38,8 +38,13 @@ function storage(): Storage | null {
   }
 }
 
-function localDateString(date: Date): string {
+export function localDateString(date: Date): string {
   return date.toLocaleDateString("sv-SE");
+}
+
+function localDateFromString(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function isDatePreset(value: unknown): value is DatePreset {
@@ -95,9 +100,33 @@ export function presetToRange(
     case "custom":
       return {
         startDate: customStart || null,
-        endDate: customEnd || fmt(today),
+        endDate: customEnd || null,
       };
   }
+}
+
+/**
+ * The range the portfolio queries use. Rolling presets are resolved against
+ * `today` on every call rather than stored, so a page left open across
+ * midnight follows the calendar; only a custom range is taken from state, with
+ * an open end meaning today.
+ */
+export function activeDateRange(
+  selection: DateRangeSelection,
+  today: string,
+): DateRange {
+  if (selection.datePreset === "custom") {
+    return {
+      startDate: selection.dateRange.startDate,
+      endDate: selection.dateRange.endDate ?? today,
+    };
+  }
+  return presetToRange(
+    selection.datePreset,
+    "",
+    "",
+    localDateFromString(today),
+  );
 }
 
 export function dateRangeSelectionReducer(
@@ -123,7 +152,7 @@ export function loadDateRangeSelection(): DateRangeSelection {
     if (parsed.datePreset !== "custom") {
       return {
         datePreset: parsed.datePreset,
-        dateRange: presetToRange(parsed.datePreset, "", ""),
+        dateRange: DEFAULT_SELECTION.dateRange,
       };
     }
 
@@ -173,7 +202,9 @@ export function DateRangeSelector({
           aria-pressed={selectedDatePreset === preset}
           onClick={() => {
             onDatePresetChange(preset);
-            onDateRangeChange(presetToRange(preset, customStart, customEnd));
+            if (preset === "custom") {
+              onDateRangeChange(presetToRange(preset, customStart, customEnd));
+            }
           }}
         >
           {PRESET_LABELS[preset]}

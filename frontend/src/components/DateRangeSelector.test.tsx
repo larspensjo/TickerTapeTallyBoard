@@ -1,14 +1,23 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  activeDateRange,
   DateRangeSelector,
   dateRangeSelectionReducer,
   loadDateRangeSelection,
   presetToRange,
   saveDateRangeSelection,
 } from "./DateRangeSelector";
+import { useLocalDate } from "./useLocalDate";
 
 afterEach(() => {
   cleanup();
@@ -36,6 +45,44 @@ describe("presetToRange", () => {
       startDate: "2026-01-01",
       endDate: "2026-06-29",
     });
+  });
+});
+
+describe("activeDateRange", () => {
+  it("resolves rolling presets against the current day, not the day they were chosen", () => {
+    const selection = {
+      datePreset: "all" as const,
+      dateRange: { startDate: null, endDate: "2026-09-10" },
+    };
+
+    expect(activeDateRange(selection, "2026-09-11")).toEqual({
+      startDate: null,
+      endDate: "2026-09-11",
+    });
+    expect(
+      activeDateRange({ ...selection, datePreset: "7d" }, "2026-09-11"),
+    ).toEqual({ startDate: "2026-09-04", endDate: "2026-09-11" });
+  });
+
+  it("keeps a custom range and treats an open end as today", () => {
+    expect(
+      activeDateRange(
+        {
+          datePreset: "custom",
+          dateRange: { startDate: "2026-02-01", endDate: "2026-06-29" },
+        },
+        "2026-09-11",
+      ),
+    ).toEqual({ startDate: "2026-02-01", endDate: "2026-06-29" });
+    expect(
+      activeDateRange(
+        {
+          datePreset: "custom",
+          dateRange: { startDate: "2026-02-01", endDate: null },
+        },
+        "2026-09-11",
+      ),
+    ).toEqual({ startDate: "2026-02-01", endDate: "2026-09-11" });
   });
 });
 
@@ -87,9 +134,7 @@ describe("date range persistence", () => {
 });
 
 describe("DateRangeSelector", () => {
-  it("emits the selected preset and derived range when a preset is clicked", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 5, 29));
+  it("emits only the preset when a rolling preset is clicked", () => {
     const onDatePresetChange = vi.fn();
     const onDateRangeChange = vi.fn();
 
@@ -106,9 +151,42 @@ describe("DateRangeSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: "YTD" }));
 
     expect(onDatePresetChange).toHaveBeenCalledWith("ytd");
-    expect(onDateRangeChange).toHaveBeenCalledWith({
-      startDate: "2026-01-01",
-      endDate: "2026-06-29",
+    expect(onDateRangeChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("useLocalDate", () => {
+  it("rolls over to the new day at local midnight", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 10, 23, 59, 30));
+
+    const { result } = renderHook(() => useLocalDate());
+    expect(result.current).toBe("2026-09-10");
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
     });
+
+    expect(result.current).toBe("2026-09-11");
+
+    act(() => {
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    });
+
+    expect(result.current).toBe("2026-09-12");
+  });
+
+  it("catches up when the page becomes visible after the day changed", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 10, 12, 0, 0));
+
+    const { result } = renderHook(() => useLocalDate());
+
+    act(() => {
+      vi.setSystemTime(new Date(2026, 8, 11, 8, 0, 0));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(result.current).toBe("2026-09-11");
   });
 });
