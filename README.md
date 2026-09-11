@@ -95,9 +95,27 @@ Configuration:
 - `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
 - `TTTB_BACKUP_DIR`: backup directory. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending.
+- `TTTB_LOG_FILE`: backend log file. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
 - `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
 - `TTTB_DEMO_MODE`: retired; use `TTTB_MODE=demo`.
+
+## Logs
+
+The backend log lives outside the repository at
+`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`. Its mode-specific name keeps
+production, development, and demo timelines separate. The active log is capped
+at 5 MiB and keeps three rotations, for an approximate 20 MiB maximum.
+Rotation never splits a newline-delimited log line; embedded newlines in one
+message create separate rotation boundaries.
+If the log file cannot be opened, the app still starts and writes logs to the
+terminal instead.
+
+Each `scripts/start.ps1` launch writes its redirected process output under
+`.local/logs/run-<UTC timestamp>/` as `backend.out.log`, `backend.err.log`,
+`frontend.out.log`, and `frontend.err.log`. The launcher keeps the five newest
+run directories; connectivity and provider probe logs directly under
+`.local/logs/` are retained separately.
 
 ## Backups
 

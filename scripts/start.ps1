@@ -365,13 +365,30 @@ $BackendExe = Join-Path $BackendDir "target/$BuildProfile/ticker-tape-tally-boar
 if (-not (Test-Path $BackendExe)) {
     throw "Backend executable not found: $BackendExe. Run without -SkipBuild first."
 }
-$LogDir = Join-Path $RepoRoot ".local/logs"
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-$BackendStdout = Join-Path $LogDir "backend.out.log"
-$BackendStderr = Join-Path $LogDir "backend.err.log"
-$FrontendStdout = Join-Path $LogDir "frontend.out.log"
-$FrontendStderr = Join-Path $LogDir "frontend.err.log"
-Remove-Item $BackendStdout, $BackendStderr, $FrontendStdout, $FrontendStderr -ErrorAction SilentlyContinue
+$LogRoot = Join-Path $RepoRoot ".local/logs"
+New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+$RunStamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
+$RunLogDir = Join-Path $LogRoot "run-$RunStamp"
+New-Item -ItemType Directory -Path $RunLogDir -ErrorAction Stop | Out-Null
+$BackendStdout = Join-Path $RunLogDir "backend.out.log"
+$BackendStderr = Join-Path $RunLogDir "backend.err.log"
+$FrontendStdout = Join-Path $RunLogDir "frontend.out.log"
+$FrontendStderr = Join-Path $RunLogDir "frontend.err.log"
+
+# Keep probe logs and other files directly under .local/logs; only completed
+# run directories participate in launcher-log retention.
+Get-ChildItem -LiteralPath $LogRoot -Directory |
+    Where-Object { $_.Name -like "run-*" } |
+    Sort-Object -Property Name -Descending |
+    Select-Object -Skip 5 |
+    ForEach-Object {
+        try {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force
+        }
+        catch {
+            Write-Host "Warning: could not prune old run log directory '$($_.FullName)': $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
 
 $PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
 $PreviousBackendPort = $env:TTTB_PORT

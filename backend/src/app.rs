@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    config::{AppConfig, AssetPolicy},
+    config::{AppConfig, AssetPolicy, LogFile},
+    engine_logging::{LogInitOutcome, LogSettings},
     startup_error::StartupError,
     state::AppState,
 };
@@ -22,8 +23,22 @@ pub async fn run() -> Result<(), StartupError> {
 
 async fn run_inner() -> Result<(), StartupFailure> {
     let config = AppConfig::from_env().map_err(StartupFailure::before_logging)?;
-    crate::engine_logging::initialize();
-    run_config(config)
+    let log_outcome = match &config.log_file {
+        LogFile::Resolved(path) => {
+            crate::engine_logging::initialize(&LogSettings::with_defaults(path.to_path_buf()))
+        }
+        LogFile::Unresolved(reason) => {
+            crate::engine_logging::initialize_terminal();
+            LogInitOutcome {
+                file_path: None,
+                file_error: Some(reason.clone()),
+            }
+        }
+    };
+    if let Some(error) = &log_outcome.file_error {
+        crate::engine_error!("file logging unavailable; using terminal logging only: {error}");
+    }
+    run_config(config, log_outcome)
         .await
         .map_err(StartupFailure::after_logging)
 }
@@ -49,7 +64,8 @@ impl StartupFailure {
     }
 }
 
-async fn run_config(config: AppConfig) -> Result<(), StartupError> {
+async fn run_config(config: AppConfig, log_outcome: LogInitOutcome) -> Result<(), StartupError> {
+    crate::engine_info!("{}", startup_banner(&config, &log_outcome));
     let state = build_state(&config).await?;
     let router = router_for_assets(&config, state.clone())?;
     let address = config.socket_addr();
@@ -78,6 +94,33 @@ async fn run_config(config: AppConfig) -> Result<(), StartupError> {
         })?;
     crate::engine_info!("backend shutdown complete");
     Ok(())
+}
+
+fn startup_banner(config: &AppConfig, log_outcome: &LogInitOutcome) -> String {
+    let ledger = config
+        .ledger
+        .path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "in-memory (demo)".to_owned());
+    let log_path = log_outcome.file_path.as_ref().map_or_else(
+        || {
+            format!(
+                "unavailable ({})",
+                log_outcome.file_error.as_deref().unwrap_or("unknown error")
+            )
+        },
+        |path| path.display().to_string(),
+    );
+    format!(
+        "startup: mode={} ledger={} backup_dir={} static_assets_dir={} log={} listen={}",
+        config.mode.as_str(),
+        ledger,
+        config.backup_dir.display(),
+        config.static_assets_dir().display(),
+        log_path,
+        config.socket_addr(),
+    )
 }
 
 fn router_for_assets(config: &AppConfig, state: AppState) -> Result<axum::Router, StartupError> {
@@ -224,9 +267,39 @@ mod tests {
             create_ledger_if_missing: false,
             backup_enabled: false,
             backup_dir: crate::config::BackupDirectory::Unresolved("test".to_owned()),
+            log_file: crate::config::LogFile::Unresolved("test".to_owned()),
             market_data_refresh_enabled: true,
             launch_refresh_enabled: true,
         }
+    }
+
+    #[test]
+    fn startup_banner_names_in_memory_demo_ledger_on_one_line() {
+        let config = test_config(Mode::Demo, memory());
+        let log_outcome = LogInitOutcome {
+            file_path: Some(PathBuf::from("C:/logs/engine-demo.log")),
+            file_error: None,
+        };
+
+        let banner = startup_banner(&config, &log_outcome);
+
+        assert!(banner.contains("mode=demo ledger=in-memory (demo)"));
+        assert!(!banner.contains("ledger= backup_dir="));
+        assert!(!banner.contains(['\r', '\n']));
+    }
+
+    #[test]
+    fn startup_banner_reports_unavailable_file_logging_on_one_line() {
+        let config = test_config(Mode::Production, memory());
+        let log_outcome = LogInitOutcome {
+            file_path: None,
+            file_error: Some("invalid TTTB_LOG_FILE value".to_owned()),
+        };
+
+        let banner = startup_banner(&config, &log_outcome);
+
+        assert!(banner.contains("log=unavailable (invalid TTTB_LOG_FILE value)"));
+        assert!(!banner.contains(['\r', '\n']));
     }
 
     async fn seeded_state() -> (AppState, FakePriceProvider, Arc<Notify>) {

@@ -25,6 +25,7 @@ const HOSTING_PORT_ENV: &str = "PORT";
 const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
 pub const BACKUP_ENABLED_ENV: &str = "TTTB_BACKUP_ENABLED";
 pub const BACKUP_DIR_ENV: &str = "TTTB_BACKUP_DIR";
+pub const LOG_FILE_ENV: &str = "TTTB_LOG_FILE";
 const ONE_DRIVE_ENV: &str = "OneDrive";
 
 impl Mode {
@@ -66,6 +67,23 @@ impl BackupDirectory {
     }
 }
 
+/// A log destination which may intentionally remain unresolved until startup.
+/// Logging failures degrade to terminal output instead of rejecting a launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogFile {
+    Resolved(PathBuf),
+    Unresolved(String),
+}
+
+impl LogFile {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Resolved(path) => Some(path),
+            Self::Unresolved(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -76,6 +94,7 @@ pub struct AppConfig {
     pub create_ledger_if_missing: bool,
     pub backup_enabled: bool,
     pub backup_dir: BackupDirectory,
+    pub log_file: LogFile,
     pub market_data_refresh_enabled: bool,
     pub launch_refresh_enabled: bool,
 }
@@ -119,6 +138,7 @@ impl AppConfig {
             .transpose()?
             .unwrap_or(!mode.is_demo());
         let backup_dir = resolve_backup_dir(mode);
+        let log_file = resolve_log_file(mode);
 
         let market_data_refresh_enabled = read_optional(MARKET_DATA_REFRESH_ENABLED_ENV)?
             .map(|value| parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, &value))
@@ -143,6 +163,7 @@ impl AppConfig {
             create_ledger_if_missing,
             backup_enabled,
             backup_dir,
+            log_file,
             market_data_refresh_enabled,
             launch_refresh_enabled,
         })
@@ -158,6 +179,34 @@ impl AppConfig {
 
     pub fn asset_policy(&self) -> AssetPolicy {
         self.mode.asset_policy()
+    }
+}
+
+fn resolve_log_file(mode: Mode) -> LogFile {
+    match read_optional_result(LOG_FILE_ENV, env::var(LOG_FILE_ENV)) {
+        Ok(Some(path)) => LogFile::Resolved(PathBuf::from(path)),
+        Ok(None) => log_file_from_result(env::var(LOCAL_APP_DATA_ENV), mode),
+        Err(error) => LogFile::Unresolved(error.to_string()),
+    }
+}
+
+fn log_file_from_result(result: Result<String, env::VarError>, mode: Mode) -> LogFile {
+    match read_optional_result(LOCAL_APP_DATA_ENV, result) {
+        Ok(Some(root)) => {
+            let file = match mode {
+                Mode::Production => "engine.log",
+                Mode::Development => "engine-development.log",
+                Mode::Demo => "engine-demo.log",
+            };
+            LogFile::Resolved(
+                PathBuf::from(root)
+                    .join("TickerTapeTallyBoard")
+                    .join("logs")
+                    .join(file),
+            )
+        }
+        Ok(None) => LogFile::Unresolved(format!("{LOCAL_APP_DATA_ENV} is not set")),
+        Err(error) => LogFile::Unresolved(error.to_string()),
     }
 }
 
@@ -377,6 +426,7 @@ mod tests {
         STATIC_ASSETS_DIR_ENV,
         BACKUP_ENABLED_ENV,
         BACKUP_DIR_ENV,
+        LOG_FILE_ENV,
         ONE_DRIVE_ENV,
     ];
 
@@ -400,6 +450,12 @@ mod tests {
         assert!(!config.create_ledger_if_missing);
         assert!(config.market_data_refresh_enabled);
         assert!(config.launch_refresh_enabled);
+        assert_eq!(
+            config.log_file.path(),
+            Some(Path::new(
+                "C:/temp/appdata/TickerTapeTallyBoard/logs/engine.log"
+            ))
+        );
     }
 
     #[test]
@@ -552,6 +608,62 @@ mod tests {
             .expect("invalid variable should produce an unresolved directory");
             assert!(matches!(directory, BackupDirectory::Unresolved(_)));
         }
+    }
+
+    #[test]
+    fn log_file_uses_mode_specific_app_data_defaults_and_allows_an_override() {
+        for (mode, file) in [
+            ("production", "engine.log"),
+            ("development", "engine-development.log"),
+            ("demo", "engine-demo.log"),
+        ] {
+            let database_url = sqlite_url(&unique_path("log-config", "sqlite"));
+            let _guard = TestEnv::new(&[
+                (MODE_ENV, Some(mode)),
+                (DATABASE_URL_ENV, Some(&database_url)),
+                (LOCAL_APP_DATA_ENV, Some("C:/temp/appdata")),
+            ]);
+            let config = AppConfig::from_env().expect("config should load");
+            assert_eq!(
+                config.log_file.path(),
+                Some(Path::new(&format!(
+                    "C:/temp/appdata/TickerTapeTallyBoard/logs/{file}"
+                )))
+            );
+        }
+
+        let _guard = TestEnv::new(&[
+            (MODE_ENV, Some("demo")),
+            (LOG_FILE_ENV, Some("C:/logs/override.log")),
+        ]);
+        let config = AppConfig::from_env().expect("override should load");
+        assert_eq!(
+            config.log_file.path(),
+            Some(Path::new("C:/logs/override.log"))
+        );
+    }
+
+    #[test]
+    fn unresolved_default_log_path_degrades_instead_of_rejecting_config() {
+        let database_url = sqlite_url(&unique_path("log-unresolved", "sqlite"));
+        let _guard = TestEnv::new(&[
+            (DATABASE_URL_ENV, Some(&database_url)),
+            (LOCAL_APP_DATA_ENV, Some("   ")),
+        ]);
+        let config = AppConfig::from_env().expect("log path failure must not reject config");
+        assert!(matches!(config.log_file, LogFile::Unresolved(_)));
+    }
+
+    #[test]
+    fn blank_log_file_override_degrades_instead_of_rejecting_config() {
+        let _guard = TestEnv::new(&[(MODE_ENV, Some("demo")), (LOG_FILE_ENV, Some("   "))]);
+
+        let config = AppConfig::from_env().expect("blank log path must not reject config");
+
+        assert!(matches!(
+            config.log_file,
+            LogFile::Unresolved(reason) if reason.contains(LOG_FILE_ENV)
+        ));
     }
 
     #[test]

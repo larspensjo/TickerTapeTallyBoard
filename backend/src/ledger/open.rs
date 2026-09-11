@@ -179,6 +179,7 @@ mod tests {
             create_ledger_if_missing: true,
             backup_enabled: false,
             backup_dir: crate::config::BackupDirectory::Resolved(directory.join("backups")),
+            log_file: crate::config::LogFile::Unresolved("test".to_owned()),
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -225,6 +226,7 @@ mod tests {
             create_ledger_if_missing: false,
             backup_enabled: false,
             backup_dir: crate::config::BackupDirectory::Resolved(directory.join("backups")),
+            log_file: crate::config::LogFile::Unresolved("test".to_owned()),
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -275,6 +277,7 @@ mod tests {
             backup_dir: crate::config::BackupDirectory::Unresolved(
                 "OneDrive is not set".to_owned(),
             ),
+            log_file: crate::config::LogFile::Unresolved("test".to_owned()),
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -320,6 +323,7 @@ mod tests {
             backup_dir: crate::config::BackupDirectory::Unresolved(
                 "OneDrive is not set".to_owned(),
             ),
+            log_file: crate::config::LogFile::Unresolved("test".to_owned()),
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };

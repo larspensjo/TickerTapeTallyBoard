@@ -517,3 +517,23 @@ Consequences: The origin change resets browser-stored view preferences once, acc
 Decision: When nothing matches a request, the backend answers according to what kind of request it is. An unmatched path under `/api/` returns 404 in the single API error shape, naming the method and the full requested path, identically in every mode. Any other unmatched path returns the single-page-application index shell only when the request accepts `text/html`, and 404 otherwise; an absent or `*/*` Accept header is deliberately not a navigation. Files that exist are served regardless of Accept, so the launch readiness probe against `/` is unaffected. Trailing-slash normalization was rejected as the remedy for the `/api/` prefix, which is routed explicitly instead, so no path gains a second accepted spelling.
 Context: Serving the built frontend from the backend made a catch-all index fallback the answer to every unmatched request. A wrong API path returned 200 with an HTML body, so a client expecting JSON failed on a parse error naming the parser rather than the URL, and a stale browser asking for a build artifact that no longer exists received HTML where a module was expected. The development composition has no such fallback and returned 404, so the two compositions disagreed about what a wrong address means, and only development had ever run.
 Consequences: A request that accepts `text/html` for a missing build artifact — a person typing that address into the browser — still receives the shell. That residual was accepted rather than special-casing the frontend build's output directory, which would tie the backend to that directory's name; the backend never needs to know how the frontend build names or arranges its output. Non-browser clients must send `Accept: text/html` to retrieve the shell for a client-side route, so `curl` and similar tools receive 404 for application routes by default. An index shell that becomes unreadable after startup is logged with its resolved path rather than failing silently.
+
+## 2026-09-07 - Runtime Logs Live Outside The Repository And Are Bounded
+Decision: The backend log file lives in the per-user local application-data
+directory, named for the running mode, and is size-capped with a small number of
+retained rotations rather than appended to forever. Failing to open the log never
+prevents startup. Rotation never splits a newline-delimited log line; embedded
+newlines create separate boundaries. This supersedes the append-only single-file
+description in the 2026-06-13 Backend Logging Stack decision. Every start writes
+one banner line naming the mode, database, backup directory, static assets
+directory, log path and listen address. The
+launch script keeps a small number of recent per-run log directories instead of
+deleting the previous run's output on every start.
+Context: The log was opened relative to the working directory, so it accumulated
+inside the repository tree without bound, and the launch script destroyed the
+evidence of the previous run at the moment a user would want to look at it.
+Consequences: Diagnosing a failed start means reading a fixed known path rather
+than guessing a working directory. Log volume is bounded by construction, so a
+long-running or noisy session cannot fill the disk. A future second process
+sharing one log file would need per-line process identification, which is not
+added here.
