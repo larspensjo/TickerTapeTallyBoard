@@ -1,17 +1,15 @@
 import {
   createColumnHelper,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
   type SortingState,
-  useReactTable,
+  useTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo } from "react";
 import type { Instrument, Transaction } from "../api/types";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
+import { DATA_TABLE_FEATURES } from "./tableFeatures";
 import {
   FormattedNumber,
   formatGroupedNumber,
@@ -26,7 +24,7 @@ interface Row {
   search: string;
 }
 
-const columnHelper = createColumnHelper<Row>();
+const columnHelper = createColumnHelper<typeof DATA_TABLE_FEATURES, Row>();
 
 const numericColumns = new Set(["trade_date", "quantity", "price"]);
 
@@ -108,88 +106,87 @@ export function TransactionsTable({
   );
 
   const columns = useMemo(
-    () => [
-      columnHelper.accessor((row) => row.transaction.trade_date, {
-        id: "trade_date",
-        header: "Date",
-        cell: (info) => info.getValue(),
-      }),
-      columnHelper.accessor((row) => row.transaction.type, {
-        id: "type",
-        header: "Type",
-        cell: (info) => <span className="type-chip">{info.getValue()}</span>,
-      }),
-      columnHelper.accessor((row) => row.name, {
-        id: "instrument",
-        header: "Instrument",
-        cell: (info) => (
-          <InstrumentCell
-            instrumentId={info.row.original.transaction.instrument_id}
-            name={info.row.original.name}
-            symbol={info.row.original.symbol}
-            exchange={info.row.original.exchange}
-          />
-        ),
-      }),
-      columnHelper.accessor((row) => row.transaction.quantity, {
-        id: "quantity",
-        header: "Qty",
-        cell: (info) => formatGroupedNumber(info.getValue()),
-      }),
-      columnHelper.accessor(
-        (row) =>
-          row.transaction.price ?? row.transaction.dividend_per_share ?? "",
-        {
-          id: "price",
-          header: "Price / dividend",
-          cell: (info) => {
-            const { dividend_per_share, price, currency } =
-              info.row.original.transaction;
-            const value = price ?? dividend_per_share;
-            return value ? (
-              <FormattedNumber
-                value={formatUnitPrice(value)}
-                prefix={currency ?? ""}
-              />
-            ) : (
-              "-"
-            );
+    () =>
+      columnHelper.columns([
+        columnHelper.accessor((row) => row.transaction.trade_date, {
+          id: "trade_date",
+          header: "Date",
+          cell: (info) => info.getValue(),
+        }),
+        columnHelper.accessor((row) => row.transaction.type, {
+          id: "type",
+          header: "Type",
+          cell: (info) => <span className="type-chip">{info.getValue()}</span>,
+        }),
+        columnHelper.accessor((row) => row.name, {
+          id: "instrument",
+          header: "Instrument",
+          cell: (info) => (
+            <InstrumentCell
+              instrumentId={info.row.original.transaction.instrument_id}
+              name={info.row.original.name}
+              symbol={info.row.original.symbol}
+              exchange={info.row.original.exchange}
+            />
+          ),
+        }),
+        columnHelper.accessor((row) => row.transaction.quantity, {
+          id: "quantity",
+          header: "Qty",
+          cell: (info) => formatGroupedNumber(info.getValue()),
+        }),
+        columnHelper.accessor(
+          (row) =>
+            row.transaction.price ?? row.transaction.dividend_per_share ?? "",
+          {
+            id: "price",
+            header: "Price / dividend",
+            cell: (info) => {
+              const { dividend_per_share, price, currency } =
+                info.row.original.transaction;
+              const value = price ?? dividend_per_share;
+              return value ? (
+                <FormattedNumber
+                  value={formatUnitPrice(value)}
+                  prefix={currency ?? ""}
+                />
+              ) : (
+                "-"
+              );
+            },
           },
-        },
-      ),
-      ...(showActions && onDelete
-        ? [
-            columnHelper.display({
-              id: "actions",
-              header: "",
-              cell: (info) => {
-                const id = info.row.original.transaction.id;
-                return (
-                  <button
-                    type="button"
-                    className="button outline danger"
-                    onClick={() => onDelete(id)}
-                    disabled={deletingId === id}
-                  >
-                    Delete
-                  </button>
-                );
-              },
-            }),
-          ]
-        : []),
-    ],
+        ),
+        ...(showActions && onDelete
+          ? [
+              columnHelper.display({
+                id: "actions",
+                header: "",
+                cell: (info) => {
+                  const id = info.row.original.transaction.id;
+                  return (
+                    <button
+                      type="button"
+                      className="button outline danger"
+                      onClick={() => onDelete(id)}
+                      disabled={deletingId === id}
+                    >
+                      Delete
+                    </button>
+                  );
+                },
+              }),
+            ]
+          : []),
+      ]),
     [showActions, deletingId, onDelete],
   );
 
-  const table = useReactTable({
+  const table = useTable({
+    features: DATA_TABLE_FEATURES,
     data: rows,
     columns,
     state: { sorting, globalFilter: filter },
     onSortingChange: handleSortingChange,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });

@@ -1383,7 +1383,13 @@ th.number-head .sort-button {
   padding: var(--space-5) var(--space-4);
 }
 
-.asset-table th,
+.asset-table th {
+  height: 32px;
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: Asset-table density intentionally overrides the shared row rule. */
 .asset-table td {
   height: 32px;
   padding-top: var(--space-1);
@@ -1441,7 +1447,19 @@ th.number-head .sort-button {
   z-index: 4;
 }
 
-.holdings-table tfoot th,
+.holdings-table tfoot th {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  height: 44px;
+  border-top: 2px solid var(--accent);
+  border-bottom: 0;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: Footer cells cannot overlap the shared tbody rule. */
 .holdings-table tfoot td {
   position: sticky;
   bottom: 0;
@@ -1459,12 +1477,28 @@ th.number-head .sort-button {
   letter-spacing: 0.06em;
 }
 
-.holdings-table tfoot .number,
+.holdings-table tfoot .number {
+  font-weight: 700;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: Footer emphasis cannot overlap asset-name cells. */
 .holdings-table tfoot strong {
   font-weight: 700;
 }
 
-.gains-table tfoot th,
+.gains-table tfoot th {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  height: 44px;
+  border-top: 2px solid var(--accent);
+  border-bottom: 0;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: Footer cells cannot overlap the shared tbody rule. */
 .gains-table tfoot td {
   position: sticky;
   bottom: 0;
@@ -1486,7 +1520,11 @@ th.number-head .sort-button {
   letter-spacing: 0.06em;
 }
 
-.gains-table tfoot .number,
+.gains-table tfoot .number {
+  font-weight: 700;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: Footer emphasis cannot overlap asset-name cells. */
 .gains-table tfoot strong {
   font-weight: 700;
 }
@@ -1527,6 +1565,7 @@ th.number-head .sort-button {
   flex: 1;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: Form labels cannot overlap asset-name cells. */
 .form-field span {
   color: var(--text-muted);
   font-size: 0.8125rem;
@@ -1825,6 +1864,7 @@ th.number-head .sort-button {
 
 /* Tile values render through `.number`, whose global font-size would otherwise
    shrink them; inherit the larger tile sizing instead. */
+/* biome-ignore lint/style/noDescendingSpecificity: Tile values cannot overlap holdings footer values. */
 .metric-tile-value .number {
   font-size: inherit;
   font-weight: inherit;
@@ -2165,6 +2205,7 @@ th.number-head .sort-button {
   gap: var(--space-4);
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: Split details cannot overlap chart tooltip rows. */
 .split-event > div {
   display: flex;
   flex-wrap: wrap;

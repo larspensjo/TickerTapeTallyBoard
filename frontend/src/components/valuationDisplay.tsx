@@ -1,4 +1,4 @@
-import type { Row } from "@tanstack/react-table";
+import type { Row, RowData, TableFeatures } from "@tanstack/react-table";
 import type { AvailabilityValue } from "../api/types";
 
 type ValueTone = "plain" | "signed";
@@ -29,9 +29,12 @@ export function availabilitySortValues(
   return availabilityNumber(left) - availabilityNumber(right);
 }
 
-export function availabilitySortRows<RowData>(
-  rowA: Row<RowData>,
-  rowB: Row<RowData>,
+export function availabilitySortRows<
+  TFeatures extends TableFeatures,
+  TData extends RowData,
+>(
+  rowA: Row<TFeatures, TData>,
+  rowB: Row<TFeatures, TData>,
   columnId: string,
 ): number {
   return availabilitySortValues(

@@ -91,6 +91,21 @@ describe("holdings sorting persistence", () => {
     );
   });
 
+  it("sorts instrument names case-insensitively in natural order", () => {
+    seedSorting([{ id: "instrument", desc: false }]);
+
+    renderHoldingsTable([
+      holding(1, "ABB", "ABB", "100.00"),
+      holding(2, "Investor B", "INVESTOR-B", "100.00"),
+      holding(3, "Volvo B", "VOLVO-B", "100.00"),
+      holding(4, "iShares Core", "ISHARES", "100.00"),
+    ]);
+
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["ABB", "Investor B", "iShares Core", "Volvo B"],
+    );
+  });
+
   it("ignores a stored retired column id and falls back to value descending", () => {
     seedSorting([{ id: "target_gap_base", desc: true }]);
 

@@ -1,11 +1,8 @@
 import {
   createColumnHelper,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
   type SortingState,
-  useReactTable,
+  useTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMemo } from "react";
@@ -19,6 +16,7 @@ import type {
 import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
+import { DATA_TABLE_FEATURES } from "./tableFeatures";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -78,7 +76,7 @@ interface GainsColumnSummary {
   incompleteRows: number;
 }
 
-const columnHelper = createColumnHelper<RowView>();
+const columnHelper = createColumnHelper<typeof DATA_TABLE_FEATURES, RowView>();
 
 const numericColumns = new Set([
   "cost_basis_base",
@@ -328,7 +326,7 @@ function latestStatus(row: GainsRow): LatestStatus {
   return { label: "Fresh", visible: false };
 }
 
-const columns = [
+const columns = columnHelper.columns([
   columnHelper.accessor((row) => row.gain.instrument.name, {
     id: "instrument",
     header: "Instrument",
@@ -347,19 +345,19 @@ const columns = [
   columnHelper.accessor((row) => row.gain.cost_basis_base, {
     id: "cost_basis_base",
     header: () => stackedHeader("Cost basis", "SEK"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.market_value_base, {
     id: "market_value_base",
     header: () => stackedHeader("Market value", "SEK"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) => <AvailabilityValueCell value={info.getValue()} />,
   }),
   columnHelper.accessor((row) => row.gain.total_return_base, {
     id: "total_return_base",
     header: () => stackedHeader("Total gain", "SEK + %"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
         info.getValue(),
@@ -369,7 +367,7 @@ const columns = [
   columnHelper.accessor((row) => row.gain.capital_gain_base, {
     id: "capital_gain_base",
     header: () => stackedHeader("Capital gain", "SEK"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
@@ -377,7 +375,7 @@ const columns = [
   columnHelper.accessor((row) => row.gain.income_base, {
     id: "income_base",
     header: () => stackedHeader("Income", "SEK"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
@@ -385,7 +383,7 @@ const columns = [
   columnHelper.accessor((row) => row.gain.currency_gain_base, {
     id: "currency_gain_base",
     header: () => stackedHeader("Currency gain", "SEK"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) => (
       <AvailabilityValueCell value={info.getValue()} tone="signed" />
     ),
@@ -393,7 +391,7 @@ const columns = [
   columnHelper.accessor((row) => row.gain.day_change_base, {
     id: "day_change_base",
     header: () => stackedHeader("Today", "SEK + %"),
-    sortingFn: availabilitySortRows,
+    sortFn: availabilitySortRows,
     cell: (info) =>
       stackedMetricCell(
         info.getValue(),
@@ -425,7 +423,7 @@ const columns = [
       );
     },
   }),
-];
+]);
 
 export function GainsTable({
   rows,
@@ -520,14 +518,12 @@ export function GainsTable({
     [rows],
   );
 
-  const table = useReactTable({
+  const table = useTable({
+    features: DATA_TABLE_FEATURES,
     data: tableRows,
     columns,
     state: { sorting, globalFilter: filter },
     onSortingChange: handleSortingChange,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });

@@ -537,3 +537,8 @@ than guessing a working directory. Log volume is bounded by construction, so a
 long-running or noisy session cannot fill the disk. A future second process
 sharing one log file would need per-line process identification, which is not
 added here.
+
+## 2026-09-12 - TanStack Table Features Are Shared And Explicitly Registered
+Decision: TanStack Table v9 data tables use one shared feature registry. Built-in sort functions needed by automatic sort resolution are registered explicitly; unregistered function names must not be allowed to degrade silently to the basic comparator.
+Context: The v9 migration replaced implicit row-model setup with explicit feature registration, and omitting the sort-function registry changed text and exact-decimal-string ordering without a type or runtime failure.
+Consequences: New data tables reuse the shared registry, and any additional named sort or filter behavior must be registered as part of the table's explicit feature set.

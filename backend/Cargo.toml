@@ -1,23 +1,23 @@
 [package]
 name = "ticker-tape-tally-board-backend"
-version = "0.17.0"
+version = "0.17.1"
 edition = "2021"
 
 [dependencies]
 axum = "0.8"
-async-trait = "0.1.91"
+async-trait = "0.1.92"
 chrono = { version = "0.4", default-features = false, features = [
   "std",
   "clock",
 ] }
 csv = "1"
-futures = "0.3"
-log = "0.4.33"
-reqwest = { version = "0.13.4", default-features = false, features = [
+futures = "0.3.34"
+log = "0.4.34"
+reqwest = { version = "0.13.5", default-features = false, features = [
   "json",
   "rustls",
 ] }
-rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal = { version = "1.43.0", features = ["serde-with-str"] }
 rust_decimal_macros = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -37,7 +37,7 @@ tokio = { version = "1.53.1", features = [
   "signal",
   "sync",
 ] }
-tower-http = { version = "0.7.0", features = ["cors", "fs"] }
+tower-http = { version = "0.7.1", features = ["cors", "fs"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

@@ -1,11 +1,8 @@
 import {
   createColumnHelper,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
   type SortingState,
-  useReactTable,
+  useTable,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, CircleHelp } from "lucide-react";
 import {
@@ -41,6 +38,7 @@ import {
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
+import { DATA_TABLE_FEATURES } from "./tableFeatures";
 import {
   AvailabilityValueCell,
   availabilitySortRows,
@@ -68,7 +66,7 @@ interface RowView {
   search: string;
 }
 
-const columnHelper = createColumnHelper<RowView>();
+const columnHelper = createColumnHelper<typeof DATA_TABLE_FEATURES, RowView>();
 type PortfolioPercentage = AvailabilityValue<string>;
 const HOLDINGS_SORTING_KEY = "holdings.sorting";
 const DEFAULT_SORTING: SortingState = [{ id: "value", desc: true }];
@@ -489,7 +487,7 @@ function targetCell(target: ConvictionTarget) {
 }
 
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
-  return [
+  return columnHelper.columns([
     columnHelper.accessor((row) => row.holding.instrument.name, {
       id: "instrument",
       header: HOLDINGS_COLUMN_HEADERS.instrument.label,
@@ -514,13 +512,13 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
     columnHelper.accessor((row) => holdingCostSortField(row.holding), {
       id: "cost",
       header: HOLDINGS_COLUMN_HEADERS.cost.label,
-      sortingFn: availabilitySortRows,
+      sortFn: availabilitySortRows,
       cell: (info) => costCell(info.row.original.holding),
     }),
     columnHelper.accessor((row) => holdingValueSortField(row.holding), {
       id: "value",
       header: HOLDINGS_COLUMN_HEADERS.value.label,
-      sortingFn: availabilitySortRows,
+      sortFn: availabilitySortRows,
       cell: (info) =>
         valueCell(
           info.row.original.holding,
@@ -535,7 +533,7 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       {
         id: "pnl",
         header: HOLDINGS_COLUMN_HEADERS.pnl.label,
-        sortingFn: availabilitySortRows,
+        sortFn: availabilitySortRows,
         cell: (info) => pnlCell(info.row.original.holding),
       },
     ),
@@ -556,11 +554,11 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       {
         id: "target",
         header: HOLDINGS_COLUMN_HEADERS.target.label,
-        sortingFn: availabilitySortRows,
+        sortFn: availabilitySortRows,
         cell: (info) => targetCell(info.row.original.holding.conviction_target),
       },
     ),
-  ];
+  ]);
 }
 
 function holdingSearchText(holding: Holding): string {
@@ -663,15 +661,13 @@ export function HoldingsTable({
     [portfolioPercentages],
   );
   const meta: HoldingsTableMeta = { edits, canEditConviction, dispatchEdits };
-  const table = useReactTable({
+  const table = useTable({
+    features: DATA_TABLE_FEATURES,
     data: tableRows,
     columns,
     state: { sorting, globalFilter: filter },
     meta,
     onSortingChange: handleSortingChange,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.search.includes(String(filterValue).trim().toLowerCase()),
   });
