@@ -1,15 +1,12 @@
 import {
   keepPreviousData,
+  type UseQueryOptions,
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
 import { apiGet, apiSend, apiSendBytes, apiSendWithStatus } from "./client";
-import {
-  completedRefreshRunKey,
-  isNewlyCompletedRefreshRun,
-} from "./priceRefreshCompletion";
+import { type DataVersion, versionToken } from "./dataVersion";
 import { normalizeRebalanceAmount } from "./rebalanceAmount";
 import type {
   Conviction,
@@ -36,11 +33,85 @@ import type {
   ValueHistoryResponse,
 } from "./types";
 
-export function useInstruments() {
+/**
+ * The backend's snapshot heartbeat. Polled quickly while a price refresh runs,
+ * slowly otherwise, and re-checked when the window regains focus. Everything
+ * else keys off it, so this is the only query that decides when the app as a
+ * whole moves to newer data.
+ */
+export function useDataVersion() {
   return useQuery({
-    queryKey: ["instruments"],
-    queryFn: () => apiGet<Instrument[]>("/api/instruments"),
+    queryKey: ["data-version"],
+    queryFn: () => apiGet<DataVersion>("/api/data-version"),
+    refetchInterval: (query) =>
+      query.state.data?.prices_refreshing ? 2000 : 15_000,
+    // A hidden tab stops polling; returning to it re-checks immediately, which
+    // is what the focus refetch is for.
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
+}
+
+/**
+ * Define a data query that belongs to one snapshot. The token is part of the
+ * cache key, so results from different snapshots can never share an entry, and
+ * a version change refetches every panel together.
+ *
+ * Previous data is kept by default while the new snapshot loads, so a panel
+ * shows the older numbers briefly rather than emptying out on every refresh,
+ * transaction or restart.
+ *
+ * A response that names a revision other than the one asked for means the
+ * snapshot moved while the request was in flight. Rechecking the version is
+ * enough: the token changes and everything refetches together.
+ */
+interface VersionedQueryOptions<T> {
+  enabled?: boolean;
+  keepPreviousData?: boolean;
+  refetchInterval?: UseQueryOptions<T>["refetchInterval"];
+  refetchIntervalInBackground?: boolean;
+}
+
+function useVersionedQuery<T>(
+  key: readonly unknown[],
+  path: string,
+  options: VersionedQueryOptions<T> = {},
+) {
+  const queryClient = useQueryClient();
+  const version = useDataVersion();
+  const token = version.data ? versionToken(version.data) : null;
+  const requestedRevision = version.data?.data_revision ?? null;
+
+  const query = useQuery({
+    queryKey: [key[0], token, ...key.slice(1)],
+    queryFn: async () => {
+      const data = await apiGet<T>(path);
+      const served = (data as { data_revision?: string } | null)?.data_revision;
+      if (served !== undefined && served !== requestedRevision) {
+        void queryClient.invalidateQueries({ queryKey: ["data-version"] });
+      }
+      return data;
+    },
+    enabled: token !== null && (options.enabled ?? true),
+    placeholderData:
+      options.keepPreviousData === false ? undefined : keepPreviousData,
+    refetchInterval: options.refetchInterval,
+    refetchIntervalInBackground: options.refetchIntervalInBackground,
+  });
+
+  const versionUnavailable = token === null && version.isError;
+  return {
+    ...query,
+    error: query.error ?? (versionUnavailable ? version.error : null),
+    isError: query.isError || versionUnavailable,
+    isPending: query.isPending && !versionUnavailable,
+    refetch: versionUnavailable ? version.refetch : query.refetch,
+  };
+}
+
+export function useInstruments() {
+  return useVersionedQuery<Instrument[]>(["instruments"], "/api/instruments");
 }
 
 export function useHealth() {
@@ -51,10 +122,10 @@ export function useHealth() {
 }
 
 export function useTransactions() {
-  return useQuery({
-    queryKey: ["transactions"],
-    queryFn: () => apiGet<Transaction[]>("/api/transactions"),
-  });
+  return useVersionedQuery<Transaction[]>(
+    ["transactions"],
+    "/api/transactions",
+  );
 }
 
 export function lookupInstrument(query: string) {
@@ -63,16 +134,13 @@ export function lookupInstrument(query: string) {
 }
 
 export function useHoldings(includeWatchlist = false) {
-  return useQuery({
-    queryKey: ["holdings", includeWatchlist],
-    queryFn: () => {
-      const search = new URLSearchParams();
-      if (includeWatchlist) search.set("include_watchlist", "true");
-      const qs = search.toString();
-      return apiGet<HoldingsResponse>(`/api/holdings${qs ? `?${qs}` : ""}`);
-    },
-    placeholderData: keepPreviousData,
-  });
+  const search = new URLSearchParams();
+  if (includeWatchlist) search.set("include_watchlist", "true");
+  const qs = search.toString();
+  return useVersionedQuery<HoldingsResponse>(
+    ["holdings", includeWatchlist],
+    `/api/holdings${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export interface GainsParams {
@@ -84,75 +152,51 @@ export interface GainsParams {
 
 export function useGains(params: GainsParams = {}) {
   const { includeClosedPositions = false, startDate, endDate, method } = params;
-  return useQuery({
-    queryKey: [
+  const search = new URLSearchParams();
+  if (includeClosedPositions) search.set("include_closed", "true");
+  if (startDate) search.set("start_date", startDate);
+  if (endDate) search.set("end_date", endDate);
+  if (method) search.set("method", method);
+  const qs = search.toString();
+
+  return useVersionedQuery<GainsResponse>(
+    [
       "gains",
       includeClosedPositions,
       startDate ?? null,
       endDate ?? null,
       method ?? null,
     ],
-    queryFn: () => {
-      const search = new URLSearchParams();
-      if (includeClosedPositions) search.set("include_closed", "true");
-      if (startDate) search.set("start_date", startDate);
-      if (endDate) search.set("end_date", endDate);
-      if (method) search.set("method", method);
-      const qs = search.toString();
-      return apiGet<GainsResponse>(`/api/gains${qs ? `?${qs}` : ""}`);
-    },
-    placeholderData: keepPreviousData,
-  });
+    `/api/gains${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export type { DateRange, ReturnMethod };
 
-/**
- * Price status, polled while a refresh runs. When a refresh run finishes that
- * this page has not seen complete — including one the backend started on its
- * own, such as the launch refresh — price-derived data is refetched so every
- * panel reflects the same prices.
- */
 export function usePriceStatus() {
-  const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: ["price-status"],
-    queryFn: () => apiGet<PriceStatusResponse>("/api/prices/status"),
-    refetchInterval: (query) => (query.state.data?.refreshing ? 2000 : false),
-    refetchIntervalInBackground: true,
-  });
-
-  const completedRun = query.data
-    ? completedRefreshRunKey(query.data)
-    : undefined;
-  const seenCompletedRun = useRef<string | null | undefined>(undefined);
-
-  useEffect(() => {
-    if (completedRun === undefined) return;
-    const previous = seenCompletedRun.current;
-    seenCompletedRun.current = completedRun;
-    if (isNewlyCompletedRefreshRun(previous, completedRun)) {
-      invalidatePriceDerivedData(queryClient);
-    }
-  }, [completedRun, queryClient]);
-
-  return query;
+  return useVersionedQuery<PriceStatusResponse>(
+    ["price-status"],
+    "/api/prices/status",
+    {
+      refetchInterval: (query) => (query.state.data?.refreshing ? 2000 : false),
+      refetchIntervalInBackground: true,
+    },
+  );
 }
 
 export function useInstrumentPrices(id: number | null) {
-  return useQuery({
-    queryKey: ["instrument-prices", id],
-    queryFn: () =>
-      apiGet<PriceHistoryResponse>(`/api/instruments/${id}/prices`),
-    enabled: id !== null,
-  });
+  return useVersionedQuery<PriceHistoryResponse>(
+    ["instrument-prices", id],
+    `/api/instruments/${id}/prices`,
+    { enabled: id !== null, keepPreviousData: false },
+  );
 }
 
 export function usePortfolioValueHistory() {
-  return useQuery({
-    queryKey: ["portfolio-value-history"],
-    queryFn: () => apiGet<ValueHistoryResponse>("/api/portfolio/value-history"),
-  });
+  return useVersionedQuery<ValueHistoryResponse>(
+    ["portfolio-value-history"],
+    "/api/portfolio/value-history",
+  );
 }
 
 export function useRebalancePlan(
@@ -161,17 +205,13 @@ export function useRebalancePlan(
 ) {
   const normalizedAmount = normalizeRebalanceAmount(amount);
 
-  return useQuery({
-    queryKey: ["rebalance", normalizedAmount, rankBy],
-    queryFn: () =>
-      apiGet<RebalanceResponse>(
-        `/api/rebalance?amount=${encodeURIComponent(
-          normalizedAmount ?? "",
-        )}&rank_by=${rankBy}`,
-      ),
-    enabled: normalizedAmount !== null,
-    placeholderData: keepPreviousData,
-  });
+  return useVersionedQuery<RebalanceResponse>(
+    ["rebalance", normalizedAmount, rankBy],
+    `/api/rebalance?amount=${encodeURIComponent(
+      normalizedAmount ?? "",
+    )}&rank_by=${rankBy}`,
+    { enabled: normalizedAmount !== null },
+  );
 }
 
 export type NewInstrumentInput = CreateInstrumentInput;
@@ -194,41 +234,6 @@ export interface NewTransactionInput {
   note?: string;
 }
 
-function invalidatePortfolioData(
-  queryClient: ReturnType<typeof useQueryClient>,
-): void {
-  void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-  void queryClient.invalidateQueries({ queryKey: ["gains"] });
-  void queryClient.invalidateQueries({ queryKey: ["price-status"] });
-  void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
-  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
-}
-
-function invalidatePriceDerivedData(
-  queryClient: ReturnType<typeof useQueryClient>,
-): void {
-  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-  void queryClient.invalidateQueries({ queryKey: ["gains"] });
-  void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
-  void queryClient.invalidateQueries({ queryKey: ["portfolio-value-history"] });
-  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
-}
-
-function invalidateInstrumentData(
-  queryClient: ReturnType<typeof useQueryClient>,
-): void {
-  void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-  void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-  void queryClient.invalidateQueries({ queryKey: ["gains"] });
-  void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
-  void queryClient.invalidateQueries({ queryKey: ["price-status"] });
-  void queryClient.invalidateQueries({ queryKey: ["instrument-prices"] });
-  void queryClient.invalidateQueries({
-    queryKey: ["portfolio-value-history"],
-  });
-}
-
 export function useUpsertInstrument() {
   const queryClient = useQueryClient();
 
@@ -244,7 +249,7 @@ export function useUpsertInstrument() {
       return { status: response.status, instrument: response.body };
     },
     onSuccess: () => {
-      invalidateInstrumentData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -254,11 +259,7 @@ export interface ConvictionChange {
   conviction: Conviction;
 }
 
-/**
- * Save one instrument's conviction (Asset Detail). Conviction is portfolio
- * metadata, so only instruments and holdings are invalidated — not gains,
- * price status, or value history.
- */
+/** Save one instrument's conviction (Asset Detail). */
 export function useUpdateInstrumentConviction() {
   const queryClient = useQueryClient();
 
@@ -276,9 +277,7 @@ export function useUpdateInstrumentConviction() {
         { conviction },
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -290,7 +289,7 @@ export function useDeleteInstrument() {
     mutationFn: (instrumentId: number) =>
       apiSend<void>("DELETE", `/api/instruments/${instrumentId}`, undefined),
     onSuccess: () => {
-      invalidateInstrumentData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -307,9 +306,7 @@ export function useUpdateInstrumentConvictions() {
     mutationFn: (changes: ConvictionChange[]) =>
       apiSend<Instrument[]>("PUT", "/api/instruments/convictions", { changes }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-      void queryClient.invalidateQueries({ queryKey: ["rebalance"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -321,7 +318,7 @@ export function useCreateTransaction() {
     mutationFn: (input: NewTransactionInput) =>
       apiSend<Transaction>("POST", "/api/transactions", input),
     onSuccess: () => {
-      invalidatePortfolioData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -333,7 +330,7 @@ export function useDeleteTransaction() {
     mutationFn: (id: number) =>
       apiSend<void>("DELETE", `/api/transactions/${id}`, undefined),
     onSuccess: () => {
-      invalidatePortfolioData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -345,8 +342,7 @@ export function useRefreshPrices() {
     mutationFn: (input: RefreshPricesInput = { mode: "latest" }) =>
       apiSend<RefreshPricesResult>("POST", "/api/prices/refresh", input),
     onSuccess: () => {
-      invalidatePriceDerivedData(queryClient);
-      void queryClient.invalidateQueries({ queryKey: ["price-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -426,8 +422,7 @@ export function useCommitImport() {
       );
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      invalidatePortfolioData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }
@@ -443,8 +438,7 @@ export function useRollbackImport() {
         new ArrayBuffer(0),
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["instruments"] });
-      invalidatePortfolioData(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });
 }

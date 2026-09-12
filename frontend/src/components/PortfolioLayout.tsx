@@ -2,6 +2,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import {
+  useDataVersion,
   useGains,
   useInstruments,
   usePriceStatus,
@@ -14,6 +15,7 @@ import { useAppMode } from "./useAppMode";
 export function PortfolioLayout() {
   const [formOpen, setFormOpen] = useState(false);
   const gainsQuery = useGains();
+  const dataVersionQuery = useDataVersion();
   const appMode = useAppMode();
   const instrumentsQuery = useInstruments();
   const priceStatusQuery = usePriceStatus();
@@ -67,6 +69,7 @@ export function PortfolioLayout() {
           </div>
           <AddTransactionForm
             instruments={instrumentsQuery.data ?? []}
+            tradeDate={dataVersionQuery.data?.valuation_date ?? ""}
             onClose={() => setFormOpen(false)}
           />
         </section>

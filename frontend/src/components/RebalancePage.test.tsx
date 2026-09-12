@@ -26,6 +26,7 @@ vi.mock("../api/client", async () => {
 
 function rebalanceResponse(): RebalanceResponse {
   return {
+    data_revision: "test",
     amount_base: "1234.50",
     base_currency: "SEK",
     plan: {

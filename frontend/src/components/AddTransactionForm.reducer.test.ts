@@ -5,9 +5,17 @@ import {
   type FormState,
 } from "./AddTransactionForm";
 
-const base = (): FormState => createInitialState(true);
+const base = (): FormState => createInitialState(true, "2026-09-12");
 
 describe("addTransactionReducer", () => {
+  it("seeds the trade date from the server's valuation date", () => {
+    expect(createInitialState(true, "2026-09-12").tradeDate).toBe("2026-09-12");
+  });
+
+  it("leaves the trade date empty when the server date is unknown", () => {
+    expect(createInitialState(true, "").tradeDate).toBe("");
+  });
+
   it("updates a text field and clears the error", () => {
     const next = addTransactionReducer(
       { ...base(), error: "boom" },
@@ -113,7 +121,9 @@ describe("addTransactionReducer", () => {
   });
 
   it("seeds the instrument mode from whether instruments exist", () => {
-    expect(createInitialState(true).instrumentMode).toBe("existing");
-    expect(createInitialState(false).instrumentMode).toBe("new");
+    expect(createInitialState(true, "2026-09-12").instrumentMode).toBe(
+      "existing",
+    );
+    expect(createInitialState(false, "2026-09-12").instrumentMode).toBe("new");
   });
 });

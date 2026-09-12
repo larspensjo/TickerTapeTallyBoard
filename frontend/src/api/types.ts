@@ -91,6 +91,7 @@ export interface Holding {
 }
 
 export interface HoldingsResponse {
+  data_revision: string;
   holdings: Holding[];
   hidden_watchlist_pool_count: number;
 }
@@ -157,6 +158,7 @@ export interface ValueHistoryPoint {
 }
 
 export interface ValueHistoryResponse {
+  data_revision: string;
   base_currency: string;
   start_date: string | null;
   points: ValueHistoryPoint[];
@@ -254,6 +256,7 @@ export interface DateRange {
 }
 
 export interface GainsResponse {
+  data_revision: string;
   as_of_date: string;
   base_currency: string;
   include_closed_positions: boolean;
@@ -267,6 +270,7 @@ export interface GainsResponse {
 }
 
 export interface RebalanceResponse {
+  data_revision: string;
   amount_base: string;
   base_currency: string;
   plan: RebalancePlan;

@@ -56,6 +56,7 @@ function trade(
 
 function response(): RebalanceResponse {
   return {
+    data_revision: "test",
     amount_base: "1234.50",
     base_currency: "SEK",
     plan: {
@@ -331,6 +332,7 @@ describe("rebalanceViewModel", () => {
       amountInput: "0",
       committedAmount: "0",
       response: {
+        data_revision: "test",
         amount_base: "0.00",
         base_currency: "SEK",
         plan: {
@@ -351,6 +353,7 @@ describe("rebalanceViewModel", () => {
       amountInput: "0",
       committedAmount: "0",
       response: {
+        data_revision: "test",
         amount_base: "0.00",
         base_currency: "SEK",
         plan: {

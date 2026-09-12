@@ -1742,6 +1742,12 @@ Record the outcome of this gate in this file, following the pattern of the
   panel is internally consistent, but the screen as a whole is briefly mixed.
   A shared "updating" state is the follow-up; the numbers are never silently
   wrong, only briefly old.
+- **A response stamps the revision, not the valuation date.** If the server's
+  day rolls over without a mutation, a panel refetching under the previous
+  token can receive next-day numbers whose revision still matches. Panels can
+  then disagree by a day until the heartbeat catches up, bounded at fifteen
+  seconds. This is accepted for now; Phase 4 rewrites these response contracts
+  while resolving report periods and closes the gap as one coordinated change.
 - **In-flight snapshot changes are healed, not prevented.** A refresh can finish
   between the version fetch and a data request. The response's revision stamp
   makes the client notice and refetch, so the mismatch lasts one round trip

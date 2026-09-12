@@ -51,7 +51,10 @@ export type FormAction =
   | { type: "submitFailed"; message: string }
   | { type: "submitSucceeded" };
 
-export function createInitialState(hasInstruments: boolean): FormState {
+export function createInitialState(
+  hasInstruments: boolean,
+  tradeDate: string,
+): FormState {
   return {
     instrumentMode: hasInstruments ? "existing" : "new",
     instrumentId: "",
@@ -61,7 +64,7 @@ export function createInitialState(hasInstruments: boolean): FormState {
     instrumentType: "Stock",
     instrumentCurrency: "USD",
     type: "Buy",
-    tradeDate: new Date().toISOString().slice(0, 10),
+    tradeDate,
     quantity: "",
     price: "",
     currency: "USD",
@@ -132,15 +135,17 @@ function toNumber(value: string, label: string): number {
 
 export function AddTransactionForm({
   instruments,
+  tradeDate,
   onClose,
 }: {
   instruments: Instrument[];
+  tradeDate: string;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(
     addTransactionReducer,
-    instruments.length > 0,
-    createInitialState,
+    { hasInstruments: instruments.length > 0, tradeDate },
+    (init) => createInitialState(init.hasInstruments, init.tradeDate),
   );
   const upsertInstrument = useUpsertInstrument();
   const createTransaction = useCreateTransaction();
