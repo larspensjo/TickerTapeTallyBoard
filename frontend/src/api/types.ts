@@ -1,6 +1,7 @@
 export type TransactionType = "Buy" | "Sell" | "Split" | "Dividend";
 export type InstrumentType = "Stock" | "Etf" | "Fund";
 export type ReturnMethod = "xirr" | "simple" | "modified_dietz";
+export type GainsPeriod = "today" | "7d" | "12m" | "ytd" | "all" | "custom";
 export type Conviction = "Other" | "Low" | "Medium" | "High";
 export type TargetStatus =
   | "below"

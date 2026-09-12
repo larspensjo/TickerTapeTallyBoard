@@ -7,11 +7,19 @@ import type { GainsRow, Instrument } from "../api/types";
 
 const useGains = vi.fn();
 const usePortfolioValueHistory = vi.fn();
+const renderTimeSeriesChart = vi.fn();
 
 vi.mock("../api/queries", () => ({
   useGains: (...args: unknown[]) => useGains(...args),
   usePortfolioValueHistory: (...args: unknown[]) =>
     usePortfolioValueHistory(...args),
+}));
+
+vi.mock("./TimeSeriesChart", () => ({
+  TimeSeriesChart: (props: unknown) => {
+    renderTimeSeriesChart(props);
+    return null;
+  },
 }));
 
 class TestResizeObserver {
@@ -115,8 +123,9 @@ function renderDashboard() {
   return render(
     <MemoryRouter>
       <Dashboard
-        dateRange={{ startDate: null, endDate: null }}
         selectedDatePreset="all"
+        customRange={{ startDate: null, endDate: null }}
+        valuationDate="2026-09-12"
         onDatePresetChange={vi.fn()}
         onDateRangeChange={vi.fn()}
       />
@@ -133,6 +142,66 @@ describe("Dashboard chart panel", () => {
     cleanup();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it("uses the gains report period for chart filtering and its visible start", () => {
+    usePortfolioValueHistory.mockReturnValue({
+      data: {
+        start_date: "2025-01-01",
+        points: [
+          {
+            date: "2026-05-31",
+            value_base: "100.00",
+            invested_base: "80.00",
+            incomplete: false,
+            included_count: 1,
+            excluded_count: 0,
+          },
+          {
+            date: "2026-06-01",
+            value_base: "110.00",
+            invested_base: "80.00",
+            incomplete: false,
+            included_count: 1,
+            excluded_count: 0,
+          },
+          {
+            date: "2026-09-12",
+            value_base: "120.00",
+            invested_base: "80.00",
+            incomplete: false,
+            included_count: 1,
+            excluded_count: 0,
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+    });
+    useGains.mockReturnValue({
+      data: {
+        rows: [],
+        portfolio_waterfall: portfolioWaterfall(),
+        report_period: {
+          start_date: "2026-06-01",
+          end_date: "2026-09-12",
+        },
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    renderDashboard();
+
+    expect(renderTimeSeriesChart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          { time: "2026-06-01", value: 110 },
+          { time: "2026-09-12", value: 120 },
+        ],
+        visibleStart: "2026-06-01",
+      }),
+    );
   });
 
   it("keeps the Treemap view reachable when value-history fails", () => {

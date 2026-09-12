@@ -12,6 +12,7 @@ import type {
   Conviction,
   CreateInstrumentInput,
   DateRange,
+  GainsPeriod,
   GainsResponse,
   HealthResponse,
   HoldingsResponse,
@@ -145,17 +146,28 @@ export function useHoldings(includeWatchlist = false) {
 
 export interface GainsParams {
   includeClosedPositions?: boolean;
+  period?: GainsPeriod;
   startDate?: string | null;
   endDate?: string | null;
   method?: ReturnMethod;
 }
 
 export function useGains(params: GainsParams = {}) {
-  const { includeClosedPositions = false, startDate, endDate, method } = params;
+  const {
+    includeClosedPositions = false,
+    period,
+    startDate,
+    endDate,
+    method,
+  } = params;
   const search = new URLSearchParams();
   if (includeClosedPositions) search.set("include_closed", "true");
-  if (startDate) search.set("start_date", startDate);
-  if (endDate) search.set("end_date", endDate);
+  if (period) search.set("period", period);
+  const usesExplicitRange = period === undefined || period === "custom";
+  const effectiveStartDate = usesExplicitRange ? startDate : null;
+  const effectiveEndDate = usesExplicitRange ? endDate : null;
+  if (effectiveStartDate) search.set("start_date", effectiveStartDate);
+  if (effectiveEndDate) search.set("end_date", effectiveEndDate);
   if (method) search.set("method", method);
   const qs = search.toString();
 
@@ -163,8 +175,9 @@ export function useGains(params: GainsParams = {}) {
     [
       "gains",
       includeClosedPositions,
-      startDate ?? null,
-      endDate ?? null,
+      period ?? null,
+      effectiveStartDate ?? null,
+      effectiveEndDate ?? null,
       method ?? null,
     ],
     `/api/gains${qs ? `?${qs}` : ""}`,

@@ -7,6 +7,7 @@ use crate::api::valuation::{AvailabilityResponse, FxSnapshotResponse, PriceSnaps
 pub struct GainsQuery {
     #[serde(default)]
     pub(super) include_closed: bool,
+    pub(super) period: Option<String>,
     pub(super) start_date: Option<String>,
     pub(super) end_date: Option<String>,
     pub(super) method: Option<String>,

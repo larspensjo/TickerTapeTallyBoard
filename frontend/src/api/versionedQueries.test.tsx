@@ -26,12 +26,18 @@ function isMutationResult(value: unknown): value is { mutate: unknown } {
   return typeof value === "object" && value !== null && "mutate" in value;
 }
 
-function stubFetch() {
+function stubFetch(
+  requests: string[] = [],
+  dataVersion: () => typeof VERSION = () => VERSION,
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.startsWith("/api/data-version") ? VERSION : { rows: [] };
+      if (!url.startsWith("/api/data-version")) requests.push(url);
+      const body = url.startsWith("/api/data-version")
+        ? dataVersion()
+        : { rows: [] };
       return Promise.resolve({
         status: 200,
         ok: true,
@@ -104,6 +110,62 @@ describe("every data hook names the snapshot", () => {
       });
     },
   );
+});
+
+describe("gains period request parameters", () => {
+  it("sends a non-custom preset without explicit dates", async () => {
+    const requests: string[] = [];
+    stubFetch(requests);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    renderHook(
+      () =>
+        queries.useGains({
+          period: "ytd",
+          startDate: "2026-01-01",
+          endDate: "2026-09-12",
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const request = new URL(requests[0], "http://localhost");
+    expect(request.searchParams.get("period")).toBe("ytd");
+    expect(request.searchParams.has("start_date")).toBe(false);
+    expect(request.searchParams.has("end_date")).toBe(false);
+  });
+
+  it("sends explicit dates with the custom preset", async () => {
+    const requests: string[] = [];
+    stubFetch(requests);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    renderHook(
+      () =>
+        queries.useGains({
+          period: "custom",
+          startDate: "2026-01-01",
+          endDate: "2026-09-12",
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const request = new URL(requests[0], "http://localhost");
+    expect(request.searchParams.get("period")).toBe("custom");
+    expect(request.searchParams.get("start_date")).toBe("2026-01-01");
+    expect(request.searchParams.get("end_date")).toBe("2026-09-12");
+  });
 });
 
 describe("a snapshot change refetches data", () => {
@@ -184,20 +246,7 @@ describe("a snapshot change refetches data", () => {
   it("refetches gains when the backend's revision moves", async () => {
     let version = { ...VERSION };
     const gainsRequests: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = String(input);
-        const isVersion = url.startsWith("/api/data-version");
-        if (!isVersion) gainsRequests.push(url);
-        return Promise.resolve({
-          status: 200,
-          ok: true,
-          text: () =>
-            Promise.resolve(JSON.stringify(isVersion ? version : { rows: [] })),
-        } as unknown as Response);
-      }),
-    );
+    stubFetch(gainsRequests, () => version);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -218,20 +267,7 @@ describe("a snapshot change refetches data", () => {
   it("refetches gains when the server's day changes", async () => {
     let version = { ...VERSION };
     const gainsRequests: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = String(input);
-        const isVersion = url.startsWith("/api/data-version");
-        if (!isVersion) gainsRequests.push(url);
-        return Promise.resolve({
-          status: 200,
-          ok: true,
-          text: () =>
-            Promise.resolve(JSON.stringify(isVersion ? version : { rows: [] })),
-        } as unknown as Response);
-      }),
-    );
+    stubFetch(gainsRequests, () => version);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });

@@ -1,13 +1,13 @@
 import { useState } from "react";
-import type { DateRange } from "../api/types";
+import type { DateRange, GainsPeriod } from "../api/types";
 
 const DATE_RANGE_SELECTION_KEY = "portfolio.dateRangeSelection";
 
-export type DatePreset = "today" | "7d" | "12m" | "ytd" | "all" | "custom";
+export type DatePreset = GainsPeriod;
 
 export interface DateRangeSelection {
   datePreset: DatePreset;
-  dateRange: DateRange;
+  customRange: DateRange;
 }
 
 export type DateRangeSelectionAction =
@@ -16,7 +16,7 @@ export type DateRangeSelectionAction =
 
 const DEFAULT_SELECTION: DateRangeSelection = {
   datePreset: "all",
-  dateRange: { startDate: null, endDate: null },
+  customRange: { startDate: null, endDate: null },
 };
 
 const PRESETS: DatePreset[] = ["today", "7d", "12m", "ytd", "all", "custom"];
@@ -36,15 +36,6 @@ function storage(): Storage | null {
   } catch {
     return null;
   }
-}
-
-export function localDateString(date: Date): string {
-  return date.toLocaleDateString("sv-SE");
-}
-
-function localDateFromString(value: string): Date {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day);
 }
 
 function isDatePreset(value: unknown): value is DatePreset {
@@ -72,63 +63,6 @@ function coerceDateRange(value: unknown): DateRange | null {
   };
 }
 
-export function presetToRange(
-  preset: DatePreset,
-  customStart: string,
-  customEnd: string,
-  today = new Date(),
-): DateRange {
-  const fmt = localDateString;
-
-  switch (preset) {
-    case "today":
-      return { startDate: fmt(today), endDate: fmt(today) };
-    case "7d": {
-      const start = new Date(today);
-      start.setDate(start.getDate() - 7);
-      return { startDate: fmt(start), endDate: fmt(today) };
-    }
-    case "12m": {
-      const start = new Date(today);
-      start.setFullYear(start.getFullYear() - 1);
-      return { startDate: fmt(start), endDate: fmt(today) };
-    }
-    case "ytd":
-      return { startDate: `${today.getFullYear()}-01-01`, endDate: fmt(today) };
-    case "all":
-      return { startDate: null, endDate: fmt(today) };
-    case "custom":
-      return {
-        startDate: customStart || null,
-        endDate: customEnd || null,
-      };
-  }
-}
-
-/**
- * The range the portfolio queries use. Rolling presets are resolved against
- * `today` on every call rather than stored, so a page left open across
- * midnight follows the calendar; only a custom range is taken from state, with
- * an open end meaning today.
- */
-export function activeDateRange(
-  selection: DateRangeSelection,
-  today: string,
-): DateRange {
-  if (selection.datePreset === "custom") {
-    return {
-      startDate: selection.dateRange.startDate,
-      endDate: selection.dateRange.endDate ?? today,
-    };
-  }
-  return presetToRange(
-    selection.datePreset,
-    "",
-    "",
-    localDateFromString(today),
-  );
-}
-
 export function dateRangeSelectionReducer(
   state: DateRangeSelection,
   action: DateRangeSelectionAction,
@@ -137,7 +71,7 @@ export function dateRangeSelectionReducer(
     case "datePresetChanged":
       return { ...state, datePreset: action.datePreset };
     case "dateRangeChanged":
-      return { ...state, dateRange: action.dateRange };
+      return { ...state, customRange: action.dateRange };
   }
 }
 
@@ -146,19 +80,24 @@ export function loadDateRangeSelection(): DateRangeSelection {
   if (!saved) return DEFAULT_SELECTION;
 
   try {
-    const parsed = JSON.parse(saved) as Partial<DateRangeSelection>;
+    const parsed = JSON.parse(saved) as {
+      datePreset?: unknown;
+      customRange?: unknown;
+      dateRange?: unknown;
+    };
     if (!isDatePreset(parsed.datePreset)) return DEFAULT_SELECTION;
 
     if (parsed.datePreset !== "custom") {
       return {
         datePreset: parsed.datePreset,
-        dateRange: DEFAULT_SELECTION.dateRange,
+        customRange: DEFAULT_SELECTION.customRange,
       };
     }
 
-    const dateRange = coerceDateRange(parsed.dateRange);
-    return dateRange
-      ? { datePreset: parsed.datePreset, dateRange }
+    const customRange =
+      coerceDateRange(parsed.customRange) ?? coerceDateRange(parsed.dateRange);
+    return customRange
+      ? { datePreset: parsed.datePreset, customRange }
       : DEFAULT_SELECTION;
   } catch {
     return DEFAULT_SELECTION;
@@ -170,23 +109,25 @@ export function saveDateRangeSelection(selection: DateRangeSelection): void {
 }
 
 export function DateRangeSelector({
-  dateRange,
+  customRange,
   selectedDatePreset,
   onDatePresetChange,
   onDateRangeChange,
+  valuationDate,
   ariaLabel,
 }: {
-  dateRange: DateRange;
+  customRange: DateRange;
   selectedDatePreset: DatePreset;
   onDatePresetChange: (preset: DatePreset) => void;
   onDateRangeChange: (range: DateRange) => void;
+  valuationDate: string | null;
   ariaLabel: string;
 }) {
   const [customStart, setCustomStart] = useState(
-    selectedDatePreset === "custom" ? (dateRange.startDate ?? "") : "",
+    selectedDatePreset === "custom" ? (customRange.startDate ?? "") : "",
   );
   const [customEnd, setCustomEnd] = useState(
-    selectedDatePreset === "custom" ? (dateRange.endDate ?? "") : "",
+    selectedDatePreset === "custom" ? (customRange.endDate ?? "") : "",
   );
 
   return (
@@ -196,14 +137,15 @@ export function DateRangeSelector({
         <button
           key={preset}
           type="button"
-          className={`preset-btn${
-            selectedDatePreset === preset ? " active" : ""
-          }`}
+          className={`preset-btn${selectedDatePreset === preset ? " active" : ""}`}
           aria-pressed={selectedDatePreset === preset}
           onClick={() => {
             onDatePresetChange(preset);
             if (preset === "custom") {
-              onDateRangeChange(presetToRange(preset, customStart, customEnd));
+              onDateRangeChange({
+                startDate: customStart || null,
+                endDate: customEnd || null,
+              });
             }
           }}
         >
@@ -220,7 +162,10 @@ export function DateRangeSelector({
             onChange={(event) => {
               const nextStart = event.target.value;
               setCustomStart(nextStart);
-              onDateRangeChange(presetToRange("custom", nextStart, customEnd));
+              onDateRangeChange({
+                startDate: nextStart || null,
+                endDate: customEnd || null,
+              });
             }}
           />
           <input
@@ -228,10 +173,14 @@ export function DateRangeSelector({
             type="date"
             aria-label="End date"
             value={customEnd}
+            max={valuationDate ?? undefined}
             onChange={(event) => {
               const nextEnd = event.target.value;
               setCustomEnd(nextEnd);
-              onDateRangeChange(presetToRange("custom", customStart, nextEnd));
+              onDateRangeChange({
+                startDate: customStart || null,
+                endDate: nextEnd || null,
+              });
             }}
           />
         </>

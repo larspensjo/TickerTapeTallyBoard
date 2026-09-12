@@ -16,21 +16,25 @@ import { formatGroupedNumber } from "./valuationDisplay";
 import { portfolioWaterfallView } from "./waterfallViewModel";
 
 export interface DashboardProps {
-  dateRange: DateRange;
   selectedDatePreset: DatePreset;
+  customRange: DateRange;
+  valuationDate: string | null;
   onDatePresetChange: (datePreset: DatePreset) => void;
   onDateRangeChange: (dateRange: DateRange) => void;
 }
 
 export function Dashboard({
-  dateRange,
   selectedDatePreset,
+  customRange,
+  valuationDate,
   onDatePresetChange,
   onDateRangeChange,
 }: DashboardProps) {
   const gainsQuery = useGains({
-    startDate: dateRange.startDate,
-    endDate: dateRange.endDate ?? undefined,
+    period: selectedDatePreset,
+    ...(selectedDatePreset === "custom"
+      ? { startDate: customRange.startDate, endDate: customRange.endDate }
+      : {}),
   });
   const valueHistory = usePortfolioValueHistory();
 
@@ -39,8 +43,9 @@ export function Dashboard({
       <DashboardChartPanel
         query={valueHistory}
         gainsQuery={gainsQuery}
-        dateRange={dateRange}
         selectedDatePreset={selectedDatePreset}
+        customRange={customRange}
+        valuationDate={valuationDate}
         onDatePresetChange={onDatePresetChange}
         onDateRangeChange={onDateRangeChange}
       />
@@ -61,22 +66,29 @@ const isChartView = isOneOf(CHART_VIEWS);
 function DashboardChartPanel({
   query,
   gainsQuery,
-  dateRange,
   selectedDatePreset,
+  customRange,
+  valuationDate,
   onDatePresetChange,
   onDateRangeChange,
 }: {
   query: ReturnType<typeof usePortfolioValueHistory>;
   gainsQuery: ReturnType<typeof useGains>;
-  dateRange: DateRange;
   selectedDatePreset: DatePreset;
+  customRange: DateRange;
+  valuationDate: string | null;
   onDatePresetChange: (datePreset: DatePreset) => void;
   onDateRangeChange: (dateRange: DateRange) => void;
 }) {
+  const reportPeriod = gainsQuery.data?.report_period;
   const history = query.data?.points;
   const filteredHistory = useMemo(
-    () => filterValueHistoryPoints(history ?? [], dateRange),
-    [history, dateRange],
+    () =>
+      filterValueHistoryPoints(history ?? [], {
+        startDate: reportPeriod?.start_date ?? null,
+        endDate: reportPeriod?.end_date ?? null,
+      }),
+    [history, reportPeriod],
   );
   const series = useMemo(
     () => portfolioValueSeries(filteredHistory),
@@ -96,10 +108,11 @@ function DashboardChartPanel({
   const chartControls = (
     <div className="chart-controls">
       <DateRangeSelector
-        dateRange={dateRange}
+        customRange={customRange}
         selectedDatePreset={selectedDatePreset}
         onDatePresetChange={onDatePresetChange}
         onDateRangeChange={onDateRangeChange}
+        valuationDate={valuationDate}
         ariaLabel="Dashboard date range"
       />
       <fieldset className="segmented-control">
@@ -239,7 +252,7 @@ function DashboardChartPanel({
             : "Portfolio value over time in SEK, with net invested capital reference line"
         }
         visibleStart={
-          dateRange.startDate ?? query.data?.start_date ?? undefined
+          reportPeriod?.start_date ?? query.data?.start_date ?? undefined
         }
         height={280}
         compactValueAxis

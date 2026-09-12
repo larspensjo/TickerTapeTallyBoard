@@ -1,15 +1,14 @@
-import { lazy, Suspense, useEffect, useMemo, useReducer } from "react";
+import { lazy, Suspense, useEffect, useReducer } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { useDataVersion } from "./api/queries";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
 import {
-  activeDateRange,
   dateRangeSelectionReducer,
   loadDateRangeSelection,
   saveDateRangeSelection,
 } from "./components/DateRangeSelector";
 import { useAppMode } from "./components/useAppMode";
-import { useLocalDate } from "./components/useLocalDate";
 
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((module) => ({
@@ -68,18 +67,15 @@ export function App() {
   }, [dateRangeSelection]);
 
   const appMode = useAppMode();
-  const today = useLocalDate();
-  const dateRange = useMemo(
-    () => activeDateRange(dateRangeSelection, today),
-    [dateRangeSelection, today],
-  );
+  const dataVersion = useDataVersion();
 
   const dateRangeProps = {
-    dateRange,
     selectedDatePreset: dateRangeSelection.datePreset,
+    customRange: dateRangeSelection.customRange,
+    valuationDate: dataVersion.data?.valuation_date ?? null,
     onDatePresetChange: (datePreset: typeof dateRangeSelection.datePreset) =>
       dispatchDateRangeSelection({ type: "datePresetChanged", datePreset }),
-    onDateRangeChange: (dateRange: typeof dateRangeSelection.dateRange) =>
+    onDateRangeChange: (dateRange: typeof dateRangeSelection.customRange) =>
       dispatchDateRangeSelection({ type: "dateRangeChanged", dateRange }),
   };
 

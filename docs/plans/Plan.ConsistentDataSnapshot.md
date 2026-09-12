@@ -1734,6 +1734,23 @@ git commit -m "Record the snapshot consistency decisions"
 Record the outcome of this gate in this file, following the pattern of the
 "Gate record" section in `docs/plans/Plan.ProductionSetupHardening.md`.
 
+#### Gate record — 2026-09-12
+
+**Run by the maintainer (pass).** The five checklist items were exercised by
+hand against a running app after report-period resolution moved to the backend,
+and reported as behaving as described: the dashboard's day change agrees with
+the table's "Today" total, a manual refresh and a backend restart move every
+panel together, the transaction form's trade date comes from the server, and a
+machine-clock rollover past midnight is followed without a reload. Per-item
+evidence was not captured, so this record reflects the maintainer's overall
+judgement rather than five separately logged observations.
+
+The one behaviour worth re-checking if it becomes annoying is the chart's
+one-round-trip lag behind the period buttons: the chart's bounds now come from
+the response's resolved period, so a preset click leaves the previous bounds in
+place until gains answers, and first paint briefly shows the whole history. This
+is the "mixed state during a transition" residual below, not a defect.
+
 ## Risks and residuals
 
 - **Mixed state during a transition.** Panels refetch independently and keep

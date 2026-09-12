@@ -40,6 +40,10 @@ impl ApiError {
         }
     }
 
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
     pub fn with_details(mut self, details: Value) -> Self {
         self.details = Some(details);
         self

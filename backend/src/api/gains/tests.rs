@@ -73,6 +73,32 @@ async fn gains_as_of_date_comes_from_the_state_clock() {
 }
 
 #[tokio::test]
+async fn a_period_preset_is_resolved_with_the_state_clock() {
+    let state = AppState::for_tests()
+        .await
+        .with_clock(crate::clock::Clock::fixed(
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 5).expect("valid date"),
+        ));
+
+    let (status, body) = send(&state, "GET", "/api/gains?period=ytd", json!({})).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["report_period"]["start_date"], "2026-01-01");
+    assert_eq!(body["report_period"]["end_date"], "2026-03-05");
+    assert_eq!(body["as_of_date"], "2026-03-05");
+}
+
+#[tokio::test]
+async fn an_unknown_period_is_rejected() {
+    let state = AppState::for_tests().await;
+
+    let (status, body) = send(&state, "GET", "/api/gains?period=last-tuesday", json!({})).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_period");
+}
+
+#[tokio::test]
 async fn gains_portfolio_waterfall_reconciles_across_open_and_closed_positions() {
     let state = AppState::for_tests().await;
     let open_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;

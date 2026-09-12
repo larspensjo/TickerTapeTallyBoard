@@ -18,8 +18,9 @@ export type GainsPageAction =
   | { type: "returnMethodChanged"; returnMethod: ReturnMethod };
 
 export interface GainsPageProps {
-  dateRange: DateRange;
   selectedDatePreset: DatePreset;
+  customRange: DateRange;
+  valuationDate: string | null;
   onDatePresetChange: (datePreset: DatePreset) => void;
   onDateRangeChange: (dateRange: DateRange) => void;
 }
@@ -40,8 +41,9 @@ export function gainsPageReducer(
 }
 
 export function GainsPage({
-  dateRange,
   selectedDatePreset,
+  customRange,
+  valuationDate,
   onDatePresetChange,
   onDateRangeChange,
 }: GainsPageProps) {
@@ -57,8 +59,10 @@ export function GainsPage({
 
   const gainsQuery = useGains({
     includeClosedPositions: state.includeClosedPositions,
-    startDate: dateRange.startDate,
-    endDate: dateRange.endDate ?? undefined,
+    period: selectedDatePreset,
+    ...(selectedDatePreset === "custom"
+      ? { startDate: customRange.startDate, endDate: customRange.endDate }
+      : {}),
     method: state.returnMethod,
   });
 
@@ -90,10 +94,11 @@ export function GainsPage({
                 includeClosedPositions,
               });
             }}
-            dateRange={dateRange}
+            customRange={customRange}
             selectedDatePreset={selectedDatePreset}
             onDatePresetChange={onDatePresetChange}
             onDateRangeChange={onDateRangeChange}
+            valuationDate={valuationDate}
             displayPercentKind={gainsQuery.data?.display_percent_kind}
             returnMethod={state.returnMethod}
             onReturnMethodChange={(returnMethod) =>

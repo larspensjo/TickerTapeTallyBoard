@@ -26,6 +26,8 @@ use waterfall::{IncomeInput, PortfolioWaterfallAccumulator};
 mod rows;
 use rows::{closed_gain_row, open_gain_row, serialize_reasons};
 
+mod period;
+
 mod types;
 use types::*;
 
@@ -42,23 +44,22 @@ pub async fn list(
     Query(query): Query<GainsQuery>,
 ) -> Result<Json<GainsResponse>, ApiError> {
     let method = parse_method(query.method.as_deref())?;
-    let end_date = match &query.end_date {
-        Some(s) => parse_date(s, "end_date")?,
-        None => state.clock.today(),
-    };
-    let start_date = match &query.start_date {
-        Some(s) => {
-            let d = parse_date(s, "start_date")?;
-            if d > end_date {
-                return Err(ApiError::bad_request(
-                    "start_date_after_end_date",
-                    "start_date must not be after end_date",
-                ));
-            }
-            Some(d)
-        }
-        None => None,
-    };
+    let resolved = period::resolve_period(
+        query.period.as_deref(),
+        query
+            .start_date
+            .as_deref()
+            .map(|s| parse_date(s, "start_date"))
+            .transpose()?,
+        query
+            .end_date
+            .as_deref()
+            .map(|s| parse_date(s, "end_date"))
+            .transpose()?,
+        state.clock.today(),
+    )?;
+    let end_date = resolved.end;
+    let start_date = resolved.start;
 
     let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;

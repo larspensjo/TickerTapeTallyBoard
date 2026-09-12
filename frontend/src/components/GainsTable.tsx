@@ -433,10 +433,11 @@ export function GainsTable({
   onFilterChange,
   includeClosedPositions,
   onIncludeClosedPositionsChange,
-  dateRange,
+  customRange,
   selectedDatePreset,
   onDatePresetChange,
   onDateRangeChange,
+  valuationDate,
   displayPercentKind = "absolute",
   returnMethod,
   onReturnMethodChange,
@@ -448,10 +449,11 @@ export function GainsTable({
   onFilterChange: (filter: string) => void;
   includeClosedPositions: boolean;
   onIncludeClosedPositionsChange: (includeClosedPositions: boolean) => void;
-  dateRange: DateRange;
+  customRange: DateRange;
   selectedDatePreset: DatePreset;
   onDatePresetChange: (preset: DatePreset) => void;
   onDateRangeChange: (range: DateRange) => void;
+  valuationDate: string | null;
   displayPercentKind?: string;
   returnMethod: ReturnMethod;
   onReturnMethodChange: (method: ReturnMethod) => void;
@@ -541,10 +543,11 @@ export function GainsTable({
       ) : null}
       <div className="table-toolbar">
         <DateRangeSelector
-          dateRange={dateRange}
+          customRange={customRange}
           selectedDatePreset={selectedDatePreset}
           onDatePresetChange={onDatePresetChange}
           onDateRangeChange={onDateRangeChange}
+          valuationDate={valuationDate}
           ariaLabel="Gains date range"
         />
         <select
