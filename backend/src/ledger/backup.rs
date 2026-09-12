@@ -97,7 +97,7 @@ pub async fn take_snapshot(
     directory: &Path,
     kind: SnapshotKind,
 ) -> Result<PathBuf, Box<BackupError>> {
-    let timestamp = Utc::now();
+    let timestamp = crate::clock::now_utc();
     let first_target = directory.join(snapshot_file_name(timestamp, kind, 1));
     fs::create_dir_all(directory).map_err(|error| {
         error_at(
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn collision_uses_disambiguator_without_overwrite() {
         let directory = temp_directory("collision");
-        let timestamp = Utc::now();
+        let timestamp = crate::clock::now_utc();
         let original = directory.join(snapshot_file_name(timestamp, SnapshotKind::Launch, 1));
         fs::write(&original, "existing").unwrap();
         let ledger = directory.join("ledger.sqlite");

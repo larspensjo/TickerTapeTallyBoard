@@ -21,7 +21,7 @@ pub async fn refresh(
     };
     let response = state
         .market_data
-        .refresh(&state.pool, trigger, body)
+        .refresh(&state.pool, state.clock.today(), trigger, body)
         .await
         .map_err(api_error)?;
     Ok(Json(response))
@@ -30,7 +30,7 @@ pub async fn refresh(
 pub async fn status(State(state): State<AppState>) -> Result<Json<PriceStatusResponse>, ApiError> {
     let response = state
         .market_data
-        .status(&state.pool)
+        .status(&state.pool, state.clock.today())
         .await
         .map_err(api_error)?;
     Ok(Json(response))

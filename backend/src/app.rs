@@ -166,7 +166,7 @@ async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
                     path: None,
                     source: Box::new(source),
                 })?;
-        crate::demo::seed(&pool)
+        crate::demo::seed(&pool, crate::clock::Clock::System.today())
             .await
             .map_err(|source| StartupError::LedgerOpenFailed { path: None, source })?;
         sqlx::query("PRAGMA query_only = ON")
@@ -212,6 +212,7 @@ fn spawn_launch_refresh(
             .market_data
             .refresh(
                 &state.pool,
+                state.clock.today(),
                 crate::market_data::RefreshTrigger::Launch,
                 request,
             )
@@ -392,7 +393,7 @@ mod tests {
 
         let status = state
             .market_data
-            .status(&state.pool)
+            .status(&state.pool, state.clock.today())
             .await
             .expect("status should succeed");
         assert!(status.refreshing);
@@ -406,7 +407,7 @@ mod tests {
 
         let status = state
             .market_data
-            .status(&state.pool)
+            .status(&state.pool, state.clock.today())
             .await
             .expect("status should succeed");
         assert!(!status.refreshing);

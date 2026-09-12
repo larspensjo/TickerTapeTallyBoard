@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use std::str::FromStr;
@@ -85,7 +85,7 @@ pub(crate) async fn seed_valued(
             quantity,
             price,
             conviction,
-            price_date: Local::now().naive_local().date(),
+            price_date: crate::clock::Clock::System.today(),
             fx_date: None,
             fx_rate: None,
         },

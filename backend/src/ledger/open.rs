@@ -131,7 +131,8 @@ fn prune(ledger_path: &std::path::Path, directory: &std::path::Path) {
         .filter_map(Result::ok)
         .filter_map(|entry| SnapshotFile::parse(&entry.path()))
         .collect();
-    for file in plan_retention(&files, chrono::Utc::now(), &RetentionPolicy::default()).delete {
+    for file in plan_retention(&files, crate::clock::now_utc(), &RetentionPolicy::default()).delete
+    {
         if let Err(error) = std::fs::remove_file(&file) {
             crate::engine_error!(
                 "backup prune failed for ledger {} in {} for snapshot {} during remove retained snapshot: {error}",

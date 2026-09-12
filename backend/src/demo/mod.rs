@@ -90,8 +90,11 @@ pub fn dataset(today: NaiveDate) -> DemoData {
     }
 }
 
-pub async fn seed(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    seed_for_date(pool, chrono::Local::now().date_naive()).await
+pub async fn seed(
+    pool: &SqlitePool,
+    today: NaiveDate,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    seed_for_date(pool, today).await
 }
 
 async fn seed_for_date(

@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::Local;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -107,7 +106,7 @@ pub async fn handler(
 ) -> Result<Json<RebalanceResponse>, ApiError> {
     let amount = parse_amount(query.amount.as_deref())?;
     let rank_by = parse_rank_by(query.rank_by.as_deref())?;
-    let valuation_date = Local::now().naive_local().date();
+    let valuation_date = state.clock.today();
     let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
     let prepared = assemble_candidates(valued_holdings)?;
     let candidates: Vec<RebalanceCandidate> = prepared
@@ -377,7 +376,7 @@ mod tests {
     use crate::db::provider_symbols;
     use crate::state::AppState;
     use axum::http::StatusCode;
-    use chrono::{Duration, Local};
+    use chrono::Duration;
     use rust_decimal::Decimal;
     use serde_json::{json, Value};
     use std::str::FromStr;
@@ -784,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn freshness_uses_the_staler_of_price_and_fx() {
         let stale_price_state = AppState::for_tests().await;
-        let today = Local::now().naive_local().date();
+        let today = crate::clock::Clock::System.today();
         let stale = today - Duration::days(10);
         seed_valued_at(
             &stale_price_state,

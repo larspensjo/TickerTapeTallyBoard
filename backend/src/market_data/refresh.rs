@@ -3,7 +3,7 @@ use std::sync::{
     Arc, Mutex,
 };
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sqlx::sqlite::SqlitePool;
 
 use crate::{
@@ -155,6 +155,7 @@ impl MarketDataService {
     pub async fn refresh(
         &self,
         pool: &SqlitePool,
+        today: NaiveDate,
         trigger: RefreshTrigger,
         request: RefreshPricesRequest,
     ) -> Result<RefreshPricesResponse, MarketDataError> {
@@ -188,7 +189,7 @@ impl MarketDataService {
             request.mode
         );
 
-        let outcome = self.execute_refresh(pool, &request).await;
+        let outcome = self.execute_refresh(pool, today, &request).await;
         let (status, message) = match &outcome {
             Ok(outcome) => (outcome.status, outcome.message.clone()),
             Err(error) => (RefreshRunStatus::Failed, Some(error.to_string())),
@@ -258,8 +259,13 @@ impl MarketDataService {
         }
     }
 
-    pub async fn status(&self, pool: &SqlitePool) -> Result<PriceStatusResponse, MarketDataError> {
-        super::price_status::price_status(pool, self.is_refreshing(), self.active_run()).await
+    pub async fn status(
+        &self,
+        pool: &SqlitePool,
+        today: NaiveDate,
+    ) -> Result<PriceStatusResponse, MarketDataError> {
+        super::price_status::price_status(pool, today, self.is_refreshing(), self.active_run())
+            .await
     }
 
     pub async fn lookup_symbol_search(&self, query: &str) -> SymbolSearchLookupResponse {
@@ -306,9 +312,10 @@ impl MarketDataService {
     async fn execute_refresh(
         &self,
         pool: &SqlitePool,
+        today: NaiveDate,
         request: &RefreshPricesRequest,
     ) -> Result<RefreshOutcome, MarketDataError> {
-        refresh_execution::execute_refresh(&self.inner.providers, pool, request).await
+        refresh_execution::execute_refresh(&self.inner.providers, pool, today, request).await
     }
 }
 
@@ -320,10 +327,11 @@ pub(crate) struct RefreshWindow {
 pub(super) async fn refresh_window(
     request: &RefreshPricesRequest,
     pool: &SqlitePool,
+    today: NaiveDate,
 ) -> Result<RefreshWindow, MarketDataError> {
     match request.mode {
         RefreshMode::Latest => {
-            let end = Utc::now().date_naive();
+            let end = today;
             Ok(RefreshWindow {
                 start: end - Duration::days(LATEST_REFRESH_WINDOW_DAYS),
                 end,
@@ -332,7 +340,7 @@ pub(super) async fn refresh_window(
         RefreshMode::Backfill => {
             let end = match &request.end_date {
                 Some(value) => parse_date("end_date", value)?,
-                None => Utc::now().date_naive(),
+                None => today,
             };
 
             let start = match &request.start_date {

@@ -1,6 +1,5 @@
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::Local;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -206,7 +205,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<HoldingsQuery>,
 ) -> Result<Json<HoldingsResponse>, ApiError> {
-    let valuation_date = Local::now().naive_local().date();
+    let valuation_date = state.clock.today();
     let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
     let target_inputs: Vec<_> = valued_holdings
         .iter()
@@ -801,7 +800,7 @@ mod tests {
                 instrument_id: id,
                 provider: MarketDataProvider::NasdaqNordic,
                 provider_symbol: "TX2997672".to_owned(),
-                date: chrono::Local::now().naive_local().date(),
+                date: crate::clock::Clock::System.today(),
                 close: "124.10".parse().expect("close"),
                 currency: "SEK".to_owned(),
                 fetched_at: now,

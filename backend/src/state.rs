@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use sqlx::sqlite::SqlitePool;
 
 use crate::{
+    clock::Clock,
     config::{BackupDirectory, Mode},
     ledger::{LaunchBackupOutcome, LaunchBackupStatus},
     market_data::MarketDataService,
@@ -22,6 +23,7 @@ pub struct AppState {
     pub mode: Mode,
     pub ledger_path: Option<PathBuf>,
     pub backup: BackupState,
+    pub clock: Clock,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
                     error: None,
                 },
             },
+            clock: Clock::System,
         }
     }
 
@@ -53,6 +56,11 @@ impl AppState {
 
     pub fn with_backup(mut self, directory: BackupDirectory, launch: LaunchBackupOutcome) -> Self {
         self.backup = BackupState { directory, launch };
+        self
+    }
+
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
         self
     }
 

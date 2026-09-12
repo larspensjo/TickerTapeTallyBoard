@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use chrono::NaiveDate;
 use sqlx::sqlite::SqlitePool;
 
 use crate::{
@@ -38,9 +39,10 @@ pub(super) struct RefreshTarget {
 pub(super) async fn execute_refresh(
     providers: &ProviderSet,
     pool: &SqlitePool,
+    today: NaiveDate,
     request: &RefreshPricesRequest,
 ) -> Result<RefreshOutcome, MarketDataError> {
-    let target_window = refresh::refresh_window(request, pool).await?;
+    let target_window = refresh::refresh_window(request, pool, today).await?;
     let transactions = transactions::all_for_holdings(pool).await?;
     let grouped = group_transactions(transactions);
     let instruments = instruments::list(pool).await?;

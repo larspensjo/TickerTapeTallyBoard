@@ -1,4 +1,4 @@
-use chrono::{Duration, Local};
+use chrono::Duration;
 
 use crate::api::router;
 use crate::api::valuation::{AvailabilityResponse, BASE_CURRENCY};
@@ -58,6 +58,21 @@ async fn gains_empty_portfolio() {
 }
 
 #[tokio::test]
+async fn gains_as_of_date_comes_from_the_state_clock() {
+    let state = AppState::for_tests()
+        .await
+        .with_clock(crate::clock::Clock::fixed(
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 5).expect("valid date"),
+        ));
+
+    let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["as_of_date"], "2026-03-05");
+    assert_eq!(body["report_period"]["end_date"], "2026-03-05");
+}
+
+#[tokio::test]
 async fn gains_portfolio_waterfall_reconciles_across_open_and_closed_positions() {
     let state = AppState::for_tests().await;
     let open_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
@@ -99,8 +114,8 @@ async fn gains_portfolio_waterfall_reconciles_across_open_and_closed_positions()
     seed_market_data(
         &state,
         open_id,
-        Local::now().naive_local().date(),
-        Local::now().naive_local().date() - Duration::days(1),
+        crate::clock::Clock::System.today(),
+        crate::clock::Clock::System.today() - Duration::days(1),
     )
     .await;
 
@@ -189,8 +204,8 @@ async fn gains_portfolio_waterfall_excludes_rows_with_missing_price_inputs() {
     seed_market_data(
         &state,
         open_id,
-        Local::now().naive_local().date(),
-        Local::now().naive_local().date() - Duration::days(1),
+        crate::clock::Clock::System.today(),
+        crate::clock::Clock::System.today() - Duration::days(1),
     )
     .await;
 
@@ -243,8 +258,8 @@ async fn gains_portfolio_waterfall_is_independent_of_include_closed() {
     seed_market_data(
         &state,
         open_id,
-        Local::now().naive_local().date(),
-        Local::now().naive_local().date() - Duration::days(1),
+        crate::clock::Clock::System.today(),
+        crate::clock::Clock::System.today() - Duration::days(1),
     )
     .await;
 
@@ -282,7 +297,7 @@ fn gains_portfolio_waterfall_income_not_tracked_keeps_zero_step() {
 async fn gains_open_row_percent_is_current_position_not_period_hybrid() {
     let state = AppState::for_tests().await;
     let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
-    let latest = Local::now().naive_local().date();
+    let latest = crate::clock::Clock::System.today();
     let previous = latest - Duration::days(1);
 
     // Opening buy well before the period, then an in-period partial sell, open remainder.
@@ -466,7 +481,7 @@ async fn gains_totals_include_closed_in_period_position_when_row_hidden() {
 async fn gains_include_closed_positions_keeps_partial_sells_in_one_open_row() {
     let state = AppState::for_tests().await;
     let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
-    let latest = Local::now().naive_local().date();
+    let latest = crate::clock::Clock::System.today();
     let previous = latest - Duration::days(1);
 
     send(
@@ -522,7 +537,7 @@ async fn gains_include_closed_positions_keeps_partial_sells_in_one_open_row() {
 async fn gains_populated_portfolio_uses_cached_price_and_frankfurter_fx() {
     let state = AppState::for_tests().await;
     let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
-    let latest = Local::now().naive_local().date();
+    let latest = crate::clock::Clock::System.today();
     let previous = latest - Duration::days(1);
     let trade_date = (latest - Duration::days(10)).format("%Y-%m-%d").to_string();
 
@@ -593,7 +608,7 @@ async fn gains_populated_portfolio_uses_cached_price_and_frankfurter_fx() {
 async fn gains_unavailable_attribution_serializes_reason_arrays() {
     let state = AppState::for_tests().await;
     let instrument_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
-    let trade_date = (Local::now().naive_local().date() - Duration::days(10))
+    let trade_date = (crate::clock::Clock::System.today() - Duration::days(10))
         .format("%Y-%m-%d")
         .to_string();
 
@@ -619,7 +634,7 @@ async fn gains_totals_remain_available_when_one_instrument_is_incomplete() {
     let state = AppState::for_tests().await;
     let available_id = instrument(&state, "MSFT", "NASDAQ", "USD").await;
     let incomplete_id = instrument(&state, "AAPL", "NASDAQ", "USD").await;
-    let latest = Local::now().naive_local().date();
+    let latest = crate::clock::Clock::System.today();
     let previous = latest - Duration::days(1);
     let trade_date = (latest - Duration::days(10)).format("%Y-%m-%d").to_string();
 

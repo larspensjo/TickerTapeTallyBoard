@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::sqlite::SqlitePool;
 
@@ -23,6 +23,7 @@ const SEK: &str = "SEK";
 
 pub(super) async fn price_status(
     pool: &SqlitePool,
+    today: NaiveDate,
     refreshing: bool,
     active_run: Option<RefreshRunSummary>,
 ) -> Result<PriceStatusResponse, MarketDataError> {
@@ -35,7 +36,6 @@ pub(super) async fn price_status(
     let instruments = instruments::list(pool).await?;
     let transactions = transactions::all_for_holdings(pool).await?;
     let grouped = group_transactions(transactions);
-    let today = Utc::now().date_naive();
 
     let mut readiness = Vec::new();
     for instrument in instruments {
@@ -180,8 +180,6 @@ async fn latest_fx_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use super::super::refresh::tests::{
         buy, empty_search, instrument, map_nasdaq_symbol, map_yahoo_symbol, multi_provider_service,
         set_conviction, silent_fake_price, test_state,
@@ -204,7 +202,10 @@ mod tests {
         map_yahoo_symbol(&pool, watch, "WATCH", true).await;
         set_conviction(&pool, watch, "MEDIUM").await;
 
-        let status = service.status(&pool).await.expect("status should succeed");
+        let status = service
+            .status(&pool, crate::clock::Clock::System.today())
+            .await
+            .expect("status should succeed");
         assert_eq!(status.instruments.len(), 1);
         assert_eq!(status.instruments[0].symbol, "WATCH");
         assert_eq!(status.instruments[0].open_quantity, 0);
@@ -235,7 +236,7 @@ mod tests {
                 instrument_id: azn,
                 provider: MarketDataProvider::NasdaqNordic,
                 provider_symbol: "TX271".to_owned(),
-                date: Utc::now().date_naive(),
+                date: crate::clock::Clock::System.today(),
                 close: dec!(1369.00),
                 currency: "SEK".to_owned(),
                 fetched_at: now_iso8601(),
@@ -244,7 +245,10 @@ mod tests {
         .await
         .expect("nasdaq row should insert");
 
-        let status = service.status(&pool).await.expect("status should succeed");
+        let status = service
+            .status(&pool, crate::clock::Clock::System.today())
+            .await
+            .expect("status should succeed");
         let entry = &status.instruments[0];
 
         assert_eq!(entry.price_sources.len(), 2);

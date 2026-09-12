@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod app;
+pub mod clock;
 pub mod config;
 pub mod db;
 pub mod demo;

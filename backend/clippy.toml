@@ -1,0 +1,10 @@
+# "Today" and "now" enter the program through crate::clock only, so every
+# surface that values a portfolio agrees on the same date.
+#
+# std::time::SystemTime::now is deliberately NOT banned: its remaining callers
+# build unique temporary file names in tests, which is not a clock reading. The
+# one production caller, now_iso8601, moved into crate::clock.
+disallowed-methods = [
+  { path = "chrono::Local::now", reason = "use AppState's Clock::today(), or crate::clock::now_utc() for instants" },
+  { path = "chrono::Utc::now", reason = "use crate::clock::now_utc(), or AppState's Clock::today() for calendar dates" },
+]

@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn empty_and_unparsable_are_safe() {
-        let now = Utc::now();
+        let now = crate::clock::now_utc();
         let plan = plan_retention(&[], now, &RetentionPolicy::default());
         assert!(plan.delete.is_empty());
         assert!(SnapshotFile::parse(Path::new("notes.sqlite")).is_none());

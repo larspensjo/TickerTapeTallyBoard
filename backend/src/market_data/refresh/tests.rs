@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::{
+    clock::Clock,
     db::{self, fx_rates, instruments, prices, provider_symbols, transactions},
     domain,
     market_data::effective_prices,
@@ -11,6 +12,10 @@ use crate::{
 };
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
+
+fn system_today() -> NaiveDate {
+    Clock::System.today()
+}
 
 pub(crate) async fn test_state(
     price_provider: FakePriceProvider,
@@ -187,6 +192,7 @@ async fn latest_refresh_writes_prices_fx_and_seeds_mappings() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -238,6 +244,7 @@ async fn latest_refresh_fetches_never_traded_convicted_instrument() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -272,6 +279,7 @@ async fn latest_refresh_skips_closed_other_instrument() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -308,6 +316,7 @@ async fn latest_refresh_fetches_closed_convicted_instrument() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -368,6 +377,7 @@ async fn avanza_isin_refresh_seeds_yahoo_mapping_from_search() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -394,7 +404,7 @@ async fn avanza_isin_refresh_seeds_yahoo_mapping_from_search() {
 
 #[tokio::test]
 async fn avanza_known_isins_seed_yahoo_mappings_without_search() {
-    let today = Utc::now().date_naive();
+    let today = system_today();
     let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
     price_provider.push_response(Ok(vec![DailyClose {
         provider: MarketDataProvider::Yahoo,
@@ -483,6 +493,7 @@ async fn avanza_known_isins_seed_yahoo_mappings_without_search() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -605,6 +616,7 @@ async fn stale_avanza_symbol_is_replaced_only_after_newer_candidate_is_verified(
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -705,6 +717,7 @@ async fn stale_avanza_symbol_is_preserved_when_candidate_is_not_newer() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -754,6 +767,7 @@ async fn refresh_rejects_price_rows_with_wrong_currency() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -817,6 +831,7 @@ async fn backfill_refresh_uses_earliest_transaction_date() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Backfill,
             RefreshPricesRequest {
                 mode: RefreshMode::Backfill,
@@ -857,6 +872,7 @@ async fn backfill_refresh_skips_never_traded_instruments() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Backfill,
             RefreshPricesRequest {
                 mode: RefreshMode::Backfill,
@@ -896,6 +912,7 @@ async fn unmapped_instruments_are_reported() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -942,6 +959,7 @@ async fn second_refresh_returns_current_running_status_without_starting_new_work
         service_clone
             .refresh(
                 &pool_clone,
+                system_today(),
                 RefreshTrigger::Manual,
                 RefreshPricesRequest {
                     mode: RefreshMode::Latest,
@@ -958,6 +976,7 @@ async fn second_refresh_returns_current_running_status_without_starting_new_work
     let running = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1089,6 +1108,7 @@ async fn instrument_yahoo_cannot_price_is_valued_from_nasdaq() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1168,6 +1188,7 @@ async fn disabled_yahoo_mapping_is_repaired_by_nasdaq_without_promoting_its_rows
     service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1233,6 +1254,7 @@ async fn two_same_currency_candidates_stay_unmapped_and_report_ambiguous() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1292,6 +1314,7 @@ async fn currency_narrowing_connects_the_matching_listing() {
     service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1347,6 +1370,7 @@ async fn per_date_precedence_prefers_yahoo_and_lets_nasdaq_fill_gaps() {
     service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1399,6 +1423,7 @@ async fn partial_still_means_action_needed() {
     let succeeded = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1426,6 +1451,7 @@ async fn partial_still_means_action_needed() {
     let partial = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1489,6 +1515,7 @@ async fn provider_outage_reports_unavailable_and_leaves_other_sources_intact() {
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -1536,6 +1563,7 @@ async fn backfill_reports_history_clamped_when_rows_start_well_after_the_window(
     let response = service
         .refresh(
             &pool,
+            system_today(),
             RefreshTrigger::Backfill,
             RefreshPricesRequest {
                 mode: RefreshMode::Backfill,

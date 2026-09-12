@@ -1,6 +1,6 @@
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 
@@ -44,7 +44,7 @@ pub async fn list(
     let method = parse_method(query.method.as_deref())?;
     let end_date = match &query.end_date {
         Some(s) => parse_date(s, "end_date")?,
-        None => Local::now().naive_local().date(),
+        None => state.clock.today(),
     };
     let start_date = match &query.start_date {
         Some(s) => {
