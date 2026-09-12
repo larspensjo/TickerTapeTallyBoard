@@ -41,6 +41,14 @@ Vite proxies `/api` to the backend, so the frontend can call `/api/health`
 without a separate development API URL. Development can scan to a free backend
 port and a free Vite port.
 
+- `GET /api/data-version` reports the data revision the backend is serving, the
+  date it considers today, and whether a price refresh is running. The frontend
+  includes that revision and date in the cache keys for data queries made through
+  the shared query layer, so a token change refetches those data panels together.
+  For valuations and data requests, "today" is the backend machine's local date.
+  The footer's backup-age label is a display-only exception that uses the browser's
+  local date.
+
 For the seeded, in-memory demo:
 
 ```powershell
