@@ -30,6 +30,7 @@ pub struct GainsResponse {
     pub totals: TotalsResponse,
     pub rows: Vec<GainRow>,
     pub portfolio_waterfall: PortfolioWaterfallResponse,
+    pub data_revision: String,
 }
 
 #[derive(Debug, Serialize)]

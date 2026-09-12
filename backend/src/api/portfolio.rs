@@ -24,6 +24,7 @@ pub struct ValueHistoryResponse {
     base_currency: String,
     start_date: Option<String>,
     points: Vec<ValueHistoryPointResponse>,
+    data_revision: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +140,7 @@ pub async fn value_history(
         base_currency: BASE_CURRENCY.to_string(),
         start_date: start_date.map(|date| date.format("%Y-%m-%d").to_string()),
         points: points.iter().map(point_response).collect(),
+        data_revision: state.revision.current(),
     }))
 }
 

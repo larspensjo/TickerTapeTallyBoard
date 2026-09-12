@@ -7,6 +7,7 @@ pub mod api;
 pub mod app;
 pub mod clock;
 pub mod config;
+pub mod data_revision;
 pub mod db;
 pub mod demo;
 pub mod domain;

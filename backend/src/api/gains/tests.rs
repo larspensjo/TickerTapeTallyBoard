@@ -1406,3 +1406,18 @@ async fn gains_open_row_exposes_realized_gain_base() {
     assert_available(&never["realized_gain_base"], "0.00");
     assert_available(&never["realized_cost_basis_base"], "0.00");
 }
+
+#[tokio::test]
+async fn gains_response_names_the_data_revision_it_was_computed_from() {
+    let state = AppState::for_tests().await;
+    let before = state.revision.current();
+
+    instrument(&state, "STAMP", "STO", BASE_CURRENCY).await;
+
+    assert_ne!(state.revision.current(), before);
+
+    let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data_revision"], state.revision.current());
+}

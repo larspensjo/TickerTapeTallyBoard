@@ -27,6 +27,7 @@ pub struct RebalanceResponse {
     pub amount_base: String,
     pub base_currency: &'static str,
     pub plan: RebalancePlanResponse,
+    pub data_revision: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,6 +124,7 @@ pub async fn handler(
                 plan: RebalancePlanResponse::Unavailable {
                     reasons: vec![reason.as_str().to_owned()],
                 },
+                data_revision: state.revision.current(),
             }));
         }
     };
@@ -133,6 +135,7 @@ pub async fn handler(
         amount_base: money_string(amount),
         base_currency: BASE_CURRENCY,
         plan,
+        data_revision: state.revision.current(),
     }))
 }
 

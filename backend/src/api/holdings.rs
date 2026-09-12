@@ -32,6 +32,7 @@ pub struct HoldingResponse {
 pub struct HoldingsResponse {
     pub holdings: Vec<HoldingResponse>,
     pub hidden_watchlist_pool_count: usize,
+    pub data_revision: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,6 +250,7 @@ pub async fn list(
     Ok(Json(HoldingsResponse {
         holdings,
         hidden_watchlist_pool_count,
+        data_revision: state.revision.current(),
     }))
 }
 

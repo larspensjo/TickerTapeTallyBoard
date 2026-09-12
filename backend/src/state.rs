@@ -5,6 +5,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::{
     clock::Clock,
     config::{BackupDirectory, Mode},
+    data_revision::DataRevision,
     ledger::{LaunchBackupOutcome, LaunchBackupStatus},
     market_data::MarketDataService,
 };
@@ -24,6 +25,7 @@ pub struct AppState {
     pub ledger_path: Option<PathBuf>,
     pub backup: BackupState,
     pub clock: Clock,
+    pub revision: DataRevision,
 }
 
 impl AppState {
@@ -41,6 +43,7 @@ impl AppState {
                 },
             },
             clock: Clock::System,
+            revision: DataRevision::new(),
         }
     }
 

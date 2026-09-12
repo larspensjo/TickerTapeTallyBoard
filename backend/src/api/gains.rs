@@ -281,6 +281,7 @@ pub async fn list(
         },
         rows: gain_rows,
         portfolio_waterfall,
+        data_revision: state.revision.current(),
     }))
 }
 

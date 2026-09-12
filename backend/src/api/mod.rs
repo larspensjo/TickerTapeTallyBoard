@@ -1,4 +1,5 @@
 mod cors;
+mod data_version;
 mod error;
 mod gains;
 mod health;
@@ -57,10 +58,15 @@ pub fn router_with_static_assets(static_assets_dir: impl AsRef<Path>, state: App
 }
 
 fn api_mount(state: &AppState) -> Router<AppState> {
-    let api = api_router().route_layer(middleware::from_fn_with_state(
-        state.clone(),
-        demo_read_only_layer,
-    ));
+    let api = api_router()
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            demo_read_only_layer,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            data_revision_layer,
+        ));
 
     Router::new()
         .nest("/api", api)
@@ -84,6 +90,7 @@ fn api_router() -> Router<AppState> {
         )
         .route("/prices/refresh", post(prices::refresh))
         .route("/prices/status", get(prices::status))
+        .route("/data-version", get(data_version::handler))
         .route("/portfolio/value-history", get(portfolio::value_history))
         .route("/rebalance", get(rebalance::handler))
         .route("/holdings", get(holdings::list))
@@ -128,6 +135,29 @@ async fn demo_read_only_layer(
     }
 
     Ok(next.run(request).await)
+}
+
+/// Records that stored data may have changed. Every mutation reaches the app
+/// through a mutating HTTP method, so bumping here means no handler has to
+/// remember to do it.
+///
+/// A client error means the request was rejected before touching anything, so
+/// the revision stays put. A server error does not: a refresh can write prices
+/// and still fail afterwards, and that data must not stay hidden behind an
+/// unchanged revision.
+async fn data_revision_layer(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> axum::response::Response {
+    let mutating = is_mutating_method(request.method());
+    let response = next.run(request).await;
+
+    if mutating && !response.status().is_client_error() {
+        state.revision.bump();
+    }
+
+    response
 }
 
 fn is_mutating_method(method: &Method) -> bool {

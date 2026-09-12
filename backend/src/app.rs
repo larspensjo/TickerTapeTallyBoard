@@ -220,6 +220,11 @@ fn spawn_launch_refresh(
         {
             crate::engine_error!("launch refresh failed: {error}");
         }
+        state.revision.bump();
+        crate::engine_info!(
+            "launch refresh finished; data revision is now {}",
+            state.revision.current()
+        );
     }))
 }
 
@@ -403,7 +408,9 @@ mod tests {
         );
 
         gate.notify_waiters();
+        let before = state.revision.current();
         handle.await.expect("launch task should finish");
+        assert_ne!(state.revision.current(), before);
 
         let status = state
             .market_data
