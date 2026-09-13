@@ -1015,8 +1015,10 @@ schema.
   Backups With Integrity Check, Tiered Retention, And A Verified Restore*. It
   waits until now because it asserts the restore procedure has been executed
   against real data.
-- On pass: delete the `pre-move-backup` safety copy and the `restore-drill`
-  directory, and record the drill date and exit code in the implementation notes.
+- On pass: delete the `pre-move-backup` safety copy, the `restore-drill`
+  directory, and the older hand-made real-portfolio copies left in `.local/db`
+  (`tttb-ledger-test.sqlite.bak-*`), and record the drill date and exit code in
+  the implementation notes.
 - On fail: stop. Do not delete the safety copy. A non-zero diff here means
   either the backup or the relocation is wrong, and that is a finding to raise,
   not to route around.

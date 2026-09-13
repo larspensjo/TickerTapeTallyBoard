@@ -58,7 +58,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BackendDir = Join-Path $RepoRoot "backend"
 $FrontendDir = Join-Path $RepoRoot "frontend"
-$DefaultLegacyDatabasePath = Join-Path $RepoRoot ".local/db/tttb-ledger-test.sqlite"
+$LegacyDatabasePath = Join-Path $RepoRoot ".local/db/tttb-ledger-test.sqlite"
 $DefaultBackendPort = 8480
 
 function Assert-Command {
@@ -263,6 +263,17 @@ if ($Demo -and $PSBoundParameters.ContainsKey("DatabaseUrl")) {
 if ($Demo -and $InitLedger) {
     throw "-Demo cannot be combined with -InitLedger. Demo mode uses an in-memory ledger."
 }
+if (-not $Demo -and -not $BuildOnly) {
+    $legacyArtifacts = @(
+        $LegacyDatabasePath,
+        "$LegacyDatabasePath-wal",
+        "$LegacyDatabasePath-shm"
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+    if ($legacyArtifacts.Count -gt 0) {
+        $legacyArtifactList = ($legacyArtifacts | ForEach-Object { "'$_'" }) -join ", "
+        throw "Legacy ledger artifact(s) still exist: $legacyArtifactList. Refusing to start because the ledger may be split between its database and SQLite sidecars. If the target portfolio.sqlite does not exist, run scripts/migrate-ledger.ps1. If it does exist, do not start or re-run migration: recover one complete legacy set from %LOCALAPPDATA%\TickerTapeTallyBoard\pre-move-backup, preserve and remove the incomplete target set, then retry the migration."
+    }
+}
 
 Assert-Command "cargo"
 Assert-Command "npm.cmd"
@@ -277,10 +288,8 @@ $BackendPort = if ($UsesPinnedPort) {
 } else {
     $null
 }
-$ResolvedDatabaseUrl = if ($Demo) { $null } elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) {
+$ExplicitDatabaseUrl = if ($PSBoundParameters.ContainsKey("DatabaseUrl")) {
     ConvertTo-SqliteUrl -Value $DatabaseUrl
-} else {
-    ConvertTo-SqliteUrl -Value $DefaultLegacyDatabasePath
 }
 $StaticAssetsDir = [System.IO.Path]::GetFullPath((Join-Path $FrontendDir "dist"))
 
@@ -356,7 +365,8 @@ if ($UsesVite) {
     }
 }
 if ($Demo) { Write-Host "Database: demo (in-memory, seeded)" }
-else { Write-Host "Database: $ResolvedDatabaseUrl" }
+elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) { Write-Host "Database: $ExplicitDatabaseUrl" }
+else { Write-Host "Database: backend resolves the $RunMode default ledger; see engine.log for the resolved path" }
 Write-Host "Press Ctrl+C to stop the application."
 Write-Host ""
 
@@ -402,7 +412,8 @@ $frontendProcess = $null
 
 try {
     if ($Demo) { Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue }
-    else { $env:TTTB_DATABASE_URL = $ResolvedDatabaseUrl }
+    elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) { $env:TTTB_DATABASE_URL = $ExplicitDatabaseUrl }
+    else { Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue }
     $env:TTTB_MODE = $RunMode
     $env:TTTB_CREATE_LEDGER_IF_MISSING = if ($InitLedger) { "1" } else { "0" }
     $env:TTTB_BACKUP_ENABLED = if ($NoBackup) { "0" } else { "1" }

@@ -25,8 +25,12 @@ Run the production composition:
 With no flags, the script builds the release backend and `frontend/dist`, then
 runs the release backend as the sole application process at
 `http://127.0.0.1:8480/`. The backend serves the built static frontend. It
-resolves its production ledger location from configuration. The first release
-build can take several minutes.
+resolves its production ledger at
+`%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` from backend
+configuration. On a fresh clone, create that ledger once with
+`.\scripts\start.ps1 -InitLedger`. Existing installs that still use the old
+repository-local ledger must first run `.\scripts\migrate-ledger.ps1`. The first
+release build can take several minutes.
 
 The script blocks until Ctrl+C. Run a second PowerShell window when a procedure
 needs a second instance.
@@ -40,6 +44,15 @@ For the debug backend plus Vite development loop (including HMR):
 Vite proxies `/api` to the backend, so the frontend can call `/api/health`
 without a separate development API URL. Development can scan to a free backend
 port and a free Vite port.
+
+Development uses the separate ledger
+`%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`. Create a new dev
+ledger once with `.\scripts\start.ps1 -Dev -InitLedger`. The old
+`.local\db\tttb-ledger-test.sqlite` file is retired, not reused as dev data;
+the launcher refuses non-demo starts while it or its WAL/SHM sidecars exist. Use
+`.\scripts\migrate-ledger.ps1` for the one-time production move. Realistic dev
+data comes from `-Demo` or from deliberately copying a backup snapshot onto the
+dev path.
 
 - `GET /api/data-version` reports the data revision the backend is serving, the
   date it considers today, and whether a price refresh is running. The frontend
@@ -79,7 +92,8 @@ explicitly override the backend port:
 disables the launch-time market-data refresh.
 
 `-ProductionDb`, `-LocalDatabaseUrl`, and `-ProductionDatabaseUrl` are retired
-and fail immediately with the replacement command.
+and fail immediately with the replacement command. The backend silently ignores
+the retired `TTTB_DEMO_MODE`; use `-Demo` or `TTTB_MODE=demo`.
 
 ## Backend Commands
 
@@ -99,14 +113,13 @@ Configuration:
 - `TTTB_PORT`: backend port, default `8480`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
-- `TTTB_DATABASE_URL`: backend SQLite database URL. When omitted, production uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio.sqlite` and development uses `sqlite://%LOCALAPPDATA%/TickerTapeTallyBoard/portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
+- `TTTB_DATABASE_URL`: optional explicit backend SQLite database URL. When omitted, production uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` and development uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
 - `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
 - `TTTB_BACKUP_DIR`: backup directory. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending.
 - `TTTB_LOG_FILE`: backend log file. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
 - `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
-- `TTTB_DEMO_MODE`: retired; use `TTTB_MODE=demo`.
 
 ## Logs
 
