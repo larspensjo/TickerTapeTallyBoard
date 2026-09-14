@@ -49,10 +49,11 @@ Development uses the separate ledger
 `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`. Create a new dev
 ledger once with `.\scripts\start.ps1 -Dev -InitLedger`. The old
 `.local\db\tttb-ledger-test.sqlite` file is retired, not reused as dev data;
-the launcher refuses non-demo starts while it or its WAL/SHM sidecars exist. Use
-`.\scripts\migrate-ledger.ps1` for the one-time production move. Realistic dev
-data comes from `-Demo` or from deliberately copying a backup snapshot onto the
-dev path.
+the launcher refuses non-demo application starts while it or its WAL/SHM
+sidecars exist. `-BuildOnly` only builds and therefore skips this launch guard.
+Use `.\scripts\migrate-ledger.ps1` for the one-time production move. Realistic
+dev data comes from `-Demo` or from deliberately copying a backup snapshot onto
+the dev path.
 
 - `GET /api/data-version` reports the data revision the backend is serving, the
   date it considers today, and whether a price refresh is running. The frontend
@@ -92,8 +93,15 @@ explicitly override the backend port:
 disables the launch-time market-data refresh.
 
 `-ProductionDb`, `-LocalDatabaseUrl`, and `-ProductionDatabaseUrl` are retired
-and fail immediately with the replacement command. The backend silently ignores
-the retired `TTTB_DEMO_MODE`; use `-Demo` or `TTTB_MODE=demo`.
+and fail immediately with the replacement command. The retired environment
+variables `TTTB_DEMO_MODE`, `TTTB_PRODUCTION_DATABASE_URL`, and
+`TTTB_LOCAL_DATABASE_URL` are not read; use `TTTB_MODE=demo` or the current
+`TTTB_DATABASE_URL` instead.
+
+The remaining launcher switches are `-FrontendPort` (preferred Vite port in
+development), `-SkipInstall`, `-SkipBuild`, `-BuildOnly`, and `-NoBrowser`.
+`-NoBrowser` suppresses the browser opened by web runs; it is not a desktop
+window option.
 
 ## Backend Commands
 
@@ -118,8 +126,7 @@ Configuration:
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
 - `TTTB_BACKUP_DIR`: backup directory. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending.
 - `TTTB_LOG_FILE`: backend log file. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
-- `TTTB_MARKET_DATA_REFRESH_ENABLED`: enables launch-time market-data refresh, default `true`
-- `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED`: enables startup market-data refresh, default `true`
+- `TTTB_MARKET_DATA_REFRESH_ENABLED`: primary launch-time market-data refresh setting, default `true`. `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED` is an accepted alias for the same launch refresh and is what `-NoRefresh` sets. Both default to `true`; if both are set, either one being `false` disables the refresh.
 
 ## Logs
 
@@ -154,6 +161,60 @@ before a pending migration is mandatory: it cannot be disabled by mode, flag, or
 environment variable, and its failure blocks startup before the migration runs.
 “Backed up” means the snapshot was written locally to the synced folder; OneDrive
 upload is not verified.
+
+An unresolvable backup directory follows the same ordinary-launch warning rule;
+it becomes a startup failure only when a mandatory pre-migration snapshot is
+needed.
+
+### Making an external backup
+
+The simplest way to put a backup on another drive or in a folder of your choice
+is to copy a completed launch snapshot. Each completed snapshot is a single,
+self-contained SQLite file produced with `VACUUM INTO` and checked for integrity
+before it receives its final name. It has no `-wal` or `-shm` sidecars, so it is
+safe to copy anywhere. Ordinary launch snapshots are named
+`portfolio-YYYYMMDDTHHMMSSmmmZ.sqlite`, where the timestamp is UTC with three
+millisecond digits. If a name collides, it adds `-2`, `-3`, and so on before
+`.sqlite`. Pre-migration snapshots are named
+`portfolio-YYYYMMDDTHHMMSSmmmZ-premigration.sqlite`, with any collision number
+before `-premigration`. Skip every file ending in `.partial` or `.failed`.
+
+This PowerShell example copies the newest ordinary launch snapshot from the
+default production backup folder. Change `$destination` to the drive or folder
+you want; if `TTTB_BACKUP_DIR` is configured, use that directory instead of the
+OneDrive path:
+
+```powershell
+$backupDirectory = Join-Path $env:OneDrive "TickerTapeTallyBoard\Backups"
+$destination = "E:\TickerTapeTallyBoard-Backups"
+$snapshot = Get-ChildItem -LiteralPath $backupDirectory -Filter "portfolio-*.sqlite" -File |
+    Where-Object { $_.Name -notlike "*-premigration.sqlite" } |
+    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+if ($null -eq $snapshot) { throw "No ordinary launch snapshot was found." }
+New-Item -ItemType Directory -Force -Path $destination | Out-Null
+Copy-Item -LiteralPath $snapshot.FullName -Destination $destination
+```
+
+Alternatively, direct one launch's fresh, verified snapshot straight to an
+external location by setting `TTTB_BACKUP_DIR` in the same PowerShell session
+before starting the application:
+
+```powershell
+$env:TTTB_BACKUP_DIR = "E:\TickerTapeTallyBoard-Backups"
+.\scripts\start.ps1
+```
+
+Use a dedicated folder for this: after a snapshot, retention prunes files it
+recognizes as its own snapshots in that directory. The script passes
+`TTTB_BACKUP_DIR` through unchanged, so the default OneDrive folder receives no
+snapshot from that launch. Demo mode takes no snapshots.
+
+To copy the live ledger itself, first stop the application. Copy
+`portfolio.sqlite`, `portfolio.sqlite-wal`, and `portfolio.sqlite-shm` together
+(including each sidecar that is present) from
+`%LOCALAPPDATA%\TickerTapeTallyBoard`. Never copy the live `portfolio.sqlite`
+while the application is running; a lone in-use database file is not a safe
+backup.
 
 ### Restore drill
 
@@ -264,6 +325,10 @@ Before starting, build the current checkout once with
 The pass criterion is zero added, removed, or changed gains rows and zero
 changed, added, or removed value-history points. Without `-FailOnChange`, diff
 mode remains an informational report and exits 0 even when differences exist.
+
+This drill was executed on 2026-09-14 and passed with exit code 0: gains had
+zero changed/added/removed rows and value history had zero changed/added/removed
+points.
 
 For a real restore, stop the application first. Copy the current production
 `portfolio.sqlite` and any `-wal`/`-shm` sidecars into a separate safety

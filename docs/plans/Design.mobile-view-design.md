@@ -23,9 +23,9 @@ reworking the app.
 - PWA install ("Add to Home Screen").
 - Any write path or data entry *initiated from the mobile UI* (add transaction,
   import).
-- Authentication and any real access-control boundary. The MVP is LAN-only and
-  intentionally has no auth; adding auth is the explicit gate that must be
-  cleared before any remote exposure.
+- Authentication and any real access-control boundary remain part of the LAN
+  work: lifting loopback-only binding requires authentication and access
+  control, before any remote exposure.
 
 **"Read-only" is a mobile-UI convention, not an enforced boundary (review #1).**
 The same SPA and API are served to the phone, so a phone on the LAN can still
@@ -33,8 +33,8 @@ open `/`, `/import`, `/asset/:id`, or call write APIs directly. `MobileShell`
 omitting desktop navigation is a UI affordance only — it does not protect write
 routes. Real read-only/write enforcement is deliberately deferred and bundled
 with the authentication work above (it belongs to the same trust boundary). The
-verification plan must confirm that desktop and write routes remain reachable on
-the LAN and are knowingly unprotected in the MVP.
+verification plan must confirm that desktop and write routes are protected when
+the LAN binding is enabled.
 
 ## Chosen approach
 
@@ -64,6 +64,10 @@ and safety.
 (review #4). The current `scripts/start.ps1` starts the backend plus a Vite dev
 server on loopback; in `-Lan` mode the script must instead:
 
+When this work is implemented, `-Lan` must deliberately lift the backend's
+loopback-only enforcement together with the authentication that makes LAN
+exposure safe.
+
 - set `TTTB_HOST=0.0.0.0`,
 - build the frontend (`npm run build`),
 - set or confirm `TTTB_STATIC_DIR` points at `frontend/dist`,
@@ -79,9 +83,9 @@ Supporting requirements:
 - Document (and optionally let the script add) a Windows Firewall inbound rule
   for the backend port.
 - Recommend a stable IP (DHCP reservation) so the phone URL does not drift.
-- No auth — acceptable for LAN-only, and called out as the gate before any
-  remote exposure. See the read-only note in Scope: write/desktop routes are
-  reachable but unprotected by design in the MVP.
+- Authentication and access control are required before `-Lan` enables a
+  non-loopback bind; the mobile route must not make write or desktop routes
+  reachable to an unauthenticated LAN client.
 
 ### 2. Frontend — mobile route structure
 
@@ -197,9 +201,9 @@ effects or mutations.
 
 ## Decision log
 
-Add an entry to `docs/DecisionLog.md`: the mobile MVP is LAN-only with no auth,
-and authentication is a required gate before any remote (away-from-home)
-exposure.
+Add an entry to `docs/DecisionLog.md`: the mobile work may lift loopback-only
+binding only together with authentication and access control that make LAN
+exposure safe; away-from-home exposure remains a separate later concern.
 
 ## Later layers (out of scope, unblocked)
 

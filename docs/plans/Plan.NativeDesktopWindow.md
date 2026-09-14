@@ -4,8 +4,8 @@
 
 Give the app its own Windows application window (Tauri v2 + WebView2) in which the
 UI reaches Rust **in-process** — no TCP listener, no port, no firewall prompt —
-while the existing web-server deployment keeps working unchanged from the same
-source.
+while the existing web-server deployment keeps working from the same source
+under its deliberate production and development run models.
 
 Done means: launching the desktop app shows the real portfolio in a native
 window; every page and every `/api/*` route behaves identically to the browser
@@ -18,15 +18,17 @@ coordinated across every process on that ledger.
 
 **Out of scope:** MSI/installer, icons, branding, code signing; tray icon, native
 menus, notifications, file-drop import, single-instance UI; multi-portfolio
-support, a ledger picker, a per-user app-data ledger location. See *Deliberately
-out of scope*.
+support and a ledger picker. See *Deliberately out of scope*.
 
 ## Landing order — read this before editing anything
 
+The production-setup hardening has landed before this plan. It delivered the
+loopback-only web server, app-data ledger, refuse-to-create behavior, launch-time
+backups, bounded app-data logs, pinned port `8480`, and the new launcher flag
+surface. The current versions are backend `0.18.0` and frontend `0.24.0`.
+
 This plan was written expecting `docs/plans/Plan.NasdaqNordicPriceProvider.md` to
-land first. **As of writing, it has not** — the backend is still `0.14.2`, the
-frontend `0.22.11`, migrations stop at `0006`, and no Nasdaq provider exists. So
-either order is possible and the plan is written to survive both.
+land first. That provider work has landed too, including migration `0007`.
 
 What the Nasdaq work actually does that matters here: it makes provider identity
 enum-typed through `db/`, adds a migration, and bumps both manifests to `0.15.0`
@@ -42,9 +44,10 @@ Consequences that are binding on the implementer:
 - **Phase 1 opens with an explicit re-verification step.** Do not start editing
   until the assumptions listed there have been checked against the then-current
   tree.
-- Version bumps are stated **relative to whatever is current when this lands** —
-  `0.14.2` / `0.22.11` today, `0.15.x` / `0.23.x` if the Nasdaq work lands
-  first — never as absolute values.
+- Version bumps are stated relative to the current versions when this plan lands;
+  after the production hardening release they are backend `0.18.0` and frontend
+  `0.24.0`. The desktop release should make its own minor bump from those real
+  versions when it lands.
 - **Migration numbering, and a collision to avoid.** This plan adds one additive
   migration, referred to by name as `add_refresh_run_claim.sql`. It takes the next
   free number: `0007` if this plan lands first, `0008` if the Nasdaq work lands
@@ -94,31 +97,34 @@ reconciling first; nothing in this plan depends on it either way.
    inside the window, no dev/prod window branching, no HMR. `scripts/start.ps1`
    keeps its Vite dev workflow for the web app; the desktop window simply does
    not use it.
-8. **One shared ledger.** The desktop app opens the same database file
-   `scripts/start.ps1` opens. Accepted: the app is tied to its build tree, and
-   dev runs and desktop runs share data.
+8. **One shared ledger.** The desktop app opens the same production ledger as the
+   web server, resolved by the backend configuration at
+   `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`. The desktop shell
+   does not define a competing build-tree ledger path.
 9. **That file is renamed** away from a name containing "test" (it holds the real
    portfolio and is at risk from any future cleanup of test artifacts), with a
-   safe migration for the `-wal`/`-shm` sidecars.
+   safe migration for the `-wal`/`-shm` sidecars. The landed location is the
+   per-user app-data path above.
 10. **A missing ledger is a hard startup failure, not an empty new file — in
     *both* entry points.** Creating one requires an explicit opt-in
     (`TTTB_CREATE_LEDGER_IF_MISSING=1`, surfaced as `scripts/start.ps1
-    -InitLedger`). Two consequences a reader will hit and which the README must
-    state plainly: a **fresh clone** needs one `-InitLedger` run before the web
-    app starts, and **`-ProductionDb` on this machine** needs one too, because
-    its (now corrected) default path has never existed.
+    -InitLedger`). A fresh clone needs one `-InitLedger` run before the web app
+    starts; the retired `-ProductionDb` flag is not a second path or an alternate
+    initialization flow.
 11. **The resolved ledger path is observable** through `/api/health` and rendered
     in the app footer. This deliberately touches the frontend; it is a separate
     feature, not a transport change. **No shell/`DESKTOP` badge is added** —
     a native window is self-evidently the desktop app, and a third badge would
     crowd the one piece of information that is genuinely not otherwise visible.
-    `/api/health` therefore gains `ledger` and nothing else; which shell is
-    running is recorded in the log banner, where it is actually needed.
+    `/api/health` therefore gains `mode`, `ledger` and `backup`, and loses the
+    retired `demo` field; which shell is running is recorded in the log banner,
+    where it is actually needed.
 12. **The repository becomes a Cargo workspace** with `backend/` and the new
     `desktop/` crate as members, sharing one target directory.
 13. **Nothing in the desktop process is located relative to the working
-    directory** — not the log file, not the ledger, not the static assets
-    directory. One rule, not three fixes.
+    directory.** The ledger and runtime log use the app-data convention; only
+    the desktop static-assets directory is anchored to the build tree, so a
+    shortcut's arbitrary working directory cannot change runtime identity.
 14. **No console window** (`windows_subsystem = "windows"`), file logging at one
     fixed known location, failure to open the log never prevents startup, and a
     startup failure produces a **native dialog** rather than a window that never
@@ -129,10 +135,9 @@ reconciling first; nothing in this plan depends on it either way.
 16. **Decision-log entries are written as each phase lands, not batched at the
     end**, and are rendered in the log's own `Decision`/`Context`/`Consequences`
     template. See *Decision-log entries*.
-17. **The renamed ledger is `.local/db/tttb-portfolio.sqlite`.**
-    `tttb-ledger.sqlite` is deliberately not reused — it is the existing
-    working-directory-relative `DEFAULT_DATABASE_URL` and would be ambiguous
-    between the two shells.
+17. **The renamed ledger is the app-data production ledger.**
+    `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` is deliberately used
+    instead of a repository-local or working-directory-relative name.
 18. **The desktop app launches through `scripts/start.ps1 -Desktop`, not a second
     script.** One launch script owns ledger resolution, the legacy-name guard,
     environment save/restore and build orchestration for both shells.
@@ -141,7 +146,8 @@ reconciling first; nothing in this plan depends on it either way.
     pressure disappears. Extracting helpers for hypothetical future consumers
     (`probe-connectivity.ps1`, `project-stats.ps1`) would be speculative and is
     not this plan's work.
-19. **Demo mode is reachable from both shells.** `scripts/start.ps1 -Desktop -Demo`
+19. **Demo mode is reachable from both shells.** `TTTB_MODE=demo`, surfaced by
+    `scripts/start.ps1 -Demo`, reaches both shells; `scripts/start.ps1 -Desktop -Demo`
     opens the demo in the native window. In demo mode no ledger path is resolved,
     no file is opened, and the refuse-to-create rule is structurally unreachable —
     the config resolves to an in-memory ledger before any filesystem work happens.
@@ -154,11 +160,13 @@ reconciling first; nothing in this plan depends on it either way.
     `Json<T>` handler signatures as well as an `ImportBody` one; an import-only
     version was considered and rejected because it would leave the guarantee true
     of four routes and false of the rest (see *Request body limits are explicit*).
-21. **The default ledger path has one machine-readable definition** that both
-    `scripts/start.ps1` and the desktop crate read, rather than the same string
-    typed into PowerShell and Rust.
-22. **Static assets are required for the desktop shell and optional for the
-    server.** An explicit policy, not an accident of which router got built.
+21. **The backend configuration is the one definition of the default ledger
+    path.** `scripts/start.ps1` leaves the default unset and the desktop crate
+    consumes the same configuration; no second machine-readable path file is
+    created or read.
+22. **Static assets are required for the desktop shell and production server,
+    and optional for the development server.** An explicit policy, not an
+    accident of which router got built.
 23. **The desktop response path emits its own Content-Security-Policy header**,
     and `tauri.conf.json` sets `csp: null`, so there is exactly one policy source
     and it is on the path that actually serves the HTML.
@@ -166,12 +174,11 @@ reconciling first; nothing in this plan depends on it either way.
     built bundle** — not left to be discovered at implementation time. See
     *Content-Security-Policy is emitted by the bridge* for the value and the
     reason each directive is what it is.
-25. **One log file, one fixed known location, and every line carries the identity
-    of the copy that wrote it.** Per-process files were rejected: a problem caused
-    by two copies interfering is exactly the problem you want to read as a single
-    interleaved timeline, and one fixed location is worth more than clean
-    separation. The tag must be on **every line**, not only in a startup banner,
-    or the interleaved output is unreadable in precisely the case it exists for.
+25. **The desktop log reuses `LogSettings` and `RotatingFileWriter`.** It lives
+    under the per-user app-data logs directory, is bounded and rotated like the
+    server's mode-specific log, and carries the identity of the copy that wrote
+    each line if the shared writer needs an instance tag. It must not introduce
+    a competing `LogDestination` API, an unbounded file, or a CWD-relative path.
 
 ### Refinements this plan makes to the brief (flagged, not silent)
 
@@ -182,7 +189,7 @@ reconciling first; nothing in this plan depends on it either way.
   normal dependency of the desktop crate and the backend's stays dev-only. The
   backend's public surface already exposes everything the bridge and its tests
   need (`api::router_with_static_assets`, `state::AppState::for_tests`,
-  `AppState::with_demo_mode`, `db::testing::memory_pool`,
+  `AppState::with_mode`, `db::testing::memory_pool`,
   `providers::FakePriceProvider`).
 - **Refuse-to-create is the default for *both* entry points**, not only the
   desktop one. The brief permitted the server to keep `create_if_missing(true)`.
@@ -823,8 +830,13 @@ per `Agents.md`.
 One rule. A GUI executable launched from a shortcut has an arbitrary, possibly
 unwritable CWD and, under `windows_subsystem = "windows"`, no stderr.
 
-The desktop process resolves everything against a **build-tree anchor baked at
-compile time**:
+The desktop process uses two deliberate path policies:
+
+- the ledger and runtime log come from the backend's per-user app-data
+  configuration, never from the working directory;
+- the static-assets directory is the one desktop-only path anchored to the
+  build tree, because this undistributed shell serves its checked-out
+  `frontend/dist`.
 
 ```rust
 // desktop/src/app_paths.rs
@@ -833,52 +845,58 @@ compile time**:
 const DESKTOP_CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR"); // <repo>/desktop
 
 pub struct AppPaths {
-    pub ledger_url: String,        // sqlite://<abs>/.local/db/<ledger>.sqlite
     pub static_assets_dir: PathBuf, // <abs>/frontend/dist
-    pub log_file: PathBuf,          // <abs>/.local/logs/desktop.log
 }
 ```
 
-`TTTB_DATABASE_URL` and `TTTB_STATIC_DIR` still override (needed for the
-copy-of-the-real-database drills), but a **relative** override is resolved
-against the build-tree anchor, never against the CWD. `AppPaths` is pure and
-unit-tested against a supplied anchor rather than reading the real environment
-in tests.
+`TTTB_STATIC_DIR` still overrides (needed for asset checks and drills), but a
+**relative** static-assets override is resolved against the build-tree anchor,
+never against the CWD. The desktop log uses the existing `LogSettings` and
+`RotatingFileWriter` with a mode/shell-specific file under
+`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`, and is bounded and rotated like
+the server log. `TTTB_DATABASE_URL` remains the explicit ledger override and is
+resolved by the backend configuration, never against the CWD. `AppPaths` is
+pure and unit-tested against a supplied anchor rather than reading the real
+environment in tests.
 
-The **server** entry point keeps its current CWD-relative semantics
-(`../frontend/dist`, `engine.log`, `sqlite://tttb-ledger.sqlite`) — the rule is
-scoped to the desktop process by design, because the server is always started by
-a script that sets its working directory, and changing it would be an unrelated
-behavior change. Stated here so a later reader does not read it as an oversight.
+The **server** entry point now uses the same app-data ledger and mode-specific
+runtime-log conventions. Only its default `TTTB_STATIC_DIR` remains
+CWD-relative; `scripts/start.ps1` passes that directory as an absolute path.
+The desktop plan's working-directory rule therefore applies to the desktop
+process without reintroducing a competing ledger or logging convention.
 
 ### Ledger identity is observable, and never silently created
 
 Three separate obligations, one mechanism.
 
-**Rename.** `.local/db/tttb-ledger-test.sqlite` → `.local/db/tttb-portfolio.sqlite`.
-`tttb-ledger.sqlite` is deliberately *not* reused because it is the existing
-CWD-relative `DEFAULT_DATABASE_URL` and would be ambiguous. Migration is a human
-step (both processes stopped, then move `.sqlite`, `.sqlite-wal` and
-`.sqlite-shm` together). `scripts/start.ps1` gains a guard: if the legacy name
-exists and the new one does not, it **fails with the exact command to run**
-rather than starting on a new empty file.
+**Rename.** `.local/db/tttb-ledger-test.sqlite` was moved to the production
+ledger at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`, with the
+`.sqlite`, `.sqlite-wal` and `.sqlite-shm` files kept together. The launcher
+guard refuses non-demo starts while legacy artifacts remain, rather than
+starting on a new empty file.
 
-**One resolution path.** A new `backend/src/db/ledger_location.rs`:
+**One resolution path.** The landed `backend/src/ledger/location.rs` provides
+the shared location type and mode-aware resolution:
 
 ```rust
 pub struct LedgerLocation { url: String, path: Option<PathBuf> } // None for sqlite::memory:
-pub enum LedgerLocationError { NotAFile, UnsupportedUrl, RelativeWithoutAnchor }
+pub enum LedgerLocationError {
+    MustBeFileBacked { url: String, mode: Mode },
+    UnsupportedUrl { url: String },
+    NotAFile { path: PathBuf },
+}
 
-pub fn resolve(url: &str, anchor: &Path) -> Result<LedgerLocation, LedgerLocationError>;
+pub fn resolve(url: &str, mode: Mode) -> Result<LedgerLocation, LedgerLocationError>;
 ```
 
-`AppConfig` stores a `LedgerLocation` instead of a bare `String`;
-`AppConfig::from_env()` anchors at the CWD (unchanged server behavior) and a new
-`AppConfig::from_env_anchored(anchor)` serves the desktop. `database_url()` keeps
-its `&str` signature; `ledger_path()` is added. `db::connect` takes the location
-plus an explicit `CreateMissing::{Yes, No}`. While in the file, move the stray
+`AppConfig` already stores a `LedgerLocation` and a mode, with absolute
+app-data defaults outside demo. `db::open` already takes the location plus an
+explicit `CreateMissing::{Yes, No}`, and missing-file creation is gated by
+`TTTB_CREATE_LEDGER_IF_MISSING=1`. The remaining desktop-plan tidy is to move
 `memory_pool` and `RepoError` out of `db/mod.rs` so it becomes the thin wrapper
-`Agents.md` asks for.
+`Agents.md` asks for. Any desktop `from_env_anchored` helper is for the static
+assets directory only; the desktop log is resolved from the app-data convention
+through `LogSettings`.
 
 **Refuse to create.** `create_ledger_if_missing` defaults to `false` for both
 entry points; `TTTB_CREATE_LEDGER_IF_MISSING=1` (and
@@ -886,40 +904,17 @@ entry points; `TTTB_CREATE_LEDGER_IF_MISSING=1` (and
 new refuse path, per the repo's rule that new behavior behind a flag must default
 to the new path.
 
-**One definition of the default ledger path, read by both launch paths.**
-`scripts/start.ps1` sets `TTTB_DATABASE_URL` explicitly, so it decides when it
-launches the app; the desktop crate's build-tree default decides for a
-**shortcut** launch, which is the whole point of the feature. If those two ever
-disagree the app quietly opens two ledgers that look like one — a data-integrity
-failure, not a cosmetic one — so a comment pointing at the other definition and a
-one-time human comparison are not enough. There is one machine-readable source:
+**One definition of the default ledger path, consumed by both launch paths.**
+The backend configuration owns the absolute app-data default, and
+`scripts/start.ps1` leaves `TTTB_DATABASE_URL` unset unless the operator gives
+an explicit override. The desktop crate uses the same configuration rather than
+reading a second path definition. No second machine-readable path file is
+created or read.
 
-```jsonc
-// repo-paths.json, at the repository root
-{
-  "defaultLedgerRelativePath": ".local/db/tttb-portfolio.sqlite",
-  "desktopLogRelativePath":    ".local/logs/desktop.log"
-}
-```
-
-- `scripts/start.ps1` reads it with `ConvertFrom-Json` and derives
-  `$DefaultLocalDatabasePath` from it. The literal path string is deleted from the
-  script.
-- `desktop/build.rs` reads it, validates it, and emits
-  `cargo:rustc-env=TTTB_DEFAULT_LEDGER_RELPATH` / `TTTB_DESKTOP_LOG_RELPATH`,
-  which `app_paths.rs` consumes through `env!(...)`. A missing or malformed file
-  is a **build failure**, not a runtime surprise, and a change to the file
-  triggers a rebuild via `cargo:rerun-if-changed`.
-
-Both readers resolve the relative path against the repository root, so they
-cannot produce different absolute paths from the same input. The Phase 5 human
-comparison of the two footer paths stays as a cheap confirmation, but it is no
-longer the mechanism.
-
-The **backend** does not read this file: its own default stays
-working-directory-relative and `scripts/start.ps1` always sets
-`TTTB_DATABASE_URL` for the server, so adding a third reader would be machinery
-without a purpose.
+The desktop build-tree helper has one remaining job: resolve the static-assets
+directory for the undistributed shell. The desktop runtime log is not build-tree
+anchored; it uses the mode/shell-specific app-data log convention through
+`LogSettings`.
 
 **Demo mode never resolves a ledger.** `AppConfig` resolves its ledger to
 `LedgerLocation::memory()` whenever `demo_mode` is set, *before* any filesystem
@@ -932,69 +927,72 @@ has no ledger by design. It is pinned by a test: demo config with
 `TTTB_DATABASE_URL` pointing at a nonexistent path starts successfully and
 touches no file.
 
-**Observable.** `AppState` gains `ledger_path: Option<PathBuf>` and
-`shell: AppShell { Server, Desktop }`. `/api/health` grows exactly one field:
+**Observable.** The landed `AppState` carries the mode, ledger path and backup
+state. `/api/health` carries `mode`, `ledger` and `backup` (and no retired
+`demo` field):
 
 ```json
-{ "ledger": { "mode": "file" | "memory", "path": "C:/…/tttb-portfolio.sqlite" | null } }
+{ "ledger": { "mode": "file" | "memory", "path": "C:/…/portfolio.sqlite" | null } }
 ```
 
-**`shell` is deliberately not on the wire.** An earlier draft exposed it to drive
-a `DESKTOP` footer chip; the user settled that there is no such chip — a native
-window is self-evidently the desktop app, and a third badge would crowd the
-ledger field, which is the one thing genuinely not otherwise visible. With
-nothing rendering it, putting `shell` in the health response would be an
-unconsumed wire field. `AppShell` still exists on `AppState`, because the
-**startup and shutdown log banners** name it, and that is where "which process
-wrote this line" actually matters.
+**`shell` is deliberately not on the wire.** A native window is self-evidently
+the desktop app, and no `DESKTOP` footer chip is added. If the desktop entry
+point needs to identify itself in startup and shutdown banners, that remains an
+internal composition/logging concern: the desktop work adds `AppShell` to
+`AppState` for those banners, without reintroducing an unconsumed health field.
 
 Demo mode reports `{"mode":"memory","path":null}` in **both** shells, so a
 presentation screenshot never shows a local path — and the desktop demo window is
 therefore a first-class presentation surface rather than a window that leaks the
 developer's file layout.
 
-**Is a filesystem path acceptable over the LAN-exposed `/api/health`? Decided:
-yes, expose the full path.** Rationale: the LAN deployment is trusted without
-authentication by the 2026-06-12 *Phase 0 Planning Decisions* commitment, so
-anyone who can read `/api/health` can already read the entire portfolio through
-`/api/transactions` — a path is strictly less sensitive than the data it points
-at. The one genuine incremental leak is the Windows user name embedded in the
-path; that is recorded in the risk table and in the decision-log entry rather
-than mitigated, because truncating the path would defeat the feature's purpose
-("which ledger am I looking at" must never be a guess). If remote exposure is
-ever added, this field belongs behind the same auth gate as everything else.
+**Is a filesystem path acceptable over `/api/health`? Decided: yes, expose the
+full path.** Loopback-only binding limits the reachable audience to processes on
+the host today. The one genuine incremental leak is the Windows user name
+embedded in the path; that is recorded in the risk table and in the decision-log
+entry. If the mobile work ever lifts the binding boundary, this field belongs
+behind the authentication gate as well.
 
 ### Startup failure, logging, and shutdown
 
-**Logging.** `engine_logging::initialize()` currently opens `engine.log` relative
-to the CWD with `.expect("Failed to open engine.log")` and installs a
-`TermLogger` on stderr — both fatal for a GUI process. It becomes:
+**Logging.** The landed `engine_logging::initialize(&LogSettings)` already
+creates the configured app-data directory, never panics when the file cannot be
+opened, and uses a bounded `RotatingFileWriter`. The desktop entry point reuses
+that API with a mode/shell-specific file under
+`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`; it does not introduce a competing
+`LogDestination` API.
 
 ```rust
-pub enum LogDestination {
-    TerminalAndFile { path: PathBuf },  // server entry point
-    FileOnly { path: PathBuf },         // desktop entry point: no stderr exists
+pub struct LogSettings {
+    pub file_path: PathBuf,
+    pub max_bytes: u64,
+    pub kept_rotations: usize,
+    pub terminal: bool,
 }
-pub struct LogInitOutcome { pub file_path: Option<PathBuf>, pub file_error: Option<String> }
+pub struct LogInitOutcome {
+    pub file_path: Option<PathBuf>,
+    pub file_error: Option<String>,
+}
 
-/// `instance_tag` identifies the copy that wrote a line, e.g. "desktop:12345".
-pub fn initialize(destination: LogDestination, instance_tag: &str) -> LogInitOutcome;
+pub fn initialize(settings: &LogSettings) -> LogInitOutcome;
 ```
 
 Failure to open the file **never panics**: the outcome carries the error, the
-desktop launch path folds it into the startup dialog if a later failure occurs,
-and the app starts regardless. `Agents.md`'s rule that backend code logs through
-`engine_logging` is unchanged and applies to the desktop crate too.
+desktop launch path can report it alongside a later startup failure, and the app
+starts regardless with terminal logging where available. `Agents.md`'s rule
+that backend code logs through `engine_logging` is unchanged and applies to the
+desktop crate too.
 
-**One fixed log file, and every line says who wrote it.** Two copies may run at
-once. The choice is a single fixed known location (`.local/logs/desktop.log`)
-rather than per-process files: a problem *caused* by two copies interfering is
-exactly the problem you want to read as one interleaved timeline, and a fixed
-location you can always point someone at is worth more than clean separation.
+**One known app-data location, with a distinct desktop file.** Two copies may run
+at once. The desktop log is mode/shell-specific under
+`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`, rather than inside the repository;
+it is bounded and rotated by the shared writer. If the implementation adds a
+per-line instance tag, it extends `LogSettings` and the existing writer rather
+than creating a second logging abstraction.
 
-**The tag goes on every line, not only in a banner.** A banner identifies a
-session; it does nothing for the fifty interleaved lines that follow, which is the
-situation the shared file exists to make readable. Concretely:
+**If a per-line tag is retained, it goes on every line, not only in a banner.**
+A banner identifies a session; it does nothing for the lines that follow. The
+tagged writer must extend the existing settings/writer path:
 
 - `engine_logging` gains a small line-buffering writer that wraps the log file:
   it accumulates bytes until a newline, then emits `[<instance_tag>] ` followed by
@@ -1003,14 +1001,12 @@ situation the shared file exists to make readable. Concretely:
 - Writing whole lines in single appends is also what *bounds* the interleaving:
   on a Windows append-mode handle a single write does not split, so two copies can
   interleave whole lines but not fragments of a line.
-- `instance_tag` is `<shell>:<pid>` — `desktop:12345`, `server:9876`. The shell is
-  included even though today each shell has its own file, so that a future shared
+- `instance_tag` is `<shell>:<pid>` — `desktop:12345`, `server:9876` — if the
+  shared writer exposes that setting. The shell is included so a future shared
   file needs no change.
-- The tagged writer is applied to the **file** sink in both `LogDestination`
-  variants, not only the desktop one. Consistency costs nothing, and it makes
-  `engine.log` attributable if two servers are ever run. This changes
-  `engine.log`'s line format; nothing parses it, so that is acceptable, but it is
-  a deliberate change rather than a side effect.
+- The tagged writer is applied to the **file** sink through `LogSettings`, never
+  through a competing `LogDestination` API. Both the desktop and server files
+  remain bounded and mode/shell-specific under app-data.
 - The **terminal** sink is not tagged: a console belongs to exactly one process by
   construction, so the prefix would be noise.
 
@@ -1019,9 +1015,9 @@ executable path, resolved ledger path, static assets directory and log path. The
 banner renders an absent ledger path as `in-memory (demo)`, never as an empty
 field — a `None` path is a normal state, not a formatting accident.
 
-**Accepted consequence:** two copies writing at once produce an interleaved file.
-Line-granular interleaving is the intended reading experience; it is not a
-degradation to be fixed later.
+**Accepted consequence:** if two copies ever share a configured file, their
+whole-line records may interleave. The tag keeps those lines attributable; it is
+not a reason to reintroduce an unbounded or repository-local log.
 
 **Native failure dialog.** Failures happen before any Tauri `AppHandle` exists,
 so `tauri_plugin_dialog` cannot be used. `desktop/src/startup_failure.rs` shows a
@@ -1037,14 +1033,12 @@ which aborts the launch-refresh task and closes the SQLite pool. Because
 pool close it does not perform today — a small correctness improvement, verified
 by the existing backend tests staying green.
 
-**Nothing in the composition root or the shutdown path may assume a file-backed
-pool.** Checked explicitly for this plan: `Application::build` already branches
-on `demo_mode` to build the seeded in-memory pool and skip the launch refresh,
-and `shutdown()` only aborts the (absent) refresh task and closes the pool, which
-is correct for a single-connection in-memory database — it simply ceases to
-exist. There is no WAL checkpoint, no path-based cleanup and no unconditional
-path formatting outside the banner fixed above. Pinned by a test that builds and
-shuts down a demo `Application` with no filesystem access.
+**Nothing in the future composition root or shutdown path may assume a
+file-backed pool.** The existing web entry point already branches before
+filesystem work for demo mode, where the seeded in-memory pool skips launch
+refresh and backup. The shared composition extracted for the desktop shell must
+preserve that behavior: shutdown must close a file pool when present but do no
+path-based cleanup or unconditional WAL work for demo.
 
 ### Cross-process refresh coordination
 
@@ -1115,32 +1109,22 @@ documentation and verification assume it landed.
 
 ### Frontend — exactly two touches
 
-Everything else in `frontend/` is untouched, including `api/client.ts`.
+The ledger-identity frontend work is already landed. `HealthResponse` now
+contains `mode`, `ledger` and `backup` and omits the retired `demo` field;
+`AppFooter` renders the mode chip, ledger label and backup status through pure
+view-models. No further frontend change remains for the desktop ledger path, and
+`frontend/src/api/client.ts` stays untouched.
 
-1. `frontend/src/api/types.ts`: `HealthResponse` gains
-   `ledger: { mode: "file" | "memory"; path: string | null }`. Nothing else — no
-   `shell` field, because nothing renders one.
-2. `frontend/src/components/AppFooter.tsx`: renders the ledger identity next to
-   the existing UI/API version spans. **No new chip**; the existing `DEMO` chip is
-   the only badge. The footer shows the **file name** with the full path in a
-   `title` tooltip, so it reuses the existing footer styling and needs no new
-   tokens. (`docs/VisualDesign.DarkTheme.md` has **no footer-specific rules** — its
-   "Density" section is explicitly about tables, and its chip guidance lives in
-   the *Badges / chips* notes, which the existing `DEMO` chip already follows. An
-   earlier draft claimed the footer "stays within the dark theme's density rules";
-   that cited a rule that does not apply. The accurate claim is the narrower one:
-   nothing new is introduced.) Label derivation (name-from-path, memory/demo
-   wording) is a pure exported helper with Vitest coverage, not inline JSX logic —
-   the `state -> render` analogue of pure reducers.
+The footer shows the file name with the full path in a tooltip, renders
+`In-memory demo` for demo mode, and uses the existing neutral and warning chip
+tokens. A pending or failed health query omits ledger and backup spans rather
+than rendering placeholders.
 
-   **The null-path case is the normal demo case, not an edge case.** With demo
-   mode reachable from both shells, `path: null` renders as `In-memory demo` with
-   no tooltip — never an empty span, never `undefined`, never a stray separator.
-   In a demo launch the footer therefore reads
-   `UI x.y.z · API ok x.y.z · DEMO · In-memory demo`, in either shell. A pending
-   or failed `/api/health` query leaves the ledger span out entirely rather than
-   rendering a placeholder, matching how `apiStatusLabel` already handles that
-   state.
+**Accepted consequence — `localStorage` does not carry between shells.** The
+desktop window's origin is distinct from the browser build's origin, so each
+shell keeps its own view preferences. The promise to survive reload and
+navigation still holds within each shell; this is inherent to the second origin,
+not a ledger-identity gap.
 
 `frontend/src/components/AddInstrumentDialog.tsx` holds the only API path literal
 outside the api layer (`apiGet<PriceStatusResponse>("/api/prices/status")`). It
@@ -1197,24 +1181,31 @@ crate would create the second ~8.6 GB target tree the workspace decision exists
 to avoid. This phase is therefore deliberately mechanical — there is nothing to
 learn in it — and the risk phase follows immediately.
 
-**Step 0 — re-verify the plan's assumptions against the current tree.** Do this
-before editing and write the findings into the implementation notes:
+**Step 0 — re-verify the remaining assumptions against the current tree.** The
+production hardening has already changed the ledger and logging seams, so verify
+these facts before editing:
 
-- Does `backend/src/app.rs` still interleave state construction, launch refresh,
-  router selection, bind and ctrl-c in one `serve`? It did when this plan was
-  written, and nothing else planned touches that structure, so this is a
-  confirmation rather than a real fork.
-- Are `api::router`, `api::router_with_static_assets`, `AppState::for_tests`,
-  `AppState::with_demo_mode`, `db::testing::memory_pool` and
-  `providers::FakePriceProvider` still `pub` and unconditionally compiled? The
-  bridge tests depend on all six from outside the crate.
-- Is `AppConfig`'s ledger still a plain `String` URL read from
-  `TTTB_DATABASE_URL`, and does `db::connect` still use `create_if_missing(true)`?
-- Do the import handlers still take `Bytes` with no `DefaultBodyLimit` layer?
-- What is the highest migration number, and what are the current
-  `backend/Cargo.toml` and `frontend/package.json` versions?
-- Does `refresh.rs` still hold the in-memory `AtomicBool` + `Mutex` pair and read
-  `refreshing` from it?
+- `AppConfig` already carries a `LedgerLocation` and an explicit mode.
+- `create_if_missing` is already gated by `CreateMissing` and the explicit
+  `TTTB_CREATE_LEDGER_IF_MISSING=1` opt-in.
+- `engine_logging` already takes `LogSettings`, never panics on file-open
+  failure, and rotates bounded app-data logs.
+- `backend/src/app.rs` no longer opens the ledger inline; it delegates to
+  `ledger::open`.
+- The default port is already `8480` and the highest migration is `0007`.
+- `api::router`, `api::router_with_static_assets`, `AppState::for_tests`,
+  `AppState::with_mode`, `db::testing::memory_pool` and
+  `providers::FakePriceProvider` are still available where the bridge tests
+  require them.
+
+The future composition-root split, rather than the old monolithic `serve`, is
+the remaining desktop work.
+
+The bridge assumptions remain as specified below: it must consume the shared
+router and state without adding a frontend transport or CORS change, and the
+existing import-body and refresh behavior must remain available for the later
+desktop phases. Cross-process refresh coordination remains this plan's future
+work; the current service still has its process-local `AtomicBool` and `Mutex`.
 
 **Step 1 — workspace.**
 
@@ -1225,11 +1216,11 @@ before editing and write the findings into the implementation notes:
    currently has.
 2. `.gitignore`: verify it still covers the relocated `target/` (its `target` and
    `debug` entries are unanchored, so it should — confirm, do not assume) and that
-   no stale `backend/target` remains after the move. **Also unanchor the ledger
-   pattern:** `backend/tttb-ledger.sqlite*` becomes `tttb-ledger.sqlite*`, so a
-   stray database created anywhere in the tree is ignored rather than sitting one
-   `git add -A` away from a commit. This is a one-line structural fix for a hazard
-   the Phase 2 manual verification would otherwise rely on a human remembering.
+   no stale `backend/target` remains after the move. No ledger-pattern edit is
+   part of this work: the live `portfolio.sqlite` is outside the repository, and
+   the retired repository-local ledger is already under the ignored `.local/`
+   directory. Treat any unexpected ledger elsewhere in the tree as a data-safety
+   hazard to investigate, not as a file this phase should silently ignore.
 3. `scripts/start.ps1`: `$BackendExe` resolves to
    `<repo>/target/debug/ticker-tape-tally-board-backend.exe`; the build step runs
    `cargo build -p ticker-tape-tally-board-backend` from `$RepoRoot`. Its "Run
@@ -1331,8 +1322,8 @@ body limits are explicit*).
    set yet — the skeleton keeps a console so failures are visible; it is set in
    Phase 5 together with the dialog that replaces it.
 2. **`desktop/build.rs` calling `tauri_build::build()`** — required, and the thing
-   most likely to be forgotten. (It gains its second job, emitting the shared
-   repository paths, in Phase 5.)
+   most likely to be forgotten. It has no path-reading job; ledger and logging
+   paths come from backend configuration and app-data conventions.
 3. `desktop/tauri.conf.json` per *Tauri build wiring and configuration*:
    `identifier` set, **no top-level `version`**, `app.windows: []`,
    `withGlobalTauri: false`, `app.security.csp: null`, `build.frontendDist`
@@ -1427,18 +1418,19 @@ Verify:
 - **External human testing REQUIRED — the ordinary app. Prepare the ledger
   first; this is a step, not a caveat.**
 
-  In this phase the skeleton still uses today's configuration, which defaults to
-  `sqlite://tttb-ledger.sqlite` **resolved against the working directory** and
-  still creates it if missing. Phase 4 is what makes both of those impossible;
-  until then the tester is the only guard. So, in order:
+  The desktop shell must use the landed configuration: production resolves the
+  ledger at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`, refuses a
+  missing file unless `TTTB_CREATE_LEDGER_IF_MISSING=1`, binds no TCP listener,
+  and uses the app-data log convention. Use an explicit `TTTB_DATABASE_URL` only
+  for the scratch copy; it is resolved absolutely by backend config. So, in
+  order:
 
   1. Copy the real ledger to a scratch path, e.g.
      `.local/db/tttb-probe-copy.sqlite`.
   2. Set `TTTB_DATABASE_URL` to **that copy** before launching. Do not launch
-     without it: an unset variable silently creates an empty database wherever the
-     executable was started from. (Phase 1 unanchors the `.gitignore` pattern so
-     such a file cannot be committed, but it will still exist and still be the
-     wrong ledger.)
+     without it if the production ledger is not the intended test target: the
+     default is the real app-data ledger, and a missing override is refused
+     rather than silently creating a different file.
   3. Launch the desktop app without the probe flag and confirm in the window: the
      dashboard renders with real data; a deep link/reload of `/board` and
      `/asset/:id` still renders (the router side is already covered by
@@ -1451,7 +1443,8 @@ Verify:
      returns nothing and no Windows Firewall prompt appeared.
   5. Delete the copy when finished.
 
-  This drill also rehearses, deliberately, the exact failure mode Phase 4 removes.
+  This drill uses the landed refusal and app-data path rules while proving the
+  desktop transport behavior.
 - **If any probe case is red, or the report is marked `incomplete`, stop.** Take
   the documented fallback question back to the user. An adapter-test failure is
   our bug and is simply fixed; only a probe failure is evidence about the
@@ -1463,21 +1456,25 @@ Verify:
 
 Backend refactor. The web server's behavior must be byte-identical afterwards.
 
-1. Split `backend/src/app.rs` into `app/mod.rs` (thin), `app/composition.rs` and
-   `app/server.rs` as described in *One composition root, two entry points*.
-   `Application::build`, `Application::shutdown`, `StartupError`.
+1. Extract the desktop composition from the existing `app::run()` while keeping
+   `main.rs` and the server entry point thin. `ledger::open` remains the single
+   ledger-opening sequence; the desktop entry point consumes the shared state and
+   router rather than constructing competing copies. Extend the existing typed
+   `StartupError` enum; do not introduce the old sketch as a second error type.
 2. `Application::shutdown` aborts the launch-refresh handle and closes the
    SQLite pool; `server::serve` calls it after `axum::serve` returns.
-3. **`AssetPolicy::{Optional, Required}` on `AppConfig`**, resolving the
-   contradiction between "absent assets build an API-only router" and "a desktop
-   startup failure must show a dialog". Server sets `Optional`; desktop sets
-   `Required`, which checks for `index.html` (not just the directory) and returns
-   `StartupError::StaticAssetsMissing { path }`.
+3. **`AssetPolicy::{Optional, Required}` is already defined, but
+   `AppConfig::asset_policy()` is derived only from mode:** production is
+   `Required`, while development and demo are `Optional`. Add a shell-level
+   policy override (a field or composition parameter) so the desktop shell can
+   require `index.html` in every mode, including demo, while the web server keeps
+   its current mode-derived behavior. A missing required asset returns the
+   existing `StartupError::StaticAssetsMissing`.
 4. Move the existing `app.rs` tests (`launch_refresh_spawns_background_job`,
    `launch_refresh_is_skipped_*`, `demo_state_is_seeded_and_query_only`) to
    whichever module now owns the behavior. They must pass unchanged.
-5. `desktop/src/launch.rs` drops its throwaway wiring and calls
-   `Application::build` / `Application::shutdown`, with `AssetPolicy::Required`.
+5. `desktop/src/launch.rs` calls the extracted shared composition and shutdown
+   path, with `AssetPolicy::Required`.
 6. **Decision-log entry lands here:** the in-process desktop transport entry,
    whose Context quotes the probe report's version block from Phase 2.
 
@@ -1506,53 +1503,35 @@ Verify:
 
 ### Phase 4 — Ledger identity: rename, absolute resolution, refuse-to-create, observability
 
-1. `backend/src/db/ledger_location.rs` (`LedgerLocation`, `resolve(url, anchor)`,
-   `LedgerLocation::memory()`, `LedgerLocationError`); `AppConfig` stores a
-   `LedgerLocation` and resolves to `memory()` whenever `demo_mode` is set,
-   before any filesystem work; `AppConfig::from_env_anchored(anchor)` added
-   alongside `from_env()`. Tidy `db/mod.rs` into a thin wrapper by moving
-   `memory_pool` and `RepoError` out.
-2. `db::connect` takes `CreateMissing`; `create_ledger_if_missing` on
-   `AppConfig` defaults to `false`, read from `TTTB_CREATE_LEDGER_IF_MISSING`.
-   The existing `db/pool.rs` test that creates a file passes `CreateMissing::Yes`
-   explicitly.
-3. A missing ledger produces `StartupError::LedgerMissing { path }` with an
-   `engine_error!` naming the path — never an empty new file.
-4. `AppState` gains `ledger_path` and `shell`. `/api/health` serializes
-   **`ledger` only** — `shell` stays internal and is used by the log banner, since
-   no UI renders it. Demo reports `memory`/`null`.
-5. **`repo-paths.json` at the repository root** with
-   `defaultLedgerRelativePath` = `.local/db/tttb-portfolio.sqlite` and
-   `desktopLogRelativePath` = `.local/logs/desktop.log`.
-   `scripts/start.ps1` reads it once via `ConvertFrom-Json` and derives **both**
-   values from it — `$DefaultLocalDatabasePath` now, and the desktop log path it
-   prints in `-Desktop` mode from Phase 5. Both literals are deleted from the
-   script; neither is reintroduced later. (The desktop crate's reader is wired in
-   Phase 5, where `app_paths.rs` appears.)
-6. **Ledger rename**, using that value, with a guard that detects the legacy
-   `tttb-ledger-test.sqlite` (and its `-wal`/`-shm` sidecars) and fails with the
-   exact `Move-Item` commands to run. `README.md` records the new name.
-7. **`-ProductionDb` default fix.** `$DefaultProductionDatabasePath` moves off
-   `MyDocuments` (which resolves inside OneDrive on this machine, and has never
-   existed) to `Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard/portfolio.sqlite"`,
-   with a comment recording why: a live SQLite file plus `-wal`/`-shm` sidecars
-   under a syncing folder is a corruption risk. `README.md` updated, **including
-   the plain statement that `-ProductionDb` needs one `-InitLedger` run on this
-   machine before it works, and that a fresh clone needs one too.**
-8. **No script extraction.** `Assert-Command`, `Invoke-Step`,
-   `Invoke-NativeCommand`, `ConvertTo-SqliteUrl`, `Resolve-DatabaseUrl` and the
-   new legacy-name guard all stay where they are in `scripts/start.ps1`, because
-   the desktop launch becomes a mode of that same script rather than a second one
-   (see Phase 5). Recorded as a deliberate non-action so a reader does not expect
-   a `scripts/Common.ps1` that never appears.
-9. Frontend: `HealthResponse` type, footer render, pure label helper + Vitest
-   tests (see *Frontend — exactly two touches*).
-10. **Decision-log entry lands here:** the observable-ledger-identity entry.
+1. **Mostly landed.** `backend/src/ledger/location.rs` provides the shared
+   `LedgerLocation`, mode-aware defaults and `LedgerLocation::memory()` before
+   filesystem work in demo. `AppConfig` already carries a `LedgerLocation` and a
+   mode. The remaining tidy is moving `memory_pool` and `RepoError` out of
+   `db/mod.rs` so it becomes the thin wrapper `Agents.md` asks for.
+2. **Landed.** `db::open` takes `CreateMissing`; `create_ledger_if_missing`
+   defaults to `false` and reads `TTTB_CREATE_LEDGER_IF_MISSING`. The existing
+   pool tests pass `CreateMissing::Yes` explicitly when creation is intended.
+3. **Landed.** A missing ledger produces `StartupError::LedgerMissing` with the
+   resolved path and is logged; no empty file is invented.
+4. **Landed.** `AppState` carries mode, ledger path and backup state.
+   `/api/health` exposes `mode`, `ledger` and `backup`, but no shell field; demo
+   reports memory with a null path.
+5. The former repository-paths reader and the old production-flag path are
+   removed by the landed launcher. The desktop shell must consume backend config
+   for the ledger, with `-DatabaseUrl` as the explicit override.
+6. **Ledger rename and refuse-to-create are landed.** The legacy guard covers the
+   database and SQLite sidecars; `README.md` records the app-data location and
+   the one-time `-InitLedger` requirement.
+7. **No script extraction.** The existing launcher remains the single place for
+   the legacy guard, flag validation and environment save/restore. No
+   `scripts/Common.ps1` is needed.
+8. The frontend health and footer work is already landed; see *Frontend —
+   exactly two touches*. No further ledger-identity change is required there.
+9. **Decision-log entry lands here:** the observable-ledger-identity entry.
 
 Tests:
-- `ledger_location` unit tests: absolute URL passes through; a relative URL
-  resolves against the supplied anchor and never against the CWD;
-  `sqlite::memory:` yields `path: None`; a non-sqlite URL is rejected.
+- `ledger/location` unit tests cover mode-aware defaults, memory resolution,
+  absolute URL handling and unsupported URLs.
 - `db::connect` with `CreateMissing::No` against a non-existent path returns an
   error and **creates no file** (assert the file is still absent afterwards).
 - **Demo config never resolves a ledger:** `demo_mode` with `TTTB_DATABASE_URL`
@@ -1562,10 +1541,6 @@ Tests:
 - `/api/health` contract test: `ledger.mode`/`ledger.path` for a file-backed
   state and `memory`/`null` for a demo state. Also assert the response carries
   **no** `shell` key, so a future reader does not reintroduce an unconsumed field.
-- `repo-paths.json` round-trip: the path `scripts/start.ps1` derives and the path
-  the desktop crate derives resolve to the same absolute file (asserted in the
-  desktop crate's tests once `app_paths.rs` exists in Phase 5; in this phase, the
-  script's derived value is asserted against the JSON by inspection).
 - Vitest: the footer label helper renders the file name for a file ledger, the
   in-memory wording for a `null` path, and never emits an empty span or a stray
   separator; a pending/failed health query omits the ledger span entirely.
@@ -1588,23 +1563,21 @@ Verify:
 
 The window becomes something you can put on the Start menu.
 
-1. **`desktop/build.rs` gains its second job:** read `repo-paths.json`, validate
-   it, emit `cargo:rustc-env=TTTB_DEFAULT_LEDGER_RELPATH` and
-   `TTTB_DESKTOP_LOG_RELPATH`, and `cargo:rerun-if-changed=../repo-paths.json`. A
-   missing or malformed file fails the build.
-2. `desktop/src/app_paths.rs` — `AppPaths` from the build-tree anchor plus those
-   two baked-in relative paths, with `TTTB_DATABASE_URL` / `TTTB_STATIC_DIR`
-   overrides resolved against that anchor when relative. Pure and unit-tested
-   against a supplied anchor.
-3. `engine_logging::initialize(LogDestination, instance_tag) -> LogInitOutcome`;
-   never panics. The server entry point passes
-   `TerminalAndFile { path: "engine.log" }` (unchanged path semantics); the
-   desktop entry point passes
-   `FileOnly { path: <anchor>/<TTTB_DESKTOP_LOG_RELPATH> }`. Both pass
-   `<shell>:<pid>`.
-4. The line-buffering tagged writer in `engine_logging`, wrapping the file sink in
-   both variants: buffer to a newline, then emit `[<instance_tag>] ` plus the
-   completed line in one `write_all`. The terminal sink is untagged.
+1. **`desktop/build.rs` keeps only `tauri_build::build()`.** It must not read
+   a repository path file or emit ledger/log path variables; that machinery is
+   not part of the architecture.
+2. `desktop/src/app_paths.rs` derives the desktop static-assets directory from
+   the build-tree anchor. `TTTB_STATIC_DIR` overrides it, and a relative value is
+   resolved against that anchor rather than the CWD. The ledger remains owned by
+   backend `AppConfig`; the desktop log remains owned by the app-data convention.
+3. Reuse `engine_logging::initialize(&LogSettings) -> LogInitOutcome`; it never
+   panics. The desktop entry point supplies a mode/shell-specific log path under
+   `%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`, with the existing bounded
+   rotation settings. If per-line process identity is needed, extend
+   `LogSettings`/`RotatingFileWriter` rather than adding `LogDestination`.
+4. The line-buffering tagged writer, if retained, wraps the existing file sink:
+   buffer to a newline, then emit `[<instance_tag>] ` plus the completed line in
+   one `write_all`. The terminal sink is untagged.
 5. Startup and shutdown banners at `info`, each naming **which shell**
    (`AppState`'s `AppShell`), executable path, ledger path, static assets
    directory and log path — the context a per-line tag cannot carry.
@@ -1624,9 +1597,9 @@ The window becomes something you can put on the Start menu.
 
    The mode branches at the point where the script stops being about two
    processes. Shared and unchanged: `Assert-Command`, `Invoke-Step`,
-   `Invoke-NativeCommand`, `ConvertTo-SqliteUrl`, `Resolve-DatabaseUrl`, the
-   legacy-ledger guard, the `-Demo` argument validation, and the
-   `TTTB_DATABASE_URL` / `TTTB_DEMO_MODE` save-and-restore `finally` block.
+   `Invoke-NativeCommand`, `ConvertTo-SqliteUrl`, the legacy-ledger guard, the
+   `-Demo` argument validation, and the current environment save-and-restore
+   `finally` block. Demo uses `TTTB_MODE=demo`, not `TTTB_DEMO_MODE`.
 
    In `-Desktop` mode the script:
    - builds the frontend (unless `-SkipBuild`) — `frontend/dist` is the desktop
@@ -1636,26 +1609,32 @@ The window becomes something you can put on the Start menu.
      backend still compiles; its *binary* is simply not needed);
    - skips `Stop-OrphanVite`, `Resolve-FrontendPort`, `Resolve-BackendPort`,
      `TTTB_PORT`, the Vite process, both `Wait-Url` calls, and the browser open;
-   - prints the resolved ledger (or `demo`) and the desktop log path — both from
-     the `repo-paths.json` values already read in Phase 4, not from a fresh
-     literal — then starts the executable and **waits for it to exit**. Waiting
+   - prints the resolved ledger (or `demo`) and the desktop log path from the
+     backend/app-data conventions, then starts the executable and **waits for it
+     to exit**. Waiting
      keeps the existing
      "the script owns the run" contract, gives a place to report a non-zero exit
      code — which is how a startup failure signals itself alongside the dialog —
      and keeps the environment restore correctly ordered.
 
-   Switch composition, rejected combinations in the style the script already uses
-   for `-Demo` + `-ProductionDb`:
+   The Desktop branch composes with the launcher's current flag surface:
+   `-Dev`, `-Demo`, `-InitLedger`, `-NoBackup`, `-NoRefresh`, `-DatabaseUrl`,
+   and `-Port`. `-Dev` selects development mode, `-Demo` selects the seeded
+   in-memory mode, `-InitLedger` is the explicit creation opt-in for a
+   non-demo ledger, the backup and refresh switches retain their existing
+   scopes, and the database and port switches remain explicit overrides.
+   There is no desktop `-ProductionDb` path; the launcher's compatibility
+   parameter remains only as a throwing retired-flag stub.
+
+   Switch composition and rejected combinations, in the style the script
+   already uses for `-Demo` plus retired database selectors:
    - `-Desktop -Demo` — **supported**, and the reason demo now reaches the window.
-   - `-Desktop -ProductionDb`, `-Desktop -LocalDatabaseUrl`,
-     `-Desktop -ProductionDatabaseUrl` — **supported**; the script sets
-     `TTTB_DATABASE_URL` and the desktop process's env override wins over its
-     build-tree default (resolved absolutely, never against the CWD). Note the
-     interaction with refuse-to-create: the production default has never existed
-     on this machine, so `-ProductionDb` in *either* mode now fails with a clear
-     error until it is created once with `-InitLedger`. That is the intended
-     behavior, not a regression, but it will be the first thing a user hits.
-   - `-Desktop -SkipInstall`, `-SkipBuild`, `-BuildOnly`, `-InitLedger` —
+   - `-DatabaseUrl` — supported; the script sets `TTTB_DATABASE_URL` and the
+     desktop process uses that explicit override through backend config. The
+     value is resolved absolutely, never against the CWD. `-LocalDatabaseUrl`
+     and `-ProductionDatabaseUrl` are retired and throw guidance errors.
+   - `-Desktop -SkipInstall`, `-SkipBuild`, `-BuildOnly`, `-InitLedger`,
+     `-NoBackup`, `-NoRefresh`, and `-Port` —
      **supported**, same meanings.
    - `-Desktop -ProbeWebView` — **supported**; a convenience wrapper over the
      desktop executable's `--probe-webview` flag, which is the real interface and
@@ -1675,15 +1654,15 @@ The window becomes something you can put on the Start menu.
      so the switch can only mislead.
    - `-ProbeWebView` without `-Desktop` — **rejected**: there is no probe for the
      web shell.
-   - Existing `-Demo` exclusions (`-ProductionDb`, `-LocalDatabaseUrl`,
-     `-ProductionDatabaseUrl`) are unchanged and apply in both modes.
+   - `-Demo` still rejects `-DatabaseUrl` and `-InitLedger`; the retired database
+     selectors throw in every mode.
 
    Note in the script's help and in `README.md`: **close the window to stop the
    app.** Ctrl+C in the console falls into the existing `Stop-ProcessTree`
    `finally`, which is a hard kill that skips the graceful pool close. SQLite
    recovers from that through WAL, but it is not the intended path.
 9. **Demo mode reaches the desktop shell.** The desktop entry point reads
-   `TTTB_DEMO_MODE` exactly like the server does — no shell-specific override, no
+   `TTTB_MODE=demo` exactly like the server does — no shell-specific override, no
    ignore-warning. `scripts/start.ps1 -Desktop -Demo` therefore opens the seeded,
    read-only, in-memory demo in the native window, and the demo becomes a
    presentation surface you can show someone without a browser chrome around it.
@@ -1691,7 +1670,7 @@ The window becomes something you can put on the Start menu.
    assumed, in this phase:
    - the ledger is resolved to `LedgerLocation::memory()` before any filesystem
      work, so neither the refuse-to-create rule nor absolute-path resolution can
-     fire (Phase 4);
+     fire;
    - the launch refresh is already skipped in demo mode, so the window makes no
      network calls;
    - `PRAGMA query_only = ON` and the `demo_read_only` route guard are unchanged,
@@ -1706,10 +1685,9 @@ Tests:
 - `app_paths` unit tests: defaults derive from a supplied anchor; a relative
   `TTTB_STATIC_DIR` resolves against the anchor, not the CWD; an absolute
   override wins.
-- `app_paths` derives the default ledger path from the value `build.rs` baked out
-  of `repo-paths.json`, and that path equals the one `scripts/start.ps1` derives
-  from the same file — the machine-readable check that replaces "two definitions
-  with comments pointing at each other".
+- `app_paths` derives only the desktop static-assets path from the supplied
+  build-tree anchor; ledger resolution remains covered by backend configuration
+  tests, and the desktop log path is covered by the app-data logging tests.
 - `app_paths` in demo mode produces no ledger URL at all, so a nonexistent
   default ledger path cannot fail a demo launch.
 - `engine_logging::initialize` returns `file_error` and still initializes when
@@ -1733,12 +1711,8 @@ Verify:
 - **External human testing REQUIRED — none of this is automatable.**
   - Create a Windows shortcut to the built executable with its "Start in" field
     **cleared or set to `C:\`**, launch from it, and confirm the window opens
-    with the real portfolio (proving nothing is CWD-relative) and that
-    `.local/logs/desktop.log` received the startup banner.
-  - **Both readers of `repo-paths.json` agree:** the footer path from that
-    shortcut launch is byte-identical to the footer path from
-    `scripts/start.ps1 -Desktop`. The automated test above is the mechanism; this
-    is the cheap confirmation that the mechanism is wired to reality.
+    with the real portfolio (proving the ledger and log are not CWD-relative) and
+    that the app-data desktop log received the startup banner.
   - Rename the ledger aside and launch: a native error dialog appears naming the
     missing path and the log file, and **no window and no empty ledger** appear.
   - Rename `frontend/dist` aside and launch: a native error dialog names the
@@ -1751,10 +1725,9 @@ Verify:
   - Confirm again that `Get-NetTCPConnection -OwningProcess <pid>` shows no
     listener and no firewall prompt appears.
   - Launch two desktop instances at once, use both, then read
-    `.local/logs/desktop.log` as a single timeline: every line carries a
-    `[desktop:<pid>]` tag, the two PIDs are distinguishable, and no line contains
-    fragments of both. This is the scenario the shared-file choice exists to
-    serve, so it is checked rather than assumed.
+    `%LOCALAPPDATA%\TickerTapeTallyBoard\logs\` as a bounded timeline: the
+    desktop log is mode/shell-specific, and any per-line tags are produced by the
+    shared rotating writer rather than a second logging API.
   - **Demo in the window:** `scripts/start.ps1 -Desktop -Demo` opens the seeded
     demo; the footer reads `DEMO` plus
     `In-memory demo` with no path and no empty span; attempting a write — adding a
@@ -1853,26 +1826,25 @@ Verify:
 1. `docs/Design.HighLevel.md`:
    - *Deployment model*: add the desktop shell as a second deployment of the same
      source — one window, in-process transport over a custom URI scheme, no
-     listener, assets from disk — alongside the existing LAN server. Note that
-     the two shells have different origins and therefore separate client-side
-     view preferences.
+     listener, assets from disk — alongside the existing loopback-only web
+     server. Note that the two shells have different origins and therefore
+     separate client-side view preferences.
    - *Stack* table: a `Desktop shell` row (Tauri v2 + WebView2).
-   - *Phase 5 — Hardening & deployment*: record that the desktop window replaces
-     the "Windows scheduled task or service" framing for interactive use, and
-     that "embed frontend in binary" is explicitly **not** what the desktop shell
-     does.
+   - *Hardening & deployment*: record that the desktop window is an additional
+     interactive shell alongside the existing loopback-only production model,
+     and that "embed frontend in binary" is explicitly **not** what the desktop
+     shell does.
    - *API surface (v1 sketch)*: record the explicit request-size limits (1 MiB
      API-wide, 32 MiB on the import routes) and the `payload_too_large` error
      code, so the contract is documented where the routes are.
-   - Risk table: a row for the ledger path being exposed over `/api/health`
-     (username disclosure on an unauthenticated LAN surface), mitigated only by
-     the existing LAN-trust boundary.
+   - Risk table: retain the accepted `/api/health` ledger-path exposure risk;
+     loopback-only binding limits its audience today, and the mobile work must
+     add authentication before lifting that boundary.
 2. `README.md`: workspace commands from the repository root; `scripts/start.ps1
    -Desktop` and what it does, including `-Desktop -Demo` and "close the window to
-   stop the app"; WebView2 runtime as a prerequisite; the renamed ledger; the
-   corrected `-ProductionDb` default and why; the new
-   `TTTB_CREATE_LEDGER_IF_MISSING` variable and the `-InitLedger` switch; the
-   desktop log location; the import size limit.
+   stop the app"; WebView2 runtime as a prerequisite; the app-data ledger and
+   desktop log locations; the `TTTB_CREATE_LEDGER_IF_MISSING` variable and the
+   `-InitLedger` switch; the import size limit.
 3. `Agents.md`: one Architecture bullet — *the desktop shell consumes the
    backend's composition root; it must not construct its own router, state, or
    ledger path.* (The Workflow and version wording already landed in Phases 1
@@ -1881,11 +1853,11 @@ Verify:
    phase; this step only re-reads them against what was actually built and
    corrects any that drifted.
 5. Version bumps, one release for the whole feature (intermediate phases are not
-   released): the workspace package version takes a **minor** bump from whatever
-   is current (expected `0.15.x → 0.16.0`), which covers both Rust crates at
-   once — and `tauri.conf.json` carries no version to update, by design;
-   `frontend/package.json` takes a minor bump (expected `0.23.x → 0.24.0`) plus
-   the matching `frontend/package-lock.json` version fields.
+   released): the workspace package version takes a **minor** bump from the
+   current backend `0.18.0` to `0.19.0`, which covers both Rust crates at once —
+   and `tauri.conf.json` carries no version to update, by design;
+   `frontend/package.json` takes a minor bump from the current `0.24.0` to
+   `0.25.0` plus the matching `frontend/package-lock.json` version fields.
 6. Record the CSP value in `docs/Design.HighLevel.md` — it is settled in this
    plan, so this is a copy, not a derivation; only correct it if Phase 2 forced a
    specific directive wider and recorded why. Include the note that the desktop
@@ -1968,10 +1940,11 @@ never chosen for them, so a large enough export would fail with an unreadable
 error in the browser. An implicit default is also untestable without asserting on
 framework behavior.
 Consequences: The general limit stays low because the API is deliberately
-unauthenticated on the LAN (2026-06-12 Phase 0 Planning Decisions), so only the
-import path is raised. Import bodies remain fully buffered, which the limit makes
-bounded; a streaming parser would be a separate change. Request-size behavior is
-now part of the documented API contract. Malformed request bodies also move from
+unauthenticated (2026-06-12 Phase 0 Planning Decisions) and, today,
+loopback-only, so only the import path is raised. Import bodies remain fully
+buffered, which the limit makes bounded; a streaming parser would be a separate
+change. Request-size behavior is now part of the documented API contract.
+Malformed request bodies also move from
 producing no envelope at all — a framework rejection the client could only render
 as a generic failure — to carrying specific codes in the standard envelope.
 ```
@@ -1993,8 +1966,9 @@ resolution and not responses produced by a registered handler. The policy value 
 fixed in the shell's source, permits inline styles but not inline scripts, and
 permits `data:` images solely because the application's favicon is an inline SVG.
 Context: A native window was wanted without a firewall prompt or a port, while
-the LAN web-server deployment had to keep working unchanged from the same source.
-Typed per-endpoint commands were rejected as doubling per-endpoint maintenance
+the unauthenticated and, today, loopback-only web-server deployment had to keep
+working unchanged from the same source. Typed per-endpoint commands were
+rejected as doubling per-endpoint maintenance
 forever; a two-origin split was rejected because it would have required relaxing
 the CORS layer that guards the LAN server. The awkward cases — a rejected write
 with a JSON error body, an empty 204, and a multi-megabyte upload — were proven
@@ -2027,18 +2001,18 @@ The default database location has a single machine-readable definition shared by
 the launch script and the desktop shell.
 Context: Two entry points and a renamed database file made "which ledger am I
 looking at" a real question, and silently creating an empty database at a wrong
-path is the same defect in either entry point. Two independently maintained
-copies of the default path would eventually open two databases that look like
-one.
+path is the same defect in either entry point. The backend configuration is the
+single definition of the app-data default, so the desktop shell must consume it
+rather than maintain a second path string.
 Consequences: A first run on a fresh checkout, and any run pointed at a database
 that does not exist yet, requires the explicit creation step once. The reported
-path contains the operating-system user name and is readable by anyone who can
-reach the health endpoint on the LAN; this is accepted under the existing
-LAN-trust boundary and must be revisited before any remote exposure. This refines
-the 2026-06-13 Static Frontend Serving entry, whose working-directory-relative
-assumption still holds for the server but not for the desktop shell. Static
-assets are required for the desktop shell and optional for the server, as an
-explicit policy rather than a consequence of which router was built.
+path contains the operating-system user name and is readable by processes that
+can reach the loopback health endpoint; this is accepted while binding remains
+loopback-only and must be revisited before any remote exposure. This refines the
+2026-06-13 Static Frontend Serving entry: only the default static-assets path
+remains CWD-relative, while the ledger and logs use app-data conventions. Static
+assets are required for production and the desktop shell, and optional for
+development.
 ```
 
 **5.**
@@ -2046,30 +2020,26 @@ explicit policy rather than a consequence of which router was built.
 ```
 ## YYYY-MM-DD - Desktop Process Independence From The Working Directory
 Decision: Nothing the desktop process uses is located relative to its working
-directory — not the log file, not the database, not the built frontend. All
-resolve from an anchor fixed at build time. The process has no console; it logs to
-one fixed known file that every copy appends to, and **every logged line carries a
-tag identifying the copy that wrote it**, not merely a banner at the start of a
-session; failing to open that file never prevents startup; and any startup failure
-produces a native dialog naming the failure and the resolved paths rather than a
+directory. The ledger and runtime log use the per-user app-data conventions; the
+built frontend is the one desktop path resolved from the build-tree anchor. The
+process has no console; it uses the bounded, rotating `LogSettings` /
+`RotatingFileWriter` path, and a per-line tag may identify the copy that wrote a
+line. Failing to open the log never prevents startup; any startup failure
+produces a native dialog naming the failure and resolved paths rather than a
 window that never appears.
 Context: A windowed executable launched from a shortcut has an arbitrary and
 possibly unwritable working directory and no standard error stream, so a
 working-directory-relative log opened with an unwrap could terminate the process
-before anything visible happened. Two copies may run at once, and a problem caused
-by two copies interfering is exactly the problem best read as one interleaved
-timeline — which is only true if each line says who wrote it, so per-copy files
-were rejected and per-line tagging was made a requirement rather than a nicety.
+before anything visible happened. The production logging decision already places
+bounded mode-specific logs in app-data; the desktop shell must reuse that
+behavior rather than put a runtime log back in the repository.
 Consequences: This refines the 2026-06-13 Backend Logging Stack entry: logging
-still goes through the same facade, but initialization takes an explicit
-destination and an instance tag, and is non-fatal. Log lines are written whole,
-which both carries the tag and bounds concurrent writes to line granularity;
-interleaving at that granularity is the intended reading experience, not a
-defect to be fixed later. The file line format changes for the server as well as
-the desktop shell, deliberately, so attribution works the same way everywhere.
-The desktop executable is tied to the tree it was built in, which is acceptable
-while it is not distributed; distribution would require replacing the build-time
-anchor with an installed-location or per-user resolution.
+still goes through the same facade, initialization is non-fatal, and the desktop
+file is named for its shell or mode under app-data. If instance tagging is kept,
+whole-line writes make concurrent records attributable without changing the
+bounded-rotation contract. The desktop executable is tied to its build tree only
+for static assets, which is acceptable while it is not distributed; ledger and
+logs remain per-user app-data resources.
 ```
 
 **6.**
@@ -2123,19 +2093,18 @@ in-memory database.
 
 | Document | Change | Phase |
 |---|---|---|
-| `Agents.md` | **Phase 1:** workspace commands from the repository root, per-package backend clippy, and the version-source clause moved from `backend/Cargo.toml` to `[workspace.package].version`. **Phase 2:** name both members and add the widen-when-`desktop/`-is-touched rule (deliberately *not* in Phase 1, when the member does not exist yet). **Phase 7:** one Architecture bullet — the desktop shell consumes the backend composition root and must not build its own router/state/ledger path | 1, 2, 7 |
-| `README.md` | Workspace commands; `-p` for the Sharesight spike; `start.ps1 -Desktop` (incl. `-Desktop -Demo`, `-ProbeWebView`, and "close the window to stop the app"); WebView2 prerequisite; renamed ledger; corrected `-ProductionDb` default and why; `TTTB_CREATE_LEDGER_IF_MISSING` / `-InitLedger` **and the two cases that need it — a fresh clone and `-ProductionDb`**; desktop log location; the import size limit | 1 (commands), 4 (ledger, `-ProductionDb`), 7 (rest) |
-| `docs/Design.HighLevel.md` | Deployment model gains the desktop shell; Stack table gains a desktop row; Phase 5 hardening text corrected (the desktop shell does **not** embed assets); API surface gains the explicit request-size limits and the standard-envelope guarantee for oversized and malformed bodies; risk row for the ledger path on `/api/health`; the CSP value (already settled — copy it, do not re-derive it), why the desktop response path emits it, and the two frontend properties it depends on | 7 |
+| `Agents.md` | **No change for the landed production hardening:** backend builds still run from `backend/`, and the UI/backend version-source clause remains true. When the desktop crate lands, add one Architecture bullet that it consumes the backend composition root and must not build its own router/state/ledger path | desktop landing |
+| `README.md` | Workspace commands; `-p` for the Sharesight spike; `start.ps1 -Desktop` (incl. `-Desktop -Demo`, `-ProbeWebView`, and "close the window to stop the app"); WebView2 prerequisite; app-data ledger and desktop log conventions; `TTTB_CREATE_LEDGER_IF_MISSING` / `-InitLedger`; the import size limit | 1, 4, 7 |
+| `docs/Design.HighLevel.md` | Deployment model gains the desktop shell; Stack table gains a desktop row; hardening text keeps the desktop shell on disk assets and app-data logs; API surface gains the explicit request-size limits and standard-envelope guarantee; risk row for ledger-path exposure; the settled CSP value and its frontend prerequisites | 7 |
 | `docs/DecisionLog.md` | Seven entries, **each appended when its own phase lands**, in the log's `Decision`/`Context`/`Consequences` template, at the end of the file, naming behaviors and never this plan | 1, 2, 3, 4, 5, 5, 6 |
-| `scripts/start.ps1` | Workspace executable path and build command; `-Desktop` mode with its build/launch branch, `-ProbeWebView`, and its rejected switch combinations; ledger default derived from `repo-paths.json`; legacy-name guard; corrected `-ProductionDb` default; `-InitLedger`. **`scripts/Common.ps1` is deliberately not created** — with one launch script there is nothing to share | 1, 2, 4, 5 |
-| `repo-paths.json` (new, repository root) | The one definition of the default ledger and desktop-log relative paths, read by `scripts/start.ps1` and by `desktop/build.rs` | 4 (script reader), 5 (crate reader) |
+| `scripts/start.ps1` | Workspace executable path and build command; `-Desktop` mode with its build/launch branch, `-ProbeWebView`, and its rejected switch combinations; backend-owned ledger configuration; legacy-name guard; `-InitLedger`. **`scripts/Common.ps1` is deliberately not created** — with one launch script there is nothing to share | 1, 2, 4, 5 |
 | `backend/src/api/body_limits.rs` (new) | The two explicit request-size constants plus the derived test-size helpers — the only definitions | 2 |
 | `backend/src/api/extract.rs` (new) | `ApiJson<T>` and `ImportBody`, sharing one rejection→`ApiError` mapping, so the `payload_too_large` promise holds on every route | 2 |
-| `desktop/build.rs` (new) | `tauri_build::build()` (required), plus emitting the `repo-paths.json` values as build-time env | 2 (tauri build), 5 (paths) |
+| `desktop/build.rs` (new) | `tauri_build::build()` (required); no ledger or log path reader | 2 |
 | `desktop/tauri.conf.json` (new) | `identifier` set; **no top-level `version`** (inherits Cargo's); `app.windows: []`; `withGlobalTauri: false`; `app.security.csp: null`; `build.frontendDist` omitted; bundling off | 2 |
 | Root `Cargo.toml` (new), `backend/Cargo.toml`, `desktop/Cargo.toml` (new) | Workspace members, `[workspace.package] version`, member `version.workspace = true`, minor version bump at release | 1, 2, 7 |
 | `frontend/package.json` (+ `package-lock.json`) | Minor version bump at release. **No new dependency** — the frontend gains no Tauri package | 7 |
-| `.gitignore` | Unanchor the ledger pattern (`backend/tttb-ledger.sqlite*` → `tttb-ledger.sqlite*`) so a stray database anywhere in the tree cannot be committed | 1 |
+| `.gitignore` | Verify the unanchored build-output entries still cover the relocated Cargo target. No ledger-pattern change: live app-data ledgers are outside the repository, and the retired repository ledger is already under ignored `.local/` | 1 |
 | `docs/VisualDesign.DarkTheme.md` | No change expected — the footer ledger label reuses existing footer styling and no new chip is added. The document has no footer-specific rules; its chip guidance is in *Badges / chips* and its density section is about tables. If implementation needs a new token, that is a document change to add here, not a silent addition | — |
 
 ## Deliberately out of scope (recorded, not overlooked)
@@ -2149,16 +2118,16 @@ in-memory database.
   import, single-instance enforcement. Two instances may run; the plan makes that
   safe (Phase 6) rather than preventing it.
 - **Any change to `frontend/src/api/client.ts` or to the CORS layer.**
-- **Multi-portfolio support, a first-run ledger picker, or a per-user app-data
-  ledger location.**
+- **Multi-portfolio support or a first-run ledger picker.** The production
+  ledger already lives at the per-user app-data location; the desktop shell
+  consumes that shared configuration rather than reopening that decision.
 - **Streaming or chunked import upload.** The import handlers buffer the whole
   body; the 32 MiB limit makes that bounded rather than unbounded. A streaming
   parser would remove the ceiling entirely and is a separate piece of work with no
   current motivation.
-- **A tested database backup/restore procedure.** The ledger rename in Phase 4
-  is a copy-first drill, but real backup/retention/restore is whole-database work
-  independent of this feature — and `docs/Design.HighLevel.md`'s Phase 5 already
-  lists it.
+- **Additional backup/restore behavior.** Launch-time backups, retention and the
+  verified restore drill are already part of the web application's production
+  run model; this plan must preserve them while adding the desktop shell.
 - **The `AddInstrumentDialog` API path literal.** Noted, unchanged; it routes
   through `apiGet`, so the transport is unaffected.
 
@@ -2186,9 +2155,10 @@ in-memory database.
   ever deleted. Recorded so the coupling is visible.
 - **One full rebuild** when the target directory moves. One-off, unavoidable,
   budgeted.
-- **The desktop app is tied to its build tree.** Moving or deleting the repo
-  folder breaks the shortcut. Accepted because distribution is out of scope; the
-  failure is visible (native dialog naming the missing path), not silent.
+- **The desktop app's static assets are tied to its build tree.** Moving or
+  deleting the repo folder breaks the shortcut's asset path. Accepted because
+  distribution is out of scope; the failure is visible (native dialog naming the
+  missing path), not silent. The ledger and logs remain in app-data.
 - **Dev runs and desktop runs share one ledger.** Intended. Phase 6 makes
   concurrent refresh safe; concurrent *writes* are still two processes on one
   SQLite file, protected only by SQLite's own locking. A write collision surfaces
@@ -2199,9 +2169,10 @@ in-memory database.
   things that make it larger than it looks are the ownership rules for a
   reclaimed-then-resumed process and the move from in-memory-pool tests to
   two-pools-on-one-file tests; both are specified up front for that reason.
-- **The ledger path on `/api/health` discloses the Windows user name** to anyone
-  on the LAN. Accepted under the existing LAN-trust boundary; must be revisited
-  before any remote exposure.
+- **The ledger path on `/api/health` discloses the Windows user name.** This is
+  accepted while binding is loopback-only; revisit it before the mobile work
+  lifts that boundary and adds authentication. The production run model records
+  the same risk; do not duplicate its mitigation here.
 - **`localStorage` view preferences do not carry between desktop and browser.**
   Inherent to a second origin; accepted; recorded against the 2026-07-10 entry so
   it is not later filed as a bug.
@@ -2217,10 +2188,9 @@ in-memory database.
   adapter test nor the probe would catch it, because the probe serves its own
   page. The ordinary-app human check is the net.
 - **Refuse-to-create is a behavior change to the web server**, not only the
-  desktop app. Settled by the user. Two consequences a reader meets in practice
-  and which the README states plainly: a fresh clone needs one `-InitLedger` run
-  before the web app starts, and `-ProductionDb` on this machine needs one too,
-  because its corrected default path has never existed.
+  desktop app. A fresh clone needs one `-InitLedger` run before the web app
+  starts; the retired `-ProductionDb` flag is not an alternate initialization
+  path.
 - **The desktop crate is slow to build** (WebView2 linking). Mitigated by keeping
   the default clippy/build commands per-package.
 - **`windows-sys` is a new dependency** for one `MessageBoxW` call. Small and
@@ -2247,12 +2217,10 @@ in-memory database.
   `Stop-ProcessTree` `finally` skips the graceful pool close. SQLite recovers via
   WAL, so this is safe rather than dangerous, but closing the window is the
   intended stop and the script's help says so.
-- **The default ledger path has two *readers*** — `scripts/start.ps1` and the
-  desktop crate — even though it now has one definition in `repo-paths.json`. A
-  reader that resolves the relative path against the wrong root would still open
-  the wrong file. Mitigated by an automated test comparing the two derived
-  absolute paths, by the build failing if the JSON is missing or malformed, and by
-  a cheap human confirmation of the footer path from both launch routes.
+- **The desktop static-assets path is build-tree anchored.** A shortcut launched
+  after the repository moves may fail to find `frontend/dist`; the native failure
+  dialog names the missing path. The ledger and log have no second build-tree
+  definition and are resolved by the app-data conventions.
 - **Two ways to reach demo mode now exist** (`-Demo` and `-Desktop -Demo`), so
   any future demo-affecting change has two surfaces to check. Accepted: they share
   one config flag and one seeded pool, and the difference is only which shell
@@ -2283,7 +2251,9 @@ while it is true.
 
 ## Resolved during planning (recorded so they are not reopened)
 
-- **Ledger file name:** `.local/db/tttb-portfolio.sqlite`. Confirmed by the user.
+- **Ledger file name:** `%LOCALAPPDATA%\\TickerTapeTallyBoard\\portfolio.sqlite`.
+  Confirmed by the user; the desktop process consumes the backend's app-data
+  default rather than defining a repository-local path.
 - **Launch surface:** `scripts/start.ps1 -Desktop`, not a second script; and
   `scripts/Common.ps1` is consequently not created.
 - **Demo mode:** reachable from both shells, with an in-memory ledger resolved
@@ -2314,9 +2284,11 @@ while it is true.
   or `blob:` because the frontend uses neither. Moving the favicon to a file to
   drop `data:` was considered and rejected as a frontend change outside this
   plan's scope.
-- **One log file at a fixed location, with every line tagged** `<shell>:<pid>`
-  via a line-buffering writer, rather than per-process files. Interleaving at line
-  granularity is the intended reading experience.
+- **Bounded rotating logs under app-data, named for the running shell or mode.**
+  The desktop process reuses `LogSettings` and `RotatingFileWriter`, so its log
+  is outside the repository and remains attributable without requiring a
+  second logging abstraction. If instance tags are retained, they are an
+  extension of that shared writer rather than a separate file-location rule.
 - **The `ApiJson` rollout is confirmed at all seven handler signatures.** Every
   route returns the standard envelope for oversized and malformed bodies; the
   import-only variant is dropped, not held in reserve.

@@ -4,14 +4,16 @@
 
 ## 1. Summary
 
-A self-hosted portfolio tracking application for stocks, ETFs, and funds, running on a home PC. Single Rust binary serving a TypeScript web frontend on the local network. Data is owned locally (SQLite), with initial portfolio history imported from Sharesight.
+A self-hosted portfolio tracking application for stocks, ETFs, and funds, running on a home PC. A single Rust binary serves a TypeScript web frontend to the local machine over a loopback-only listener. Data is owned locally (SQLite), with initial portfolio history imported from Sharesight.
 
 ### Goals
 - Track holdings, transactions, dividends, and performance for stocks, ETFs, and funds.
 - Multi-currency from day one (e.g. SEK base currency with USD/EUR-denominated holdings).
 - Import full transaction history from Sharesight (All Trades Report export); manual entry as fallback and for ongoing trades.
 - Daily (end-of-day) price updates — no realtime/streaming requirement.
-- Accessible from any device on the LAN via browser.
+- Accessible from the host machine at a loopback URL. LAN access is separate
+  future work that must lift the loopback-only enforcement together with the
+  authentication required to make it safe.
 
 ### Non-goals (v1)
 - Options, crypto, bonds, real estate.
@@ -37,8 +39,8 @@ A self-hosted portfolio tracking application for stocks, ETFs, and funds, runnin
 | Testing | **`cargo test`** + **Vitest** (+ React Testing Library / jsdom) | Pure logic on both sides unit-tested; one runner per stack |
 
 ### Deployment model
-- **Dev:** `cargo run` (API on :8480) + `npm run dev` (Vite on :5173, proxying `/api`).
-- **Prod (home PC):** `npm run build` → static files embedded or served from disk by the Rust binary. One executable + one `.db` file. Backup = copy the file. Runs as a Windows scheduled task or service; reachable at `http://<host>:8480` on the LAN.
+- **Dev:** `scripts/start.ps1 -Dev` runs the debug backend plus Vite, with Vite proxying `/api` to a loopback backend.
+- **Prod (home PC):** `scripts/start.ps1` builds a release backend and `frontend/dist`, then runs one executable serving those files from disk on the pinned loopback port `8480`. The production ledger is one SQLite file at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`; each launch writes an integrity-checked `VACUUM INTO` snapshot to the configured synced backup folder. Auto-start at logon and LAN access remain future work; LAN access must lift the loopback-only enforcement together with authentication.
 
 ### Testing strategy
 
@@ -133,8 +135,11 @@ Each phase ends with something usable. Estimates assume one experienced develope
 - **Deliverable:** v1 feature-complete.
 
 ### Phase 5 — Hardening & deployment (~0.5–1 week)
-- Embed frontend in binary (or ship alongside), Windows scheduled-task/service setup, automated SQLite backup (daily copy + retention), structured logging, basic error surfacing in UI.
-- **Deliverable:** running unattended on the home PC.
+- Launch-time SQLite snapshots with integrity checks, tiered retention, mandatory pre-migration protection, and a documented restore drill that was executed successfully ✅ Done (2026-09-14).
+- Bounded, rotating runtime logs outside the repository, plus visible health/footer status and typed startup failures for the defined fail-loud cases ✅ Done (2026-09-14).
+- A deliberate, loopback-only production run model ✅ Done (2026-09-14).
+- **Still open:** auto-start at logon and LAN exposure. LAN access is separate future work that must lift the loopback-only enforcement together with authentication.
+- **Deliverable:** a deliberate, loopback-only production run model; unattended auto-start remains future work.
 
 ### Backlog (post-v1, prioritized later)
 Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index benchmark) · stock splits & corporate actions handling · watchlist · CSV export · tax-lot (FIFO) realized-gain report · command-based undo/redo with a visible activity/stack UI (see `docs/Design.CommandUndo.md`) · auth if ever exposed beyond LAN.
@@ -148,11 +153,12 @@ Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index
 | 3 | FX correctness (trade-date vs. valuation-date rates) is the most common bug source in multi-currency P&L | Encode rules in one tested valuation module; unit tests with known fixtures |
 | 4 | Corporate actions (splits) silently corrupt derived positions if ignored | SPLIT transaction type exists in schema from day one; handling can ship post-v1 |
 | 5 | Scope creep toward realtime data | Explicit non-goal; EOD only in v1 |
+| 6 | `/api/health` exposes the absolute ledger path, including the Windows user name | Loopback-only binding limits the audience to processes on the host; revisit this before the mobile work lifts the boundary and adds authentication |
 
 ## 5. Acceptance criteria (v1)
 
 1. Full Sharesight history imported; positions match Sharesight within rounding tolerance.
 2. New trades can be entered manually in < 30 seconds.
 3. Portfolio value in SEK updates automatically each day without intervention.
-4. Holdings table and value-history chart load in < 1 s on LAN.
-5. Database survives and restores from a single-file backup.
+4. Holdings table and value-history chart load in < 1 s on the host over loopback.
+5. Database survives and restores from a single-file backup. **Demonstrated by the executed restore drill on 2026-09-14: aggregate diff exit code 0, with zero changed/added/removed gains rows and zero changed/added/removed value-history points.**
