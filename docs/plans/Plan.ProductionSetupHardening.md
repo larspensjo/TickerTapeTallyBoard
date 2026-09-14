@@ -974,9 +974,14 @@ blocks until Ctrl+C.
 # 4. Identify the snapshot that launch just wrote, and restore it into a FRESH
 #    scratch directory. Removing the directory first matters: a stale -wal/-shm
 #    left from an earlier drill would be replayed over the restored file.
-$src = Get-ChildItem "$env:OneDrive\TickerTapeTallyBoard\Backups\portfolio-*.sqlite" |
+$backupDirectory = if ($env:TTTB_BACKUP_DIR) {
+  $env:TTTB_BACKUP_DIR
+} else {
+  Join-Path $env:OneDrive "TickerTapeTallyBoard\Backups"
+}
+$src = Get-ChildItem $backupDirectory -Filter "portfolio-*.sqlite" -File |
        Where-Object { $_.Name -notlike "*premigration*" } |
-       Sort-Object Name -Descending | Select-Object -First 1
+       Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
 $drill = "$env:LOCALAPPDATA\TickerTapeTallyBoard\restore-drill"
 Remove-Item -Recurse -Force $drill -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $drill | Out-Null
@@ -985,7 +990,7 @@ Copy-Item $src.FullName "$drill\portfolio.sqlite"
 # 5. Serve the restored copy from a second instance, with no side effects.
 #    This window blocks; leave it running.
 .\scripts\start.ps1 -SkipInstall -SkipBuild -NoBrowser -NoBackup -NoRefresh -Port 8481 `
-  -DatabaseUrl "sqlite:///$env:LOCALAPPDATA/TickerTapeTallyBoard/restore-drill/portfolio.sqlite"
+  -DatabaseUrl (Join-Path $drill "portfolio.sqlite")
 
 # --- Window 2 ---------------------------------------------------------------
 # 6. Capture from the restored instance with the SAME -EndDate and -Method.
@@ -1022,6 +1027,22 @@ schema.
 - On fail: stop. Do not delete the safety copy. A non-zero diff here means
   either the backup or the relocation is wrong, and that is a finding to raise,
   not to route around.
+
+#### Drill record — 2026-09-14
+
+**Passed, exit code 0.** Executed by the agent with the maintainer's approval,
+following the README procedure against the relocated production ledger, after a
+fresh `-BuildOnly` (backend 0.17.2, release). The live instance (`-NoRefresh`)
+wrote launch snapshot `portfolio-20260914T053430970Z.sqlite` (2,277,376 bytes)
+and was captured immediately with `-EndDate 2026-09-14 -Method xirr`. That
+snapshot was restored into a fresh `restore-drill` directory and served on port
+8481 with `-NoBackup -NoRefresh`; health confirmed the restored path and
+`launch_status = disabled`, and no pre-migration snapshot was taken. Diff with
+`-FailOnChange`: gains 0 changed/added/removed, 37 unchanged; value history 0
+changed/added/removed, 324 unchanged; `$LASTEXITCODE` 0. Both instances were
+stopped afterwards. The maintainer then deleted the `pre-move-backup` safety
+copy, the `restore-drill` directory, the `tttb-ledger-test.sqlite.bak-*` copies
+and the two drill capture directories.
 
 ---
 

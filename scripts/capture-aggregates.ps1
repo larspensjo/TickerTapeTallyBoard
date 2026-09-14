@@ -22,11 +22,17 @@
     cost_basis_base, unrealized_gain_base, and total_return_base. Availability
     transitions are printed explicitly; an unavailable value is never rendered
     as a blank. All three files must be present and valid in both directories
-    before diffing starts.
+    before diffing starts. In diff mode, -FailOnChange makes the script exit
+    non-zero when any gains row or value-history point differs.
 
     The backend URL defaults to http://127.0.0.1:<port>, where the port comes
     from TTTB_PORT or 8480. Override it with -BaseUrl or -Port when capturing
     from a second backend instance backed by a restored database copy.
+
+.PARAMETER FailOnChange
+    In diff mode, exits non-zero after the normal summary when any gains row or
+    value-history point was added, removed, or changed. It is rejected in
+    capture mode.
 
 .EXAMPLE
     pwsh -File scripts/capture-aggregates.ps1
@@ -39,6 +45,9 @@
 
 .EXAMPLE
     pwsh -File scripts/capture-aggregates.ps1 -BeforeDirectory .local/aggregates/capture-before -AfterDirectory .local/aggregates/capture-after -ShowUnchanged
+
+.EXAMPLE
+    pwsh -File scripts/capture-aggregates.ps1 -BeforeDirectory .local/aggregates/capture-before -AfterDirectory .local/aggregates/capture-after -FailOnChange
 #>
 [CmdletBinding(DefaultParameterSetName = "Capture")]
 param(
@@ -77,7 +86,11 @@ param(
     [string]$AfterDirectory,
 
     [Parameter(ParameterSetName = "Diff")]
-    [switch]$ShowUnchanged
+    [switch]$ShowUnchanged,
+
+    [Parameter(ParameterSetName = "Capture")]
+    [Parameter(ParameterSetName = "Diff")]
+    [switch]$FailOnChange
 )
 
 $ErrorActionPreference = "Stop"
@@ -611,6 +624,7 @@ function Invoke-GainsDiff {
     if (-not $IncludeUnchanged -and $unchanged -gt 0) {
         Write-Host "  ($unchanged unchanged rows summarized; use -ShowUnchanged to list them.)"
     }
+    return $changed
 }
 
 function Convert-PointsToMap {
@@ -705,6 +719,7 @@ function Invoke-ValueHistoryDiff {
     if (-not $IncludeUnchanged -and $unchanged -gt 0) {
         Write-Host "  ($unchanged unchanged points summarized; use -ShowUnchanged to list them.)"
     }
+    return $changed
 }
 
 function Invoke-Diff {
@@ -712,6 +727,7 @@ function Invoke-Diff {
         [string]$BeforePath,
         [string]$AfterPath,
         [bool]$IncludeUnchanged,
+        [bool]$FailOnChange,
         $Endpoints
     )
 
@@ -754,17 +770,28 @@ function Invoke-Diff {
         throw "No aggregate diff was run. Re-capture with an explicit -EndDate and matching -StartDate, -Method, closed-position setting, and backend base currency."
     }
 
-    Invoke-GainsDiff -BeforeCapture $before -AfterCapture $after -IncludeUnchanged $IncludeUnchanged
-    Invoke-ValueHistoryDiff -BeforeCapture $before -AfterCapture $after -IncludeUnchanged $IncludeUnchanged
+    $gainsChanges = Invoke-GainsDiff -BeforeCapture $before -AfterCapture $after -IncludeUnchanged $IncludeUnchanged
+    $valueHistoryChanges = Invoke-ValueHistoryDiff -BeforeCapture $before -AfterCapture $after -IncludeUnchanged $IncludeUnchanged
+    if ($FailOnChange -and ($gainsChanges -gt 0 -or $valueHistoryChanges -gt 0)) {
+        Write-Host "DIFFERENCES FOUND: -FailOnChange is set; differences were found."
+        return $true
+    }
+    return $false
 }
 
 $client = $null
 try {
     if ($PSCmdlet.ParameterSetName -eq "Diff") {
         $endpoints = Get-EndpointDefinitions
-        Invoke-Diff -BeforePath $BeforeDirectory -AfterPath $AfterDirectory -IncludeUnchanged $ShowUnchanged.IsPresent -Endpoints $endpoints
+        $hasFailingDifferences = Invoke-Diff -BeforePath $BeforeDirectory -AfterPath $AfterDirectory -IncludeUnchanged $ShowUnchanged.IsPresent -FailOnChange $FailOnChange.IsPresent -Endpoints $endpoints
+        if ($hasFailingDifferences) {
+            exit 1
+        }
     }
     else {
+        if ($FailOnChange) {
+            throw "-FailOnChange is only valid with -BeforeDirectory and -AfterDirectory in diff mode."
+        }
         if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
             $BaseUrl = "http://127.0.0.1:$Port"
         }
