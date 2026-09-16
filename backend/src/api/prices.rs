@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
 
 use crate::{
-    api::error::ApiError,
+    api::{error::ApiError, extract::ApiJson},
     market_data::{
         MarketDataError, PriceStatusResponse, RefreshMode, RefreshPricesRequest,
         RefreshPricesResponse, RefreshTrigger,
@@ -11,7 +11,7 @@ use crate::{
 
 pub async fn refresh(
     State(state): State<AppState>,
-    Json(body): Json<RefreshPricesRequest>,
+    ApiJson(body): ApiJson<RefreshPricesRequest>,
 ) -> Result<Json<RefreshPricesResponse>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 

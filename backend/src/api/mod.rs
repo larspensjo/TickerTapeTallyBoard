@@ -1,6 +1,8 @@
+pub mod body_limits;
 mod cors;
 mod data_version;
 mod error;
+mod extract;
 mod gains;
 mod health;
 mod holdings;
@@ -22,7 +24,7 @@ mod valued_holdings;
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{Method, Request},
     middleware::{self, Next},
     routing::{any, delete, get, post, put},
@@ -78,11 +80,24 @@ fn api_router() -> Router<AppState> {
         .route("/health", get(health::handler))
         .route(
             "/import/sharesight/preview",
-            post(import::sharesight_preview),
+            post(import::sharesight_preview)
+                .layer(DefaultBodyLimit::max(body_limits::IMPORT_BODY_LIMIT_BYTES)),
         )
-        .route("/import/avanza/preview", post(import::avanza_preview))
-        .route("/import/sharesight/commit", post(import::sharesight_commit))
-        .route("/import/avanza/commit", post(import::avanza_commit))
+        .route(
+            "/import/avanza/preview",
+            post(import::avanza_preview)
+                .layer(DefaultBodyLimit::max(body_limits::IMPORT_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/import/sharesight/commit",
+            post(import::sharesight_commit)
+                .layer(DefaultBodyLimit::max(body_limits::IMPORT_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/import/avanza/commit",
+            post(import::avanza_commit)
+                .layer(DefaultBodyLimit::max(body_limits::IMPORT_BODY_LIMIT_BYTES)),
+        )
         .route("/import/rollback/{batch_id}", post(import::rollback))
         .route(
             "/import/sharesight/rollback/{batch_id}",
@@ -123,6 +138,7 @@ fn api_router() -> Router<AppState> {
             put(transactions::replace).delete(transactions::remove),
         )
         .fallback(error::unmatched_route)
+        .layer(DefaultBodyLimit::max(body_limits::API_BODY_LIMIT_BYTES))
 }
 
 async fn demo_read_only_layer(
@@ -170,9 +186,166 @@ mod tests {
     use axum::{
         body::{to_bytes, Body},
         http::{header, Request, StatusCode},
+        Router,
     };
     use serde_json::{json, Value};
     use tower::ServiceExt;
+
+    fn generated_sharesight_csv(target_bytes: usize) -> Vec<u8> {
+        let mut body =
+            b"Synthetic Portfolio - All Trades Report between 2025-06-12 and 2026-06-12\n\n"
+                .to_vec();
+        body.extend_from_slice(b"Market,Code,Name,Type,Date,Quantity,Price,Instrument Currency,Cost base per share (SEK),Brokerage,Brokerage Currency,Exchange Rate,Value,,Comments\n");
+
+        let row_prefix = b"STO,TEST,Test,Buy,12/06/2026,1,10,SEK,10,0,SEK,1,10,All Trades,";
+        let row_suffix = b"\n";
+        let standard_row = [row_prefix.as_slice(), b"synthetic", row_suffix].concat();
+        while body.len() + standard_row.len() + row_prefix.len() + row_suffix.len() <= target_bytes
+        {
+            body.extend_from_slice(&standard_row);
+        }
+
+        let remaining = target_bytes - body.len();
+        assert!(remaining >= row_prefix.len() + row_suffix.len());
+        body.extend_from_slice(row_prefix);
+        body.extend(std::iter::repeat_n(
+            b'x',
+            remaining - row_prefix.len() - row_suffix.len(),
+        ));
+        body.extend_from_slice(row_suffix);
+        assert_eq!(body.len(), target_bytes);
+        body
+    }
+
+    fn generated_instrument_json(target_bytes: usize) -> Vec<u8> {
+        let mut value = json!({
+            "symbol": "TEST",
+            "exchange": "STO",
+            "name": "",
+            "type": "Stock",
+            "currency": "SEK"
+        });
+        let base_len = serde_json::to_vec(&value)
+            .expect("JSON should serialize")
+            .len();
+        value["name"] = Value::String("x".repeat(target_bytes - base_len));
+        let body = serde_json::to_vec(&value).expect("JSON should serialize");
+        assert_eq!(body.len(), target_bytes);
+        body
+    }
+
+    async fn send_raw(
+        router: Router,
+        uri: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Body::from(body))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let value = serde_json::from_slice(&body).expect("body should be JSON");
+        (status, value)
+    }
+
+    #[tokio::test]
+    async fn import_preview_accepts_body_derived_from_under_limit() {
+        let state = crate::state::AppState::for_tests().await;
+        assert!(!state.is_demo());
+        let body = generated_sharesight_csv(body_limits::under_import_limit_bytes());
+        let (status, value) = send_raw(
+            router(state),
+            "/api/import/sharesight/preview",
+            "text/csv",
+            body,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(value["metadata"].is_object());
+    }
+
+    #[tokio::test]
+    async fn import_preview_rejects_body_derived_from_over_limit() {
+        let state = crate::state::AppState::for_tests().await;
+        assert!(!state.is_demo());
+        let body = generated_sharesight_csv(body_limits::over_import_limit_bytes());
+        let (status, value) = send_raw(
+            router(state),
+            "/api/import/sharesight/preview",
+            "text/csv",
+            body,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(value["error"]["code"], "payload_too_large");
+        assert_eq!(
+            value["error"]["message"],
+            format!(
+                "Request body exceeds the {} MB limit.",
+                body_limits::IMPORT_BODY_LIMIT_BYTES / body_limits::BYTES_PER_MIB
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn discriminating_body_size_uses_import_and_api_limits() {
+        let state = crate::state::AppState::for_tests().await;
+        assert!(!state.is_demo());
+        let body_size = body_limits::API_BODY_LIMIT_BYTES + body_limits::API_BODY_LIMIT_BYTES / 2;
+        let csv_body = generated_sharesight_csv(body_size);
+        let json_body = generated_instrument_json(body_size);
+        let app = router(state);
+
+        let (import_status, _) = send_raw(
+            app.clone(),
+            "/api/import/sharesight/preview",
+            "text/csv",
+            csv_body,
+        )
+        .await;
+        let (api_status, api_value) =
+            send_raw(app, "/api/instruments", "application/json", json_body).await;
+
+        assert_eq!(import_status, StatusCode::OK);
+        assert_eq!(api_status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(api_value["error"]["code"], "payload_too_large");
+        assert_eq!(
+            api_value["error"]["message"],
+            format!(
+                "Request body exceeds the {} MB limit.",
+                body_limits::API_BODY_LIMIT_BYTES / body_limits::BYTES_PER_MIB
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_json_returns_standard_invalid_json_error() {
+        let state = crate::state::AppState::for_tests().await;
+        assert!(!state.is_demo());
+        let (status, value) = send_raw(
+            router(state),
+            "/api/instruments",
+            "application/json",
+            b"{not valid json".to_vec(),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(value["error"]["code"], "invalid_json");
+    }
 
     #[tokio::test]
     async fn demo_mode_rejects_mutating_routes() {

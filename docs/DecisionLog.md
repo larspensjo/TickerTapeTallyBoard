@@ -567,3 +567,24 @@ Consequences: "Backed up" means a snapshot was written locally into the synced f
 Decision: The repository is a Cargo workspace with one backend member, one shared target directory, and one `[workspace.package].version` inherited by the backend crate and exposed through `/api/health`. Cargo commands run from the repository root, and routine backend work uses per-package build, test, and clippy commands.
 Context: Workspace-level package metadata and a shared build-artifact location establish one root for Rust tooling while preserving the existing backend crate and runtime behavior.
 Consequences: This supersedes the "without a Rust workspace for v1" clause of the 2026-06-12 Repository Layout entry; its other clauses stand. One full rebuild happens when the target directory moves. Scripts and documentation that referenced the backend directory for cargo commands or for the backend executable path point at the workspace root. The backend's displayed version comes from the workspace manifest.
+
+## 2026-09-16 - Explicit API Request-Body Limits
+Decision: Every API route carries an explicit maximum request body size from one
+shared definition, and the CSV import routes carry a higher one because they take
+a whole broker export in a single body. Every route returns the project's standard
+error envelope, with a code the UI can render, for a request body that is oversized
+or malformed — never a bare plain-text framework rejection. This guarantee is
+unconditional across the API, which is what requires shared request extractors
+rather than the framework's own.
+Context: The import routes were silently governed by a framework default that was
+never chosen for them, so a large enough export would fail with an unreadable
+error in the browser. An implicit default is also untestable without asserting on
+framework behavior.
+Consequences: The general limit stays low because the 2026-06-12 Phase 0 Planning
+Decisions entry deliberately keeps the API unauthenticated and, today,
+loopback-only, so only the import path is raised. Import bodies remain fully
+buffered, which the limit makes bounded; a streaming parser would be a separate
+change. Request-size behavior is now part of the documented API contract.
+Malformed request bodies also move from
+producing no envelope at all — a framework rejection the client could only render
+as a generic failure — to carrying specific codes in the standard envelope.

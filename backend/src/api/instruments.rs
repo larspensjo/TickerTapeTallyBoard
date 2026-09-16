@@ -5,7 +5,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::api::error::ApiError;
+use crate::api::{error::ApiError, extract::ApiJson};
 use crate::db::instruments::{self, InstrumentRow, NewInstrument};
 use crate::db::{prices, provider_symbols, transactions};
 use crate::domain::derive_position;
@@ -133,7 +133,7 @@ pub async fn list(
 
 pub async fn create(
     State(state): State<AppState>,
-    Json(body): Json<CreateInstrument>,
+    ApiJson(body): ApiJson<CreateInstrument>,
 ) -> Result<impl IntoResponse, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 
@@ -265,7 +265,7 @@ pub struct UpdateConviction {
 pub async fn update_conviction(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(body): Json<UpdateConviction>,
+    ApiJson(body): ApiJson<UpdateConviction>,
 ) -> Result<Json<InstrumentResponse>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 
@@ -291,7 +291,7 @@ pub struct UpdateConvictions {
 /// the whole batch with 404 so the frontend never sees a partial apply.
 pub async fn update_convictions(
     State(state): State<AppState>,
-    Json(body): Json<UpdateConvictions>,
+    ApiJson(body): ApiJson<UpdateConvictions>,
 ) -> Result<Json<Vec<InstrumentResponse>>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 

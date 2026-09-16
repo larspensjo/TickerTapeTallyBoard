@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 
-use crate::api::error::ApiError;
+use crate::api::{error::ApiError, extract::ApiJson};
 use crate::db::instruments::{self, InstrumentRow};
 use crate::db::transactions::{self, NewTransaction, TransactionRow};
 use crate::domain::{self, LedgerTransaction, ProposedTransaction, TransactionKind};
@@ -171,7 +171,7 @@ pub async fn list(
 
 pub async fn create(
     State(state): State<AppState>,
-    Json(body): Json<TransactionInput>,
+    ApiJson(body): ApiJson<TransactionInput>,
 ) -> Result<impl IntoResponse, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 
@@ -207,7 +207,7 @@ pub async fn create(
 pub async fn replace(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(body): Json<TransactionInput>,
+    ApiJson(body): ApiJson<TransactionInput>,
 ) -> Result<impl IntoResponse, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 

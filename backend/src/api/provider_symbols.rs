@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::error::ApiError,
+    api::{error::ApiError, extract::ApiJson},
     db::{
         instruments,
         provider_symbols::{self, NewProviderSymbol, ProviderSymbolRow},
@@ -59,7 +59,7 @@ impl From<ProviderSymbolRow> for ProviderSymbolResponse {
 pub async fn update(
     State(state): State<AppState>,
     Path((instrument_id, provider)): Path<(i64, String)>,
-    Json(body): Json<UpdateProviderSymbolRequest>,
+    ApiJson(body): ApiJson<UpdateProviderSymbolRequest>,
 ) -> Result<(StatusCode, Json<ProviderSymbolResponse>), ApiError> {
     crate::api::reject_demo_mutation(&state)?;
 

@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::{
-    body::Bytes,
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::api::extract::ImportBody;
 use crate::api::instruments::ConvictionDto;
 use crate::api::ApiError;
 use crate::db::{import_batches, instruments, transactions};
@@ -161,7 +161,7 @@ pub struct RollbackResult {
 
 pub async fn sharesight_preview(
     State(state): State<AppState>,
-    bytes: Bytes,
+    ImportBody(bytes): ImportBody,
 ) -> Result<Json<ImportPreview>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
     preview_source(&state, &bytes, parse_sharesight).await
@@ -170,7 +170,7 @@ pub async fn sharesight_preview(
 pub async fn sharesight_commit(
     State(state): State<AppState>,
     Query(params): Query<CommitParams>,
-    bytes: Bytes,
+    ImportBody(bytes): ImportBody,
 ) -> Result<Json<ImportResult>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
     commit_source(&state, &bytes, "SHARESIGHT", &params, parse_sharesight).await
@@ -178,7 +178,7 @@ pub async fn sharesight_commit(
 
 pub async fn avanza_preview(
     State(state): State<AppState>,
-    bytes: Bytes,
+    ImportBody(bytes): ImportBody,
 ) -> Result<Json<ImportPreview>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
     avanza_preview_inner(&state, &bytes).await
@@ -187,7 +187,7 @@ pub async fn avanza_preview(
 pub async fn avanza_commit(
     State(state): State<AppState>,
     Query(params): Query<CommitParams>,
-    bytes: Bytes,
+    ImportBody(bytes): ImportBody,
 ) -> Result<Json<ImportResult>, ApiError> {
     crate::api::reject_demo_mutation(&state)?;
     let is_replace = params.mode.as_deref() == Some("replace");
