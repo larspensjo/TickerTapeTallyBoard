@@ -114,6 +114,22 @@ cargo clippy -p ticker-tape-tally-board-backend --all-targets -- -D warnings
 cargo fmt
 ```
 
+## Desktop transport probe
+
+The native-window transport probe is run directly; there is no launcher mode
+for it yet:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+cargo run -p ticker-tape-tally-board-desktop -- --probe-webview
+```
+
+Run it in an interactive Windows session with WebView2 available. It renders
+the probe result in the native window and writes its JSON evidence under
+`.local/probe/`.
+
 Configuration:
 
 - `TTTB_MODE`: `production`, `development`, or `demo`; default `production`.

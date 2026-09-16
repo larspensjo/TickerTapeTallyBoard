@@ -2,7 +2,7 @@ pub mod body_limits;
 mod cors;
 mod data_version;
 mod error;
-mod extract;
+pub mod extract;
 mod gains;
 mod health;
 mod holdings;

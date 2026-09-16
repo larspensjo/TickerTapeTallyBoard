@@ -1,0 +1,22 @@
+[package]
+name = "ticker-tape-tally-board-desktop"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+axum = "0.8"
+http = "1"
+log = "0.4"
+serde_json = "1"
+sha2 = "0.11"
+tauri = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tower = { version = "0.5", features = ["util"] }
+ticker-tape-tally-board-backend = { path = "../backend" }
+
+[dev-dependencies]
+futures = "0.3"
+
+[build-dependencies]
+tauri-build = "2"

@@ -45,13 +45,17 @@ investigation, implementation, and verification; explain observable outcomes.
 
 - Select verification appropriate to the change and report checks that could not
   be completed. Documentation-only edits do not need application builds or tests.
-- The repository is a Cargo workspace sharing one `target/` directory. Cargo
-  commands run from the repository root.
+- The repository is a Cargo workspace (`backend/`, `desktop/`) sharing one
+  `target/` directory. Cargo commands run from the repository root.
 - Build with `cargo build -p ticker-tape-tally-board-backend`.
 - Test with `cargo test -p ticker-tape-tally-board-backend`.
 - When a backend task is complete, run
   `cargo clippy -p ticker-tape-tally-board-backend --all-targets -- -D warnings`
   and then `cargo fmt`.
+- When `desktop/` or the workspace manifest is touched, widen to
+  `cargo clippy --workspace --all-targets -- -D warnings`. The desktop crate
+  links WebView2 and is slow to build, which is why the per-package command
+  stays the default for backend-only work.
 - For frontend changes, run relevant tests, `npm run check`, and `npm run fmt`
   from `frontend/`. The check covers TypeScript and Biome lint.
 - When launching npm through PowerShell `Start-Process`, use `npm.cmd` explicitly;

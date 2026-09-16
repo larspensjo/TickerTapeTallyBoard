@@ -588,3 +588,8 @@ change. Request-size behavior is now part of the documented API contract.
 Malformed request bodies also move from
 producing no envelope at all — a framework rejection the client could only render
 as a generic failure — to carrying specific codes in the standard envelope.
+
+## 2026-09-16 - Cargo Workspace Checks Include The Desktop Crate
+Decision: The Cargo workspace has backend and desktop members. Checks widen to the whole workspace whenever the desktop member or workspace manifest changes.
+Context: The native desktop crate is now a workspace member and shares the workspace target directory and package version.
+Consequences: Routine backend-only work keeps its faster per-package commands; desktop and workspace-manifest changes use workspace-wide build, test, and clippy checks.
