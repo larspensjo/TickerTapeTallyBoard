@@ -13,8 +13,8 @@ build, proven by a probe that runs **inside the real WebView2 window** and by
 adapter-level Rust tests underneath it (not by a route count);
 `scripts/start.ps1` still runs the web app exactly as it does today; the ledger
 the window opens is named and visible in the UI, and the app refuses to start
-rather than silently creating an empty one; and a market-data refresh is
-coordinated across every process on that ledger.
+rather than silently creating an empty one; and a market-data refresh and the
+data revision are coordinated across every process on that ledger.
 
 **Out of scope:** MSI/installer, icons, branding, code signing; tray icon, native
 menus, notifications, file-drop import, single-instance UI; multi-portfolio
@@ -129,9 +129,15 @@ reconciling first; nothing in this plan depends on it either way.
     fixed known location, failure to open the log never prevents startup, and a
     startup failure produces a **native dialog** rather than a window that never
     appears.
-15. **Cross-process refresh coordination is committed work.** It is the last
-    phase because it is independent of the window, not because it is optional.
-    The closing documentation and verification assume it landed.
+15. **Cross-process refresh coordination is committed work, and it includes the
+    data revision.** It is the last phase because it is independent of the
+    window, not because it is optional. The closing documentation and
+    verification assume it landed. Sharing a ledger means sharing *two* pieces of
+    state, not one: the refresh claim **and** the data revision that clients use
+    to invalidate their caches. The 2026-09-12 *Data Is Served And Requested By
+    Revision* decision already names a persisted counter as the requirement for a
+    shared ledger; this plan delivers it. Refresh-derived writes are fenced
+    against lease loss inside the database, not only by a cancellation flag.
 16. **Decision-log entries are written as each phase lands, not batched at the
     end**, and are rendered in the log's own `Decision`/`Context`/`Consequences`
     template. See *Decision-log entries*.
@@ -164,9 +170,14 @@ reconciling first; nothing in this plan depends on it either way.
     path.** `scripts/start.ps1` leaves the default unset and the desktop crate
     consumes the same configuration; no second machine-readable path file is
     created or read.
-22. **Static assets are required for the desktop shell and production server,
-    and optional for the development server.** An explicit policy, not an
-    accident of which router got built.
+22. **Static assets follow one policy matrix everywhere.** The production web
+    server requires them (landed: `Mode::asset_policy()` returns `Required` for
+    production and startup fails otherwise); the development and demo web
+    servers keep their current optional policy; **every desktop mode, demo
+    included, requires them.** The requirement is the landed nonempty
+    `index.html` check, not mere file or directory existence. No text in this
+    plan may describe the web server as universally optional; that description
+    predates the production hardening and is wrong.
 23. **The desktop response path emits its own Content-Security-Policy header**,
     and `tauri.conf.json` sets `csp: null`, so there is exactly one policy source
     and it is on the path that actually serves the HTML.
@@ -179,6 +190,27 @@ reconciling first; nothing in this plan depends on it either way.
     server's mode-specific log, and carries the identity of the copy that wrote
     each line if the shared writer needs an instance tag. It must not introduce
     a competing `LogDestination` API, an unbounded file, or a CWD-relative path.
+    Because two desktop instances in the same mode share one file name,
+    **rotation is made safe across processes** (see *Startup failure, logging,
+    and shutdown*); whole-line appends and instance tags alone do not make it so.
+26. **Runtime path overrides must be absolute.** A relative `TTTB_DATABASE_URL`
+    filename, `TTTB_LOG_FILE` or `TTTB_BACKUP_DIR` is rejected by the backend
+    configuration in every shell, with the failure routed the way each resource
+    already fails: the ledger as a startup error, the log as degraded terminal
+    logging, the backup as a failed backup status. Absolute defaults do not make
+    overrides absolute, and a shortcut's working directory must not be able to
+    choose which file opens. See *Nothing in the desktop process is located
+    relative to the working directory*.
+27. **Build profiles are preserved.** The launcher already selects a release
+    build and executable outside Vite development mode and a debug pair inside
+    it. Relocating the target directory keeps that selection; the desktop mode
+    adopts the same rule. Application mode (`TTTB_MODE`) and build profile are
+    separate from whether a shell uses Vite.
+28. **Drills run on verified snapshots, never on a live copy of the real ledger,
+    and never require moving, deleting or force-killing the production ledger's
+    process.** Scratch ledgers come from the existing verified launch snapshots
+    (2026-09-14) or SQLite's own backup mechanism. See *Scratch ledgers for
+    drills*.
 
 ### Refinements this plan makes to the brief (flagged, not silent)
 
@@ -321,7 +353,16 @@ so nothing probe-related can leak into the shipped API surface:
 - `GET /__probe/probe.js` — the harness script.
 - `POST /__probe/echo` — returns `{ received_bytes, sha256 }` for whatever body it
   was given. The pure transport proof: it does not depend on the CSV parser
-  agreeing with us about what a valid export looks like.
+  agreeing with us about what a valid export looks like. **Its extractor and
+  limit are explicit:** the handler takes the body through the same `ImportBody`
+  extractor and carries `DefaultBodyLimit::max(IMPORT_BODY_LIMIT_BYTES)` on the
+  handler, exactly like the import routes. Written with a bare `Bytes`
+  extractor, axum's implicit 2 MiB default would reject the 8 MiB body *before*
+  the handler ran — a deterministic harness defect that would masquerade as a
+  WebView2 limitation. A bare-router test
+  (`probe_echo_accepts_under_limit_body`) sends the generated `under_limit`
+  body to this exact route and asserts `received_bytes` equals the sent length,
+  so the harness is proven before the window is.
 - `POST /__probe/echo-limited` — the same echo handler, but carrying
   `DefaultBodyLimit::max(IMPORT_BODY_LIMIT_BYTES)` and the **same `ImportBody`
   extractor the real import routes use**, so the oversized-body path returns the
@@ -367,8 +408,18 @@ test fails rather than the probe quietly testing something else.
 | 3 | `POST /__probe/echo`, `under_limit` bytes | `received_bytes` equals the sent length **and** `sha256` matches a digest computed in the page — bytes arrived intact, not merely in quantity | large body carried intact |
 | 4 | `POST /__probe/echo-limited`, `over_limit` bytes | status `413`, body parses as JSON, `error.code === "payload_too_large"` | oversized body reaches the limit layer; error envelope carried back |
 | 5 | `GET /api/health` | status `200`, body parses — the trivial baseline, so a total failure is distinguishable from a case-specific one | GET delivered end to end |
-| 6 | `fetch("https://example.invalid/")` | **rejects** — `connect-src 'self'` is enforced. Combined with the page's no-inline-script requirement, this is the CSP enforcement check | CSP live |
+| 6a | `fetch("https://example.invalid/")` | **rejects**, **and** a `securitypolicyviolation` event arrives whose `effectiveDirective` is `connect-src` and whose `blockedURI` names `https://example.invalid` — the rejection alone proves nothing, because `.invalid` is reserved to fail name resolution and the fetch rejects with or without a policy | `connect-src 'self'` enforced |
+| 6b | inline-script sentinel | the harness (an allowed external script) inserts `<script>window.__probeInlineRan = true</script>` into the DOM; the flag must **stay unset** **and** a `securitypolicyviolation` event with `effectiveDirective` `script-src` and `blockedURI` `inline` must arrive. A page that merely loads an external script runs identically with or without the policy, so the no-inline-script page is not itself an assertion | `script-src 'self'` enforced |
 | 7 | URI form | the page reports `location.origin`; the handler reports the URI string it received; both are recorded verbatim | settles the Wry rewrite question |
+
+Cases 6a and 6b distinguish *enforcement* from *network failure or absence*: each
+requires the specific violation event, with the specific directive and blocked
+URI, that only an enforced policy produces. The `securitypolicyviolation` event
+and its fields are defined by CSP Level 3. **Negative check, once, in Phase 2:**
+run the probe with the bridge's CSP header temporarily removed (a local,
+uncommitted edit); 6a and 6b must go red while every transport case stays green.
+Restore the header and rerun; all green. A run with DNS failure or no network
+must never pass 6a on its own.
 
 Cases 3 and 4 also record wall-clock duration, so a body size that "works" but
 takes 30 seconds is visible rather than merely passing.
@@ -401,8 +452,11 @@ and the probe deliberately no longer claims it.
     and the reason `timeout`, and the harness continues to the next case rather
     than stopping, so one hang does not hide the results of the others.
   - *In the Rust process*, a watchdog fires if no report has arrived within a
-    bound covering every case plus slack (proposed 300 s). It writes a report
-    marked `incomplete` naming which cases never reported, logs it through
+    bound **derived from the case schedule**: the sum of the per-case timeouts
+    plus a fixed slack for page load and report delivery, computed from the same
+    constants the harness uses — not an independent literal that drifts the
+    first time a case is added or a timeout changed. It writes a report marked
+    `incomplete` naming which cases never reported, logs it through
     `engine_logging`, and exits non-zero.
 
   Without these, a hang produces an idle window, no report, no exit code, and a
@@ -425,14 +479,32 @@ the three cases, fall back to a single generic
 `invoke("http_request", { method, path, headers, body })` command feeding the
 **same** router — one command, not 23.
 
-**What would trigger the switch:** any red case in the probe report, or a report
-marked `incomplete` — a non-2xx
-response body swallowed or replaced by a browser error page; a 204 arriving with
-a synthesized body or failing to resolve; a request body truncated, re-encoded,
-or not delivered to the handler; the handler unable to see the request method; or
-a large body that only completes on a timescale that makes import unusable. An
-adapter-test failure is a bug in our code and is simply fixed; only a probe
-failure is evidence about the platform.
+**What would trigger the switch:** a *reproduced transport limitation* — a
+non-2xx response body swallowed or replaced by a browser error page; a 204
+arriving with a synthesized body or failing to resolve; a request body truncated,
+re-encoded, or not delivered to the handler; the handler unable to see the
+request method; or a large body that only completes on a timescale that makes
+import unusable — **after harness, bridge and configuration defects have been
+excluded.**
+
+A red or `incomplete` report is a **gate against proceeding**, but it is not by
+itself platform evidence. The probe is our own code too, and it has deterministic
+ways to fail that say nothing about WebView2: an echo route with the wrong body
+limit, a missing or malformed CSP header, a report-writing failure, a
+misconfigured watchdog. The required response to a red report is therefore:
+
+1. **Classify.** Read the failed case's recorded status, body and elapsed time.
+   A `413` from `/__probe/echo` is a limit defect; a case 6a/6b failure with
+   every transport case green is a header defect; an `incomplete` report with
+   the window still responsive is a watchdog or report-route defect.
+2. **Repair the defect in the harness or bridge and rerun the same gate.** No
+   transport change is involved in clearing a defect of our own making.
+3. **Only when a case fails with those defects excluded** — the harness route is
+   proven on the bare router, the header is present, the watchdog is derived
+   from the schedule — is the failure a transport limitation. Then, and only
+   then, take the fallback question back to the user.
+
+An adapter-test failure is likewise a bug in our code and is simply fixed.
 
 **What it would cost:** settled decision 2 breaks — `client.ts` gains a transport
 branch and every `fetch` call becomes an `invoke`; `ArrayBuffer` bodies must be
@@ -472,9 +544,22 @@ Accepted, enumerated costs:
 - **One full rebuild** when this lands — the target directory moves from
   `backend/target` to `target/`. `.gitignore`'s existing unanchored `target` and
   `debug` entries already cover the new location; verify, do not assume.
-- `scripts/start.ps1` hardcodes
-  `$BackendExe = Join-Path $BackendDir "target/debug/ticker-tape-tally-board-backend.exe"`
-  and **throws** if it is missing. It must point at the workspace target.
+- `scripts/start.ps1` computes `$BackendExe` as
+  `Join-Path $BackendDir "target/$BuildProfile/ticker-tape-tally-board-backend.exe"`,
+  where `$BuildProfile` is `release` outside Vite development mode and `debug`
+  inside it, and the build step passes `--release` to match. It **throws** if
+  the executable is missing. Only the *root* changes — it must point at the
+  workspace target — and the profile selection is preserved exactly. Changing
+  only one half (the path but not the build flag, or vice versa) either launches
+  a stale binary or fails; changing both to `debug` would silently turn the
+  documented production launch into a debug one, undoing the 2026-09-06
+  *Production Run Model* decision.
+- `backend/Cargo.lock` is tracked. A Cargo workspace uses a **root** lockfile,
+  so the first workspace build would otherwise resolve a fresh dependency graph
+  and leave the tracked member lockfile unused — an uncontrolled dependency
+  update hiding inside a mechanics-only change. The lockfile is moved to the
+  root *before* the first workspace build (Phase 1), and the phase builds with
+  `--locked`.
 - `README.md` documents running cargo from `backend/`, including
   `cargo run --example sharesight_import_spike`, which needs
   `-p ticker-tape-tally-board-backend` from a workspace root.
@@ -544,12 +629,26 @@ contradict each other.
 pub enum AssetPolicy { Optional, Required }
 ```
 
-`AppConfig` carries it: the server sets `Optional` (behavior unchanged), the
-desktop entry point sets `Required`. `Required` checks for
-`<static_assets_dir>/index.html`, not merely the directory — a stale or empty
-`dist/` would otherwise pass the check and then serve nothing — and returns
+**The policy is already landed for the web server and is derived from mode:**
+`Mode::asset_policy()` returns `Required` for production and `Optional` for
+development and demo, and `app.rs` fails startup when a required asset set is
+unavailable. That is the September production decision and it must not be
+undone. What this plan adds is a **shell-level override**: the desktop entry
+point requires assets in *every* mode, demo included, while the web server keeps
+its mode-derived behavior. One matrix, used everywhere in this plan:
+
+| Shell | Production | Development | Demo |
+|---|---|---|---|
+| Web server | Required (landed) | Optional (landed) | Optional (landed) |
+| Desktop | Required | Required | Required |
+
+`Required` reuses the landed check — a **nonempty** `<static_assets_dir>/index.html`,
+not merely a directory or a zero-byte file, since a stale or empty `dist/` would
+otherwise pass and serve nothing — and returns
 `StartupError::StaticAssetsMissing { path }`, which produces the dialog and no
-window. Both branches are tested.
+window. Every cell is tested with missing, empty and valid `index.html`. An
+earlier draft described the server as universally `Optional`; that predates the
+production hardening and is wrong.
 
 ### The in-process HTTP bridge
 
@@ -592,6 +691,13 @@ Implementation notes that are load-bearing, in the order they bite:
   evidence rather than by assertion. An earlier draft of this plan asserted the
   `http://tttb.localhost` form as fact; that was wrong to state as fact and is
   corrected here.
+- **Preserve `path_and_query`, not only `path`, for every accepted URI form.**
+  Report ranges, watchlist options and import commit parameters all travel in
+  the query string, and a bridge that normalized to the path alone would drop
+  them silently while `/api/health` kept passing. The URI-form adapter test
+  therefore uses a query-bearing request whose *response* reflects the query
+  (a report endpoint returning its resolved period, for example) and asserts
+  the same resolved value for all three forms.
 - Copy status and **all** response headers verbatim. Do not synthesize
   `content-length`; let the responder handle it, and assert in the 204 test that
   no body and no misleading length is produced.
@@ -730,10 +836,14 @@ go away:
 
 - **Adapter test:** the header is present, with exactly the expected value, on
   the SPA index response, on a static asset response, and on an API response.
-- **Enforcement check (in-window probe):** the harness page carries no inline
-  script — if the policy is live and `script-src 'self'` holds, an inline-script
-  page would not run at all — and the cross-origin `fetch` case asserts
-  `connect-src 'self'` is enforced.
+- **Enforcement check (in-window probe), cases 6a and 6b:** the harness listens
+  for `securitypolicyviolation` and requires the specific violation — directive
+  and blocked URI — for both an attempted cross-origin connection and an
+  inserted inline-script sentinel that must not execute. A rejected `fetch` to a
+  `.invalid` host or a page that happens to have no inline script proves
+  nothing on its own: both behave identically with no policy at all. The
+  negative run (header removed locally, once) confirms the checks detect
+  absence.
 
 If the probe shows the policy is *not* enforced, that is a finding to raise
 before proceeding, not something to route around. If the ordinary-app human check
@@ -854,10 +964,37 @@ pub struct AppPaths {
 never against the CWD. The desktop log uses the existing `LogSettings` and
 `RotatingFileWriter` with a mode/shell-specific file under
 `%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`, and is bounded and rotated like
-the server log. `TTTB_DATABASE_URL` remains the explicit ledger override and is
-resolved by the backend configuration, never against the CWD. `AppPaths` is
-pure and unit-tested against a supplied anchor rather than reading the real
-environment in tests.
+the server log. `AppPaths` is pure and unit-tested against a supplied anchor
+rather than reading the real environment in tests.
+
+**Runtime path overrides: the backend configuration does *not* currently
+prevent CWD dependence, and this plan adds the rule.** Absolute defaults do not
+make overrides absolute. Today `ledger::resolve` keeps the parsed filename and
+the original URL as given; it neither anchors nor rejects a relative filename,
+and `AppConfig::from_env` passes the override through unchanged. The log-file
+and backup-directory overrides likewise accept any `PathBuf`. So a shortcut
+launched with `TTTB_DATABASE_URL=sqlite://scratch.sqlite` would open a
+*different existing file* depending on its working directory, and relative
+`TTTB_LOG_FILE` / `TTTB_BACKUP_DIR` values would scatter logs and backups the
+same way. An earlier draft said the backend configuration already prevented
+this; it did not.
+
+The policy, applied in the backend configuration so both shells get it and there
+is one rule rather than a desktop-only branch:
+
+| Override | Relative value | Failure route (existing rule reused) |
+|---|---|---|
+| `TTTB_DATABASE_URL` (file-backed, non-demo) | **rejected** | `ConfigError` → `StartupError` naming the value; dialog in the desktop shell, log line in the server |
+| `TTTB_LOG_FILE` | **rejected** | `LogFile::Unresolved("… must be absolute")` → terminal-only logging, startup continues |
+| `TTTB_BACKUP_DIR` | **rejected** | `BackupDirectory::Unresolved("… must be absolute")` → failed backup status, startup continues |
+| `TTTB_STATIC_DIR` | server: CWD-relative as today; desktop: anchored to the build tree | unchanged |
+
+Rejection, not rewriting: the ledger URL is passed to SQLite unchanged, so its
+query options (`?mode=…` and friends) are preserved, and the default ledger's
+single source of truth is untouched. Demo mode still ignores the ledger override
+entirely. The launcher already produces absolute values (`ConvertTo-SqliteUrl`
+calls `GetFullPath`), so this changes nothing for `scripts/start.ps1` users and
+closes the hole only for hand-built shortcuts and environments.
 
 The **server** entry point now uses the same app-data ledger and mode-specific
 runtime-log conventions. Only its default `TTTB_STATIC_DIR` remains
@@ -990,14 +1127,49 @@ it is bounded and rotated by the shared writer. If the implementation adds a
 per-line instance tag, it extends `LogSettings` and the existing writer rather
 than creating a second logging abstraction.
 
+**Rotation must be safe across processes, because two desktop instances in the
+same mode share one file name.** Whole-line appends and instance tags make
+*records* attributable; they do nothing for *rotation*. The landed
+`RotatingFileWriter` caches its own byte count and holds an open handle. If
+instance A rotates, B still holds the archived file and an obsolete count: B
+keeps writing into `engine-desktop.log.1`, and when B's own count crosses the
+threshold it renames paths A now owns. The plan's earlier shared-buffer test
+could not exercise this, because it never touched a filesystem. Three changes to
+the existing writer close it, and they stay inside `engine_logging`:
+
+1. **Size is read from the file, not from a cached count.** Before each record
+   the writer checks the *live* length of the file it holds (`file.metadata()`)
+   — on an append-mode handle that length reflects every process's writes — and
+   rotates when the record would cross the limit. The cached counter goes away.
+2. **Rotation happens under a cross-process lock.** The writer takes an
+   exclusive lock on a sibling `<log>.lock` file (opened with no sharing on
+   Windows) for the duration of the rename ladder. After acquiring it, the
+   writer re-checks whether the file at the log path is still the file it
+   holds; if another process rotated in the meantime, it simply reopens the
+   path and does not rotate again.
+3. **A foreign rotation is detected and followed.** Before each record the
+   writer compares the identity of the file at the path with the handle it
+   holds (creation time plus length is sufficient on Windows; a missing path
+   counts as rotated). On mismatch it reopens the path in append mode, so it
+   never keeps writing into an archive.
+
+Together these keep the existing commitments — one bounded timeline per
+shell/mode, `kept_rotations` archives, no partial lines — true with two writers.
+*Considered and rejected:* per-instance files (`engine-desktop.<pid>.log`) with
+aggregate retention. It would avoid the lock, but it changes the shared-timeline
+promise that settled decision 25 and the risk table rely on, and it adds a
+second retention mechanism for something the existing ladder already bounds.
+
 **If a per-line tag is retained, it goes on every line, not only in a banner.**
 A banner identifies a session; it does nothing for the lines that follow. The
 tagged writer must extend the existing settings/writer path:
 
-- `engine_logging` gains a small line-buffering writer that wraps the log file:
-  it accumulates bytes until a newline, then emits `[<instance_tag>] ` followed by
-  the completed line in **one** `write_all`. Prefixing each raw `write` call would
-  corrupt output, because `simplelog` emits a record through several writes.
+- `RotatingFileWriter` **already** buffers to newline boundaries (its `pending`
+  buffer and `write_complete_records`), so no new line-buffering writer is
+  introduced. The tag is emitted by that existing path: `[<instance_tag>] `
+  followed by the completed line in **one** `write_all`. Prefixing each raw
+  `write` call would corrupt output, because `simplelog` emits a record through
+  several writes.
 - Writing whole lines in single appends is also what *bounds* the interleaving:
   on a Windows append-mode handle a single write does not split, so two copies can
   interleave whole lines but not fragments of a line.
@@ -1075,11 +1247,54 @@ Move the claim into the database:
   lifetime, so the heartbeat stops exactly when the guard drops.
 - `is_refreshing()` and `active_run()` stop reading memory and read the live
   claim. Both become `async` and take the pool; the compiler enumerates the
-  callers (`status()` and `running_response()` today). The in-memory
-  `AtomicBool`/`Mutex` pair is **deleted**, not kept alongside — one source of
-  truth.
+  callers — `status()`, `running_response()` **and the `/api/data-version`
+  handler**, which publishes `prices_refreshing` from `is_refreshing()` today.
+  The in-memory `AtomicBool`/`Mutex` pair is **deleted**, not kept alongside —
+  one source of truth.
 - `status()`'s `refreshing` and `latest_run` therefore reflect *any* process's
   run, and a second window shows the first window's refresh.
+
+#### The data revision is shared too
+
+Showing the other process's spinner does not invalidate anything. The frontend's
+query token is `<data_revision>@<valuation_date>` — it does **not** include
+`prices_refreshing` — and `data_revision` today is a process-local
+`<session>:<counter>` held in `DataRevision` (`backend/src/data_revision.rs`).
+So if the desktop process commits a transaction or finishes a price refresh, the
+web process's revision is unchanged, its heartbeat keeps succeeding, and its
+mounted panels keep serving cached portfolio values indefinitely. The 2026-09-12
+*Data Is Served And Requested By Revision* decision says exactly this:
+"sharing a ledger between processes would need a persisted counter." This phase
+delivers it.
+
+- The same additive migration adds a one-row `data_revision` table
+  (`id INTEGER PRIMARY KEY CHECK (id = 1), counter INTEGER NOT NULL`), seeded
+  with `0`.
+- `DataRevision::bump()` becomes an atomic `UPDATE … SET counter = counter + 1`
+  and `current()` a read of that row; both become `async` over the pool. The
+  published string keeps a stable shape (`<counter>`), and **every** stamped
+  response — holdings, gains, rebalance, portfolio value history — and
+  `/api/data-version` read it from the database. No caching in memory: the
+  point is that process B reads process A's bump on B's next heartbeat, with no
+  cross-process notification needed.
+- **Bump sites are unchanged in kind, extended in coverage.** The middleware
+  still bumps for a mutating request that does not return a client error; the
+  launch refresh still bumps when it finishes. Two additions, both required for
+  the cross-process promise:
+  - a refresh that **fails after partial writes** bumps — the data changed even
+    though the run did not succeed;
+  - **reclaiming an abandoned run bumps**, in the reclaim transaction, because
+    the abandoned owner may already have written prices before it stalled and
+    nobody else will announce that.
+- **Startup bumps once, after migrations.** The 2026-09-12 entry promises that a
+  restart refetches; with a persisted counter a restart would otherwise be
+  invisible, and a migration that rewrites data would go unannounced. Demo
+  mode's counter lives in the seeded in-memory database and is written before
+  `query_only` is set; no demo mutation succeeds, so it never bumps afterwards,
+  which a test pins.
+- The heartbeat and response-stamp contract (`client.ts`, `dataVersion.ts`, the
+  cache-token shape) is preserved unchanged: the frontend sees a string that
+  changes when the data does, exactly as today.
 
 **Reclaiming is only half the problem: the reclaimed owner must also stop.** A
 lease that can be taken away creates a second failure mode that the first draft
@@ -1097,11 +1312,38 @@ abandoned one. Three rules close that:
    shrug.** The heartbeat task inspects the affected-row count each beat. Zero
    sets a cancellation flag on the flight guard and logs an `engine_warn!` naming
    the run id, this process's owner string, and the owner that now holds the lease.
-3. **Losing the lease stops the work.** The refresh loop checks the flag at each
-   natural checkpoint — between instruments and between providers — and on loss
-   stops immediately, writes nothing further (no prices, no FX, no run row), and
-   returns `RefreshRunStatus::Failed` with message `lease_lost`. Stopping between
-   units rather than mid-write means no partial row is left behind.
+3. **Losing the lease stops the work promptly.** The refresh loop checks the
+   flag at each natural checkpoint — between instruments and between providers —
+   and on loss stops, writes nothing further, and returns
+   `RefreshRunStatus::Failed` with message `lease_lost`.
+4. **But the flag is not the guarantee; the database is.** Owner-conditional
+   heartbeat and finalization protect the *run record*. They do nothing for the
+   prices, FX rates and provider mappings, which are the data that matters.
+   Consider A suspended inside a provider call: B reclaims and starts writing
+   fresh values; A resumes, and — before its next heartbeat notices anything —
+   completes its current unit and writes stale results over B's. A flag check
+   between units cannot catch a unit already in flight, and even an immediate
+   check before each write races with reclamation. Today every unit writes after
+   awaiting its provider (`price_source_refresh.rs`: the recovered-symbol
+   mapping, the currency-mismatch disable, the price upsert loop;
+   `fx_refresh.rs`: the FX upsert loop; `symbol_seeding.rs`: mapping upserts),
+   so each is exposed.
+
+   The rule: **every batch of refresh-derived database changes is conditional on
+   ownership inside the same write transaction that applies the batch.** Each
+   unit does its provider I/O *outside* any transaction, then opens one
+   `BEGIN IMMEDIATE` transaction, checks
+   `SELECT 1 FROM market_data_refresh_runs WHERE id = ? AND claim_owner = ? AND status = 'RUNNING'`,
+   and applies the whole batch — price rows, FX rows, or mapping change — inside
+   it, or rolls back and discards the provider result if the check finds no row.
+   Reclamation (the `FAILED`/`abandoned` update plus the new claim) already runs
+   in its own `BEGIN IMMEDIATE` transaction; SQLite allows one writer at a time,
+   so the check-and-write and the reclaim are serialized by construction and
+   there is no window between check and write. The db write helpers take an
+   executor rather than the pool so they can run inside the fenced transaction.
+   This covers mapping recovery, mapping disable and symbol seeding, not only
+   price and FX inserts. Cancellation remains for prompt stopping; it is never
+   the sole guard against stale writes.
 
 This phase is **committed work, not optional.** It is last because it is
 independent of the window, not because it can be dropped; the closing
@@ -1142,6 +1384,46 @@ out here and in the transport decision-log entry so it is not discovered later a
 a bug.
 The desktop origin is stable across restarts, so desktop preferences do persist
 desktop-to-desktop.
+
+### Scratch ledgers for drills
+
+Every human drill in this plan that mutates data, kills a process, suspends one,
+or tests a missing-ledger path runs on a **scratch ledger**, never on the
+production file and never on a hand-made copy of it. Copying a live SQLite main
+file can miss WAL contents or produce an inconsistent copy, and copying the
+sidecars separately while writes continue does not fix that; SQLite's own
+backup and how-to-corrupt guidance is explicit about it.
+
+**Source.** A scratch ledger is created from one of two supported sources:
+
+- an existing **verified launch snapshot** from the backup directory — every
+  one has already passed the integrity and foreign-key check (2026-09-14), so
+  it is a known-consistent starting point; or
+- SQLite's supported online backup (`VACUUM INTO` or the backup API) taken from
+  a running instance, which produces a consistent single file regardless of
+  WAL state.
+
+**Setup, every time:**
+
+1. Copy the snapshot to an absolute scratch path, e.g.
+   `%LOCALAPPDATA%\TickerTapeTallyBoard\scratch\<drill>-<date>.sqlite`. Not
+   under the repository, not under a syncing folder.
+2. Run `PRAGMA integrity_check` on the copy and record the result.
+3. Launch with an **absolute** `TTTB_DATABASE_URL` naming that file **and** an
+   **absolute, isolated** `TTTB_BACKUP_DIR` (e.g. a sibling `…\scratch\backups`),
+   so a drill's launch-time snapshots do not land in, or prune, the real backup
+   ladder. `TTTB_BACKUP_DIR` passes through the launcher's environment
+   untouched, so set it in the shell before `scripts/start.ps1`.
+4. **Before any mutation, confirm identity:** `/api/health` (or the footer
+   tooltip) names the scratch path and the scratch backup directory. A drill
+   that skips this step and mutates is a drill against an unknown file.
+5. After **both** processes have stopped, delete the scratch ledger, its
+   `-wal`/`-shm` sidecars and the scratch backup directory.
+
+Missing-ledger checks point the same absolute override at a path that does not
+exist; nothing in this plan requires renaming, deleting or force-killing the
+production ledger's process. The completed rename (2026-09-13) is confirmed
+read-only: launch, read the footer, done.
 
 ### Module and entry-point structure
 
@@ -1209,11 +1491,18 @@ work; the current service still has its process-local `AtomicBool` and `Mutex`.
 
 **Step 1 — workspace.**
 
-1. Root `Cargo.toml` with `[workspace] resolver = "3"` (or `"2"`, matching the
-   edition in use), `members = ["backend"]` for now, and `[workspace.package]`
-   carrying `version` and `edition`. `backend/Cargo.toml` switches to
-   `version.workspace = true` / `edition.workspace = true`, keeping the number it
-   currently has.
+1. **Move the lockfile first:** `git mv backend/Cargo.lock Cargo.lock` before
+   any workspace build, so the first build resolves against the locked graph
+   rather than a fresh one. Then the root `Cargo.toml` with
+   `[workspace] resolver = "2"` — stated explicitly, and `"2"` because the
+   backend is edition 2021 and the mechanical move must preserve its current
+   resolver semantics, not adopt the edition-2024 resolver as a side effect —
+   `members = ["backend"]` for now, and `[workspace.package]` carrying `version`
+   and `edition`. `backend/Cargo.toml` switches to `version.workspace = true` /
+   `edition.workspace = true`, keeping the number it currently has. Every cargo
+   command in this phase runs with `--locked`; if it fails, the move changed the
+   dependency graph and that must be fixed, not accepted. Tauri's dependency
+   changes arrive in Phase 2 and are reviewed there, separately.
 2. `.gitignore`: verify it still covers the relocated `target/` (its `target` and
    `debug` entries are unanchored, so it should — confirm, do not assume) and that
    no stale `backend/target` remains after the move. No ledger-pattern edit is
@@ -1222,9 +1511,13 @@ work; the current service still has its process-local `AtomicBool` and `Mutex`.
    directory. Treat any unexpected ledger elsewhere in the tree as a data-safety
    hazard to investigate, not as a file this phase should silently ignore.
 3. `scripts/start.ps1`: `$BackendExe` resolves to
-   `<repo>/target/debug/ticker-tape-tally-board-backend.exe`; the build step runs
-   `cargo build -p ticker-tape-tally-board-backend` from `$RepoRoot`. Its "Run
-   without -SkipBuild first" error message stays accurate.
+   `<repo>/target/$BuildProfile/ticker-tape-tally-board-backend.exe`, keeping
+   the existing `$BuildProfile` selection (`release` outside Vite development
+   mode, `debug` inside it); the build step runs
+   `cargo build -p ticker-tape-tally-board-backend` from `$RepoRoot`, still
+   adding `--release` under the same condition it does today. Only the target
+   root changes. Its "Run without -SkipBuild first" error message stays
+   accurate.
 4. `README.md`: cargo commands run from the repository root; the Sharesight spike
    becomes
    `cargo run -p ticker-tape-tally-board-backend --example sharesight_import_spike`.
@@ -1257,7 +1550,15 @@ Tests: none new. The point of this phase is that the existing suite passes
 unchanged.
 
 Verify:
-- Backend command sequence from the repository root; whole suite green.
+- Backend command sequence from the repository root **with `--locked`**; whole
+  suite green.
+- `git diff --stat` shows the lockfile as a rename with **no** dependency-version
+  changes, and `git ls-files backend/Cargo.lock` is empty.
+- From a clean target tree, each of the following selects matching artifacts:
+  default web (release build, release exe), `-Dev` (debug build, debug exe),
+  and each with `-SkipBuild` after the corresponding build (starts) and without
+  it (throws the "Run without -SkipBuild first" message, does not launch a stale
+  binary from the other profile).
 - `scripts/start.ps1 -SkipInstall` builds and starts, proving the relocated
   executable path.
 - The `/api/health` version still matches the manifest after the version move.
@@ -1373,10 +1674,20 @@ vacuously — a demo-mode state turns every non-GET into `403`, and the unseeded
   `POST /__probe/echo-limited` and a real import route return an identical status
   and body for an over-limit request. This is what keeps the probe's substitute
   route representative of the route it stands in for.
-- `bridge_routes_every_request_uri_form` — the same request expressed as
-  `tttb://localhost/api/health`, `http://tttb.localhost/api/health` and
-  `/api/health` all reach the health handler identically. This is what makes the
-  bridge independent of which form Wry actually delivers.
+- `bridge_routes_every_request_uri_form` — the same **query-bearing** request
+  expressed as `tttb://localhost/<path>?<query>`,
+  `http://tttb.localhost/<path>?<query>` and `/<path>?<query>` reaches the
+  handler identically **and the response reflects the query** (use a report
+  endpoint that returns its resolved period, or an equivalent whose output
+  depends on a parameter). A bare `/api/health` cannot detect a bridge that
+  keeps `path` and drops `path_and_query`, which would silently break report
+  ranges, watchlist options and import commit parameters. This is what makes
+  the bridge independent of which form Wry actually delivers.
+- `probe_echo_accepts_under_limit_body` — bare router, the exact
+  `POST /__probe/echo` route, the generated `under_import_limit_bytes()` body:
+  `received_bytes` equals the sent length. This proves the harness before the
+  window does, so a `413` from the echo route can never be mistaken for a
+  WebView2 limitation.
 - `bridge_emits_content_security_policy_header` — the exact policy value is
   present on the SPA index, on a static asset, and on an API response.
 - `bridge_reports_body_collection_failure_as_json_error` — a router whose
@@ -1421,34 +1732,40 @@ Verify:
   The desktop shell must use the landed configuration: production resolves the
   ledger at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`, refuses a
   missing file unless `TTTB_CREATE_LEDGER_IF_MISSING=1`, binds no TCP listener,
-  and uses the app-data log convention. Use an explicit `TTTB_DATABASE_URL` only
-  for the scratch copy; it is resolved absolutely by backend config. So, in
-  order:
+  and uses the app-data log convention. The drill runs on a **scratch ledger
+  prepared per *Scratch ledgers for drills*** — never on a copy of the live
+  file. So, in order:
 
-  1. Copy the real ledger to a scratch path, e.g.
-     `.local/db/tttb-probe-copy.sqlite`.
-  2. Set `TTTB_DATABASE_URL` to **that copy** before launching. Do not launch
-     without it if the production ledger is not the intended test target: the
-     default is the real app-data ledger, and a missing override is refused
-     rather than silently creating a different file.
-  3. Launch the desktop app without the probe flag and confirm in the window: the
-     dashboard renders with real data; a deep link/reload of `/board` and
-     `/asset/:id` still renders (the router side is already covered by
-     `static_router_uses_index_fallback_for_frontend_routes`); a real CSV import
-     preview on the Import page succeeds; **deleting a transaction (204) succeeds
-     and the table refreshes — against the copy, never the real portfolio**; fonts,
-     Lightweight Charts and the treemap all render under the CSP; and DevTools'
-     network panel shows the requests on the custom scheme with no CORS preflight.
+  1. Prepare the scratch ledger from a verified launch snapshot, with an
+     absolute `TTTB_DATABASE_URL` and an isolated absolute `TTTB_BACKUP_DIR`,
+     as that section specifies.
+  2. Launch the desktop app without the probe flag and **confirm identity
+     before any mutation**: `/api/health` (via the footer tooltip) names the
+     scratch path, not the app-data ledger.
+  3. Confirm in the window: the dashboard renders with real data; a deep
+     link/reload of `/board` and `/asset/:id` still renders (the router side is
+     already covered by `static_router_uses_index_fallback_for_frontend_routes`);
+     a real CSV import preview on the Import page succeeds; **deleting a
+     transaction (204) succeeds and the table refreshes — against the scratch
+     ledger, never the real portfolio**; fonts, Lightweight Charts and the
+     treemap all render under the CSP; and DevTools' network panel shows the
+     requests on the custom scheme with no CORS preflight.
   4. Confirm **no listener exists**: `Get-NetTCPConnection -OwningProcess <pid>`
      returns nothing and no Windows Firewall prompt appeared.
-  5. Delete the copy when finished.
+  5. Clean up per the scratch-ledger section once the process has stopped.
 
   This drill uses the landed refusal and app-data path rules while proving the
   desktop transport behavior.
-- **If any probe case is red, or the report is marked `incomplete`, stop.** Take
-  the documented fallback question back to the user. An adapter-test failure is
-  our bug and is simply fixed; only a probe failure is evidence about the
-  platform. A hung case counts as red, not as "needs more time".
+- **If any probe case is red, or the report is marked `incomplete`, stop and
+  classify before concluding anything.** Follow the three-step rule under
+  *Documented fallback*: a harness, bridge or configuration defect (wrong echo
+  limit, missing CSP header, watchdog misconfiguration, report-writing failure)
+  is repaired and the same gate rerun; only a failure reproduced with those
+  excluded is platform evidence, and only that takes the fallback question back
+  to the user. A hung case counts as red, not as "needs more time".
+- **Negative CSP run, once:** with the bridge's header removed locally (not
+  committed), cases 6a and 6b go red while every transport case stays green;
+  restored, everything is green. Record both reports.
 
 ---
 
@@ -1481,11 +1798,12 @@ Backend refactor. The web server's behavior must be byte-identical afterwards.
 Tests:
 - `Application::build` produces a router that serves both `/api/health` and the
   SPA index when the assets directory exists.
-- `AssetPolicy::Optional` with an absent assets directory still produces the
-  API-only router and the existing warning — the server's behavior is unchanged.
-- `AssetPolicy::Required` with an absent assets directory returns
-  `StartupError::StaticAssetsMissing`, and **also** does so for a directory that
-  exists but has no `index.html` (the stale-`dist/` case).
+- **The asset matrix, every cell, three inputs each** — missing `index.html`,
+  empty (zero-byte) `index.html`, valid `index.html`: web development and demo
+  produce the API-only router plus the existing warning for the first two and
+  the full router for the third; web production and every desktop mode return
+  `StartupError::StaticAssetsMissing` for the first two and build for the third.
+  The empty-file input is what proves the nonempty check survived the refactor.
 - `Application::shutdown` closes the pool: a query after shutdown fails.
 - A demo `Application` builds and shuts down with no filesystem access.
 - Existing app tests green in their new home.
@@ -1495,9 +1813,11 @@ Verify:
 - **External human testing recommended:** `scripts/start.ps1` still starts,
   serves and stops cleanly, and the desktop executable still opens the window —
   both entry points now go through one construction path, so a mistake here
-  breaks both. Then rename `frontend/dist` aside and confirm the asset policy
-  split: the server starts and serves API routes only, while the desktop
-  executable fails loudly instead of opening a window on the backend root.
+  breaks both. Then rename `frontend/dist` aside and confirm the matrix by hand:
+  `scripts/start.ps1 -Dev` (development) starts and serves API routes only;
+  `scripts/start.ps1` (production) **fails** naming the missing assets, as the
+  landed production behavior requires; the desktop executable fails loudly
+  instead of opening a window on the backend root.
 
 ---
 
@@ -1527,11 +1847,24 @@ Verify:
    `scripts/Common.ps1` is needed.
 8. The frontend health and footer work is already landed; see *Frontend —
    exactly two touches*. No further ledger-identity change is required there.
-9. **Decision-log entry lands here:** the observable-ledger-identity entry.
+9. **Absolute-override rule (settled decision 26).** `ledger::resolve` rejects a
+    relative filename outside demo with a new `LedgerLocationError::NotAbsolute`
+    mapped through `ConfigError` to `StartupError`; `resolve_log_file` and
+    `resolve_backup_dir` turn a relative override into their existing
+    `Unresolved` variants with a message naming the rule. The URL and its query
+    options are otherwise passed through unchanged.
+10. **Decision-log entry lands here:** the observable-ledger-identity entry.
 
 Tests:
 - `ledger/location` unit tests cover mode-aware defaults, memory resolution,
-  absolute URL handling and unsupported URLs.
+  absolute URL handling and unsupported URLs, **and relative filenames are
+  rejected outside demo while a URL's query options survive resolution
+  untouched.**
+- Relative `TTTB_LOG_FILE` yields `LogFile::Unresolved` and relative
+  `TTTB_BACKUP_DIR` yields `BackupDirectory::Unresolved`, each with a message
+  naming the absolute-path rule; absolute values resolve exactly as before.
+- Demo with a relative `TTTB_DATABASE_URL` still resolves to memory and touches
+  no file (the override is ignored, not validated).
 - `db::connect` with `CreateMissing::No` against a non-existent path returns an
   error and **creates no file** (assert the file is still absent afterwards).
 - **Demo config never resolves a ledger:** `demo_mode` with `TTTB_DATABASE_URL`
@@ -1547,15 +1880,19 @@ Tests:
 
 Verify:
 - Workspace and frontend command sequences.
-- **External human testing REQUIRED (data safety — take a backup first).**
-  Stop everything, perform the rename, then: `scripts/start.ps1` opens the real
-  portfolio and the footer shows the new file name (full path on hover); running
-  `scripts/start.ps1` *before* renaming fails with the guidance message and
-  creates nothing; pointing `TTTB_DATABASE_URL` at a nonexistent path fails to
-  start and leaves no file behind; `scripts/start.ps1 -InitLedger` with a fresh
-  path does create and migrate one; `scripts/start.ps1 -Demo` shows the `DEMO`
-  chip and `In-memory demo` with no path and no empty span. Confirm the ledger row
-  counts (`transactions`, `prices`, `instruments`) match the pre-rename backup.
+- **External human testing — read-only confirmation of the landed location.**
+  The rename and legacy guard are complete (2026-09-13); nothing here moves the
+  real ledger. `scripts/start.ps1` opens the real portfolio and the footer shows
+  `portfolio.sqlite` with the app-data path on hover; the footer's version and
+  row counts match the previous run. That is the whole real-ledger check.
+- **Everything else runs on scratch data**, per *Scratch ledgers for drills*:
+  pointing an absolute `TTTB_DATABASE_URL` at a nonexistent scratch path fails
+  to start and leaves no file behind; `-InitLedger` with a fresh scratch path
+  does create and migrate one; a **relative** `TTTB_DATABASE_URL`, launched
+  from two different working directories, is rejected identically both times
+  with a message naming the rule, and no file is created in either directory;
+  `scripts/start.ps1 -Demo` shows the `DEMO` chip and `In-memory demo` with no
+  path and no empty span.
 
 ---
 
@@ -1606,7 +1943,16 @@ The window becomes something you can put on the Start menu.
      app's asset source, so this is required, not optional;
    - builds `cargo build -p ticker-tape-tally-board-desktop` instead of the
      backend package (the desktop crate depends on the backend crate, so the
-     backend still compiles; its *binary* is simply not needed);
+     backend still compiles; its *binary* is simply not needed), **with the
+     same profile rule as the web shell**: `--release` and
+     `target/release/…desktop.exe` by default, `debug` under `-Dev`. The
+     no-console attribute is `cfg_attr(not(debug_assertions), …)`, so a normal
+     desktop launch — release — has no console window, and a `-Dev` desktop
+     launch keeps one, which is the useful behavior for development. `-Dev`
+     selects development *mode* and the debug *profile* exactly as it does for
+     the web shell; only the Vite server is web-specific. `-SkipBuild` selects
+     the executable for the same profile and throws if it is missing, never
+     falling back to the other profile;
    - skips `Stop-OrphanVite`, `Resolve-FrontendPort`, `Resolve-BackendPort`,
      `TTTB_PORT`, the Vite process, both `Wait-Url` calls, and the browser open;
    - prints the resolved ledger (or `demo`) and the desktop log path from the
@@ -1618,24 +1964,28 @@ The window becomes something you can put on the Start menu.
      and keeps the environment restore correctly ordered.
 
    The Desktop branch composes with the launcher's current flag surface:
-   `-Dev`, `-Demo`, `-InitLedger`, `-NoBackup`, `-NoRefresh`, `-DatabaseUrl`,
-   and `-Port`. `-Dev` selects development mode, `-Demo` selects the seeded
-   in-memory mode, `-InitLedger` is the explicit creation opt-in for a
-   non-demo ledger, the backup and refresh switches retain their existing
-   scopes, and the database and port switches remain explicit overrides.
-   There is no desktop `-ProductionDb` path; the launcher's compatibility
-   parameter remains only as a throwing retired-flag stub.
+   `-Dev`, `-Demo`, `-InitLedger`, `-NoBackup`, `-NoRefresh` and
+   `-DatabaseUrl`. `-Dev` selects development mode and the debug profile,
+   `-Demo` selects the seeded in-memory mode, `-InitLedger` is the explicit
+   creation opt-in for a non-demo ledger, the backup and refresh switches
+   retain their existing scopes, and the database switch remains an explicit
+   override. `-Port` is **not** in that list: there is no listener in desktop
+   mode, so it cannot have the web switch's meaning and is rejected. There is
+   no desktop `-ProductionDb` path; the launcher's compatibility parameter
+   remains only as a throwing retired-flag stub.
 
    Switch composition and rejected combinations, in the style the script
    already uses for `-Demo` plus retired database selectors:
    - `-Desktop -Demo` — **supported**, and the reason demo now reaches the window.
    - `-DatabaseUrl` — supported; the script sets `TTTB_DATABASE_URL` and the
      desktop process uses that explicit override through backend config. The
-     value is resolved absolutely, never against the CWD. `-LocalDatabaseUrl`
+     launcher makes the value absolute (`ConvertTo-SqliteUrl`), and the backend
+     rejects a relative one regardless. `-LocalDatabaseUrl`
      and `-ProductionDatabaseUrl` are retired and throw guidance errors.
    - `-Desktop -SkipInstall`, `-SkipBuild`, `-BuildOnly`, `-InitLedger`,
-     `-NoBackup`, `-NoRefresh`, and `-Port` —
-     **supported**, same meanings.
+     `-NoBackup` and `-NoRefresh` — **supported**, same meanings.
+   - `-Desktop -Port <n>` — **rejected**: no listener exists, so the switch can
+     only mislead. Detected with `$PSBoundParameters.ContainsKey("Port")`.
    - `-Desktop -ProbeWebView` — **supported**; a convenience wrapper over the
      desktop executable's `--probe-webview` flag, which is the real interface and
      already worked before this switch existed. It prints where the report landed
@@ -1698,8 +2048,19 @@ Tests:
   which *every* line begins with `[tag] ` exactly once, and no partial line is
   emitted before its newline arrives. This is the assertion that makes "the tag is
   on every line" true rather than aspirational.
-- Two writers with different tags sharing one buffer interleave at line
-  granularity only — no line contains both tags.
+- **Cross-process rotation, on real files:** two independent
+  `RotatingFileWriter` instances (independent state is what makes them stand in
+  for two processes) opened on the same temporary path with a small
+  `max_bytes`, writing alternately and repeatedly crossing the limit. Assert:
+  every record in the live file and every archive is complete and carries
+  exactly one tag; both writers keep writing successfully after every rotation
+  (no writes land in an archive after it was rotated away); the archive set is
+  exactly `kept_rotations` files with the expected names; and total bytes across
+  all files stay bounded by `(kept_rotations + 1) × max_bytes` plus one record.
+  A shared in-memory buffer cannot exercise any of this.
+- The writer follows a foreign rotation: after the test renames the live file
+  out from under an open writer, that writer's next record lands in a freshly
+  created file at the path, not in the renamed one.
 - The startup/shutdown banner renders an absent ledger path as `in-memory (demo)`
   rather than an empty field, and names the shell.
 - `StartupError` `Display` includes the resolved path for each variant, including
@@ -1713,8 +2074,15 @@ Verify:
     **cleared or set to `C:\`**, launch from it, and confirm the window opens
     with the real portfolio (proving the ledger and log are not CWD-relative) and
     that the app-data desktop log received the startup banner.
-  - Rename the ledger aside and launch: a native error dialog appears naming the
-    missing path and the log file, and **no window and no empty ledger** appear.
+  - Point an absolute `TTTB_DATABASE_URL` at a nonexistent scratch path and
+    launch: a native error dialog appears naming the missing path and the log
+    file, and **no window and no empty ledger** appear. (The real ledger is
+    never renamed aside; the same failure is reproduced on scratch
+    configuration.)
+  - Launch from a shortcut with `TTTB_DATABASE_URL=sqlite://scratch.sqlite`
+    (relative) and "Start in" set to two different directories: both launches
+    fail with the same dialog naming the absolute-path rule, and neither
+    directory gains a file.
   - Rename `frontend/dist` aside and launch: a native error dialog names the
     missing assets directory, and **no window** appears — not a window showing
     the backend root.
@@ -1724,10 +2092,16 @@ Verify:
     process exits, and no `-wal` file is left mid-transaction.
   - Confirm again that `Get-NetTCPConnection -OwningProcess <pid>` shows no
     listener and no firewall prompt appears.
-  - Launch two desktop instances at once, use both, then read
-    `%LOCALAPPDATA%\TickerTapeTallyBoard\logs\` as a bounded timeline: the
-    desktop log is mode/shell-specific, and any per-line tags are produced by the
-    shared rotating writer rather than a second logging API.
+  - Launch two desktop instances at once (same mode, so they share one file),
+    with a temporarily small rotation threshold so both cross it several times
+    while in use. Then read `%LOCALAPPDATA%\TickerTapeTallyBoard\logs\` as a
+    bounded timeline: every line is complete and tagged, both instances kept
+    logging after each rotation, exactly `kept_rotations` archives exist, and
+    no archive received lines after it was rotated. This is the Windows
+    process-level check the unit test cannot give.
+  - **Demo must not trip the ledger rules:** with an absolute `TTTB_DATABASE_URL`
+    pointing at a nonexistent scratch path, `-Desktop -Demo` still starts
+    normally — no startup dialog — proving demo never resolves a ledger path.
   - **Demo in the window:** `scripts/start.ps1 -Desktop -Demo` opens the seeded
     demo; the footer reads `DEMO` plus
     `In-memory demo` with no path and no empty span; attempting a write — adding a
@@ -1735,13 +2109,14 @@ Verify:
     `demo_read_only` message rather than a raw `403`; no ledger file is created
     or opened (check `.local/db/` timestamps); and no network call is made
     (the launch refresh is skipped).
-  - **Demo must not trip the ledger rules:** with the real ledger renamed aside,
-    `-Desktop -Demo` still starts normally — no startup dialog — proving demo
-    never resolves a ledger path.
   - Reject-combination checks: `-Desktop -FrontendPort 5173`,
-    `-Desktop -NoBrowser`, `-ProbeWebView` without `-Desktop`, and
-    `-Demo -InitLedger` each fail immediately with a clear message and start
-    nothing.
+    `-Desktop -NoBrowser`, `-Desktop -Port 8480`, `-ProbeWebView` without
+    `-Desktop`, and `-Demo -InitLedger` each fail immediately with a clear
+    message and start nothing.
+  - From a clean target tree: default `-Desktop` builds release and runs the
+    release executable with no console; `-Desktop -Dev` builds debug and runs
+    the debug executable with a console; each `-SkipBuild` variant selects the
+    matching artifact or throws.
   - `-Desktop -ProbeWebView` reproduces the Phase 2 probe result and propagates a
     non-zero exit code when a case fails — the wrapper does not swallow the gate.
 
@@ -1754,32 +2129,51 @@ because it is optional. It is also the phase most likely to overrun, so start it
 with the failure modes in mind rather than discovering them.
 
 1. Migration `add_refresh_run_claim.sql` (additive: `claim_owner TEXT`,
-   `heartbeat_at TEXT` on `market_data_refresh_runs`).
+   `heartbeat_at TEXT` on `market_data_refresh_runs`; plus the one-row
+   `data_revision` table seeded with `0`).
 2. `db/market_data_runs.rs`:
    - `try_claim_run(pool, trigger, owner, now, stale_after)` running
      `BEGIN IMMEDIATE`, reclaiming a stale `RUNNING` row as `FAILED` with message
-     `abandoned` in the **same** transaction, and inserting the new claim;
+     `abandoned` **and bumping the persisted data revision** in the **same**
+     transaction, and inserting the new claim;
    - `heartbeat(pool, run_id, owner, now) -> LeaseState` and
      `finish_run(..., owner)` — both **owner-conditional**
      (`AND claim_owner = ? AND status = 'RUNNING'`) and both reporting whether
      they affected a row;
-   - `live_claim(pool, now, stale_after)`.
+   - `live_claim(pool, now, stale_after)`;
+   - `fenced_write(pool, run_id, owner, |tx| …)` — opens `BEGIN IMMEDIATE`,
+     checks the owner row inside it, runs the batch closure against the
+     transaction, and commits; returns `LeaseLost` without writing if the
+     check finds no row.
    - One shared `REFRESH_CLAIM_STALE_AFTER` constant (proposed 120 s).
-3. `refresh.rs`: delete the in-memory `AtomicBool`/`Mutex` pair. `refresh()`
+3. `db/data_revision.rs` (or the module that fits): `bump(executor)` and
+   `current(executor)` over the one-row table; `DataRevision` in `state` becomes
+   an async wrapper over the pool, keeping its two method names so callers
+   change only by awaiting. Every stamped response and `/api/data-version` read
+   through it; the middleware, launch refresh, refresh-failure-after-writes and
+   startup-after-migrations sites bump through it.
+4. `refresh.rs`: delete the in-memory `AtomicBool`/`Mutex` pair. `refresh()`
    starts only when `try_claim_run` succeeds and otherwise returns the current
    status as it does today. The flight guard owns a heartbeat task that stops when
    the guard drops. `is_refreshing()` and `active_run()` become async reads of the
-   live claim; `status()`'s `refreshing` and `latest_run` follow.
-4. **Lease loss stops the loser.** The heartbeat task treats a zero-affected-row
-   update as lease loss: it sets a cancellation flag on the flight guard and logs
-   an `engine_warn!` naming the run id, this owner and the current holder. The
-   refresh loop checks that flag between instruments and between providers, and on
-   loss stops immediately, writes nothing further — no prices, no FX, no run row —
-   and returns `RefreshRunStatus::Failed` with message `lease_lost`. Without this,
-   a stalled-then-reclaimed process wakes up and keeps writing.
-5. Log the owner identity on claim, reclaim, lease loss and release, per the
+   live claim; `status()`'s `refreshing`, `latest_run` and the data-version
+   handler's `prices_refreshing` follow.
+5. **Every refresh-derived write goes through `fenced_write`.** The price
+   upsert loop, the FX upsert loop, `persist_mapping` (recovery and disable) and
+   the symbol-seeding mapping upserts each do their provider I/O first, then
+   apply their batch inside one fenced transaction, and treat `LeaseLost` as the
+   signal to stop with `lease_lost`. The `prices`, `fx_rates` and
+   `provider_symbols` write helpers take an executor so they can run inside it.
+6. **Lease loss also stops the loser promptly.** The heartbeat task treats a
+   zero-affected-row update as lease loss: it sets a cancellation flag on the
+   flight guard and logs an `engine_warn!` naming the run id, this owner and the
+   current holder. The refresh loop checks that flag between instruments and
+   between providers and on loss stops without starting another unit. The flag
+   is for promptness; the fence is the guarantee.
+7. Log the owner identity on claim, reclaim, lease loss and release, per the
    logging rules (enough context to identify the run and the owning process).
-6. **Decision-log entry lands here:** the refresh-claim entry.
+8. **Decision-log entry lands here:** the refresh-claim entry, which also
+   refines the 2026-09-12 revision entry.
 
 Tests. **Two pools opened on the same temporary file, not one shared in-memory
 pool** — a single in-memory pool proves nothing about two independent SQLite
@@ -1797,27 +2191,64 @@ connections taking real locks, which is the actual scenario:
   A stalls and is reclaimed by owner B; then A's heartbeat reports lease loss, A's
   `finish_run` affects **zero** rows, A's run row stays `FAILED`/`abandoned`, and
   B's row is untouched by A.
+- **Stale writes are fenced, not merely discouraged — the test the earlier
+  draft could not have passed.** A fake provider that blocks on a channel lets
+  the test suspend A *inside* provider I/O, after A has claimed and started a
+  unit. While A is parked: advance the clock past the staleness window, let B
+  reclaim and write distinguishable prices, FX rates and a mapping. Then release
+  A's provider response **before A's next heartbeat** so A completes its unit.
+  Assert that A wrote **no** price, FX or mapping rows (B's distinguishable
+  values are the only ones present), that A's run ends `FAILED`/`abandoned` and
+  B's is untouched, and that A returns `lease_lost`. Run the same scenario with
+  reclamation happening exactly at the ownership-check/write boundary (the
+  reclaim is issued while A's fenced transaction is pending), and assert one
+  of the two serialized outcomes and never a mix. Inspecting run records and
+  later provider-call counts alone would miss the write from the already
+  outstanding request.
 - **Lease loss stops work:** after lease loss the fake provider's call count stops
   increasing and the refresh returns `lease_lost`.
 - `status()` reports a foreign process's run in `latest_run`.
+- **The data revision is shared:** with two independent states over two pools
+  on one file, a successful mutation through A changes the revision published by
+  B's `/api/data-version`; a launch refresh completing through A does too; a
+  refresh through A that writes rows and then fails does too; and B reclaiming
+  A's abandoned run (which had written rows) changes it as well. A rejected
+  mutation through A leaves B's revision alone.
+- **The frontend contract holds across processes:** a mounted client (Vitest,
+  the existing query-layer tests) whose heartbeat token changes refetches its
+  portfolio queries without focus changes or manual reload — this is the
+  landed behavior; the test pins that nothing in the token shape changed.
+- Startup after migrations bumps once; demo's revision is readable and never
+  changes after seeding.
 - Existing single-process refresh tests pass unchanged.
 
 Verify:
 - Workspace command sequence.
-- **External human testing REQUIRED (against a copy of the real database first,
-  because this performs live provider calls).** Start `scripts/start.ps1` and
-  `scripts/start.ps1 -Desktop` against the same ledger. Confirm: only one launch
-  refresh runs; both UIs show the spinner during it and both stop when it ends;
-  exactly one new `market_data_refresh_runs` row appears; pressing manual refresh
-  in one while the other is refreshing reports the running state rather than
-  starting a second run. Then kill one process mid-refresh with `taskkill /F` and
-  confirm that after the staleness window the other process can start a refresh
-  and the abandoned row reads `FAILED` / `abandoned`.
+- **External human testing REQUIRED, on a scratch ledger per *Scratch ledgers
+  for drills*, because this performs live provider calls and force-kills
+  processes.** Start `scripts/start.ps1` and `scripts/start.ps1 -Desktop`
+  against the same scratch ledger (same absolute `TTTB_DATABASE_URL` and
+  isolated `TTTB_BACKUP_DIR` in both shells), and confirm both footers name the
+  scratch path before doing anything else. Confirm: only one launch refresh
+  runs; both UIs show the spinner during it and both stop when it ends; exactly
+  one new `market_data_refresh_runs` row appears; pressing manual refresh in one
+  while the other is refreshing reports the running state rather than starting
+  a second run; **after the refresh finishes, the other window's panels refetch
+  on their own** (the revision changed) without a focus change or reload; and
+  editing a transaction in one window makes the other window's holdings update
+  within the heartbeat interval. Then kill one process mid-refresh with
+  `taskkill /F` and confirm that after the staleness window the other process
+  can start a refresh and the abandoned row reads `FAILED` / `abandoned`.
 - **Suspend rather than kill, to exercise the reclaimed-owner path:** suspend one
   process mid-refresh (Process Explorer, or a debugger break) for longer than the
   staleness window, let the other reclaim, then resume it. The resumed process
-  must log lease loss, stop, and leave both run rows correct.
-- Then repeat the kill drill once against the real ledger.
+  must log lease loss, stop, and leave both run rows correct — and the price
+  rows must carry only the reclaimer's `fetched_at` stamps for any instrument
+  both touched.
+- **The real ledger is never killed, suspended or mutated by this drill.** The
+  real-ledger acceptance check is the normal launch of both shells, both footers
+  naming `portfolio.sqlite`, one launch refresh between them, and normal
+  shutdown. Clean up scratch files after both processes have stopped.
 
 ---
 
@@ -2011,8 +2442,8 @@ can reach the loopback health endpoint; this is accepted while binding remains
 loopback-only and must be revisited before any remote exposure. This refines the
 2026-06-13 Static Frontend Serving entry: only the default static-assets path
 remains CWD-relative, while the ledger and logs use app-data conventions. Static
-assets are required for production and the desktop shell, and optional for
-development.
+assets are required for the production web server and for every desktop mode,
+and optional for the development and demo web servers.
 ```
 
 **5.**
@@ -2033,13 +2464,30 @@ working-directory-relative log opened with an unwrap could terminate the process
 before anything visible happened. The production logging decision already places
 bounded mode-specific logs in app-data; the desktop shell must reuse that
 behavior rather than put a runtime log back in the repository.
-Consequences: This refines the 2026-06-13 Backend Logging Stack entry: logging
-still goes through the same facade, initialization is non-fatal, and the desktop
-file is named for its shell or mode under app-data. If instance tagging is kept,
-whole-line writes make concurrent records attributable without changing the
-bounded-rotation contract. The desktop executable is tied to its build tree only
-for static assets, which is acceptable while it is not distributed; ledger and
-logs remain per-user app-data resources.
+Runtime file overrides — the database URL, the log file and the backup
+directory — must be absolute paths; a relative value is rejected through each
+resource's existing failure route rather than resolved against whatever the
+working directory happens to be.
+Context: A windowed executable launched from a shortcut has an arbitrary and
+possibly unwritable working directory and no standard error stream, so a
+working-directory-relative log opened with an unwrap could terminate the process
+before anything visible happened. The production logging decision already places
+bounded mode-specific logs in app-data; the desktop shell must reuse that
+behavior rather than put a runtime log back in the repository. Absolute defaults
+did not make overrides absolute: a relative override could open a different
+existing file depending on where the shortcut started.
+Consequences: This refines the 2026-09-07 Runtime Logs entry and the 2026-06-13
+Backend Logging Stack entry: logging still goes through the same facade,
+initialization is non-fatal, and the desktop file is named for its shell or mode
+under app-data. Two instances in the same mode share one log file, so rotation
+is coordinated across processes — size is read from the file, rotation runs
+under a lock, and a writer that finds its file rotated away reopens the path —
+keeping the bounded-rotation contract true with concurrent writers; if instance
+tagging is kept, whole-line writes make those records attributable. The desktop
+executable is tied to its build tree only for static assets, which is acceptable
+while it is not distributed; ledger and logs remain per-user app-data resources.
+Launch scripts already pass absolute overrides, so the absolute-path rule
+changes nothing for them and only closes the hole for hand-built shortcuts.
 ```
 
 **6.**
@@ -2065,28 +2513,46 @@ seeded database.
 **7.**
 
 ```
-## YYYY-MM-DD - Market-Data Refresh Uses A Per-Ledger Lease
+## YYYY-MM-DD - Market-Data Refresh Uses A Per-Ledger Lease, And The Data Revision Is Persisted
 Decision: The claim that a market-data refresh is in progress lives in the
 database rather than in process memory, so every process sharing a ledger sees
 it and the reported refresh status reflects cross-process reality. The claim is a
 lease: its holder heartbeats while it works, a lease whose heartbeat has gone
 stale may be taken over by another process, every write to the run record is
-conditional on still holding the lease, and a holder that discovers it has lost
-the lease stops its work immediately and writes nothing further.
+conditional on still holding the lease, and every batch of refresh-derived data
+— prices, exchange rates and provider mappings — is applied inside one write
+transaction that first verifies the lease is still held, so a holder that lost
+its lease while waiting on a provider cannot write that provider's result.
+Provider calls happen outside those transactions. A holder that discovers it has
+lost the lease also stops promptly, but that stopping is a courtesy, not the
+guarantee. The data revision that clients use to invalidate their caches is
+likewise persisted in the ledger rather than held per process: it is bumped by
+mutating requests that do not fail with a client error, by a refresh that
+finishes or that fails after writing, by the reclaiming of an abandoned run, and
+once at every startup after migrations, and every stamped response and the
+version endpoint read it from the ledger.
 Context: The previous single-flight guard was per-process, so two processes on
 one ledger ran two concurrent provider refreshes, wrote overlapping run records,
 and each reported a refresh state blind to the other. A desktop shell alongside
 the web server makes that the normal case rather than an edge case. Reclaiming a
 stale lease alone is not sufficient: a process that stalls past the timeout is
 not dead, and on waking would otherwise finalize or overwrite a run it no longer
-owns.
+owns; and a cancellation flag checked between units cannot catch a unit whose
+provider call was already outstanding. The revision entry of 2026-09-12 recorded
+that sharing a ledger would need a persisted counter; without it, a change made
+through one process left the other process's panels serving stale cached values
+while its heartbeat kept succeeding.
 Consequences: Refines the 2026-06-16 Market Data Service Injection And
 Single-Flight Refresh entry — the guard is now per-ledger rather than
 per-process, which is what a second shell and the planned LAN access from a phone
-both require. A process killed mid-refresh cannot block refreshes indefinitely.
-Correctness here depends on behavior between independent database connections, so
-its tests use separate connection pools over one file rather than a shared
-in-memory database.
+both require — and the 2026-09-12 Data Is Served And Requested By Revision entry,
+whose process-local counter becomes a ledger-owned one; the restart-refetches
+promise of that entry is kept by the startup bump. A process killed mid-refresh
+cannot block refreshes indefinitely. Reading the revision costs one small query
+per stamped response and per heartbeat. Correctness here depends on behavior
+between independent database connections, so its tests use separate connection
+pools over one file rather than a shared in-memory database, and the stale-write
+test suspends a holder inside provider I/O rather than between units.
 ```
 
 ## Documents to update
@@ -2102,7 +2568,11 @@ in-memory database.
 | `backend/src/api/extract.rs` (new) | `ApiJson<T>` and `ImportBody`, sharing one rejection→`ApiError` mapping, so the `payload_too_large` promise holds on every route | 2 |
 | `desktop/build.rs` (new) | `tauri_build::build()` (required); no ledger or log path reader | 2 |
 | `desktop/tauri.conf.json` (new) | `identifier` set; **no top-level `version`** (inherits Cargo's); `app.windows: []`; `withGlobalTauri: false`; `app.security.csp: null`; `build.frontendDist` omitted; bundling off | 2 |
-| Root `Cargo.toml` (new), `backend/Cargo.toml`, `desktop/Cargo.toml` (new) | Workspace members, `[workspace.package] version`, member `version.workspace = true`, minor version bump at release | 1, 2, 7 |
+| Root `Cargo.toml` (new), `backend/Cargo.toml`, `desktop/Cargo.toml` (new) | Workspace members, explicit `resolver = "2"`, `[workspace.package] version`, member `version.workspace = true`, minor version bump at release | 1, 2, 7 |
+| `Cargo.lock` (moved from `backend/Cargo.lock`) | `git mv` to the root **before** the first workspace build; Phase 1 builds `--locked` and the diff is a pure rename; Tauri's dependency additions arrive and are reviewed in Phase 2 | 1, 2 |
+| `backend/src/config.rs`, `backend/src/ledger/location.rs` | Relative `TTTB_DATABASE_URL` filename, `TTTB_LOG_FILE` and `TTTB_BACKUP_DIR` rejected through each resource's existing failure route; shell-level asset-policy override so every desktop mode requires assets | 3, 4 |
+| `backend/src/engine_logging.rs` | Cross-process-safe rotation: live file length, lock-guarded rename ladder, reopen after a foreign rotation; the instance tag rides the existing line buffer | 5 |
+| `backend/src/data_revision.rs`, `backend/src/db/` | Persisted one-row revision counter replacing the process-local one; `fenced_write` and executor-taking write helpers for refresh-derived batches | 6 |
 | `frontend/package.json` (+ `package-lock.json`) | Minor version bump at release. **No new dependency** — the frontend gains no Tauri package | 7 |
 | `.gitignore` | Verify the unanchored build-output entries still cover the relocated Cargo target. No ledger-pattern change: live app-data ledgers are outside the repository, and the retired repository ledger is already under ignored `.local/` | 1 |
 | `docs/VisualDesign.DarkTheme.md` | No change expected — the footer ledger label reuses existing footer styling and no new chip is added. The document has no footer-specific rules; its chip guidance is in *Badges / chips* and its density section is about tables. If implementation needs a new token, that is a document change to add here, not a silent addition | — |
@@ -2165,10 +2635,12 @@ in-memory database.
   as a database-busy error, not corruption, but the app has no retry policy for
   it today. Recorded, not fixed here.
 - **The refresh-lease phase is the most likely to overrun.** It is committed
-  work, so overrunning means it takes longer, not that it gets dropped. The two
-  things that make it larger than it looks are the ownership rules for a
-  reclaimed-then-resumed process and the move from in-memory-pool tests to
-  two-pools-on-one-file tests; both are specified up front for that reason.
+  work, so overrunning means it takes longer, not that it gets dropped. The
+  things that make it larger than it looks are the ownership fence inside every
+  refresh write, the persisted data revision, the ownership rules for a
+  reclaimed-then-resumed process, and the move from in-memory-pool tests to
+  two-pools-on-one-file tests with a provider that can be parked mid-call; all
+  are specified up front for that reason.
 - **The ledger path on `/api/health` discloses the Windows user name.** This is
   accepted while binding is loopback-only; revisit it before the mobile work
   lifts that boundary and adds authentication. The production run model records
@@ -2180,7 +2652,21 @@ in-memory database.
   chosen: one timeline is what you want when the two copies are the problem.
   Whole-line writes bound the interleaving to line granularity and the per-line
   tag keeps every line attributable, so the accepted cost is "lines from two
-  copies alternate", not "output is corrupted".
+  copies alternate", not "output is corrupted". **Rotation is the part that is
+  not free:** two writers with private byte counts and open handles would
+  rotate each other's files, so the writer reads the live length, rotates under
+  a lock file and follows a foreign rotation. That is a small change to the
+  landed writer, and it is tested on real files, not a shared buffer.
+- **Refresh-derived writes cost one short write transaction per batch.** The
+  ownership fence turns each unit's row-by-row upserts into a single
+  `BEGIN IMMEDIATE` batch, which is also fewer fsyncs than today. The cost is
+  that the write helpers take an executor, and that the FX and price loops must
+  not hold the transaction open across a provider call — which the design
+  forbids by construction.
+- **The persisted revision is one query per stamped response and per
+  heartbeat.** Trivial on a local SQLite file; recorded so nobody later caches
+  it in memory "for speed" and quietly reintroduces the cross-process staleness
+  it exists to fix.
 - **The CSP value depends on two properties of the frontend** — no inline script
   in the built `index.html`, and no image asset small enough for Vite to inline.
   Both are true today and both are easy to break accidentally. An inline script is
