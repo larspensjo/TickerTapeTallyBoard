@@ -268,7 +268,7 @@ mod tests {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 8480,
             ledger,
-            static_assets_dir: PathBuf::from("target/test-assets"),
+            static_assets_dir: crate::test_support::workspace_target_path("test-assets"),
             mode,
             create_ledger_if_missing: false,
             backup_enabled: false,
@@ -522,8 +522,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after UNIX_EPOCH")
             .as_nanos();
-        PathBuf::from("target")
-            .join("test-assets")
-            .join(format!("{name}-{unique}"))
+        crate::test_support::workspace_target_path("test-assets").join(format!("{name}-{unique}"))
     }
 }

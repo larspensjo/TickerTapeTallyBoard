@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["backend"]
+
+[workspace.package]
+version = "0.18.0"
+edition = "2021"

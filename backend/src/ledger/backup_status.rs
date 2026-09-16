@@ -45,7 +45,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        PathBuf::from("target/test-backup-status").join(format!("{name}-{unique}"))
+        crate::test_support::workspace_target_path("test-backup-status")
+            .join(format!("{name}-{unique}"))
     }
 
     #[test]

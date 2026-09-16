@@ -118,7 +118,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after UNIX_EPOCH")
             .as_nanos();
-        let directory = PathBuf::from("target").join("test-dbs");
+        let directory = crate::test_support::workspace_target_path("test-dbs");
         fs::create_dir_all(&directory).expect("test database directory should be created");
         directory.join(format!("{name}-{unique}.sqlite"))
     }

@@ -1,8 +1,8 @@
 # Sharesight Import Spike
 
 **Date:** 2026-06-13  
-**Fixture:** private `docs/AllTradesReport_2026-06-12.csv`  
-**Spike command:** `cargo run --example sharesight_import_spike` from `backend/`
+**Fixture:** private `docs/AllTradesReport_Sharesight_2026-06-12.csv`
+**Spike command:** `cargo run -p ticker-tape-tally-board-backend --example sharesight_import_spike -- --csv docs/AllTradesReport_Sharesight_2026-06-12.csv` from the repository root
 
 This note is sanitized. It intentionally omits row-level values, position sizes,
 instrument names, and instrument codes from the private Sharesight export.
@@ -81,8 +81,7 @@ Interpretation:
 Repro command shape:
 
 ```powershell
-cd backend
-cargo run --example sharesight_import_spike -- --split-current-position <CURRENT_NOW_POSITION>
+cargo run -p ticker-tape-tally-board-backend --example sharesight_import_spike -- --csv docs/AllTradesReport_Sharesight_2026-06-12.csv --split-current-position <CURRENT_NOW_POSITION>
 ```
 
 ## Price Adjustment Note

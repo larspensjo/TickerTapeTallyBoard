@@ -7,7 +7,7 @@
   },
   "window.title": "${folderName} — ${activeEditorShort} — ${rootPath}",
   "rust-analyzer.linkedProjects": [
-    "backend/Cargo.toml"
+    "Cargo.toml"
   ],
   "rust-analyzer.cargo.allTargets": true,
   "rust-analyzer.check.command": "clippy",

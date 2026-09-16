@@ -149,7 +149,6 @@ mod tests {
     use std::{
         fs,
         net::{IpAddr, Ipv4Addr},
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -164,7 +163,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let directory = PathBuf::from("target/test-ledger-open").join(format!("created-{unique}"));
+        let directory = crate::test_support::workspace_target_path("test-ledger-open")
+            .join(format!("created-{unique}"));
         fs::create_dir_all(&directory).expect("test directory");
         let path = directory.join("ledger.sqlite");
         let config = AppConfig {
@@ -200,13 +200,14 @@ mod tests {
 
     #[tokio::test]
     async fn pre_migration_snapshot_is_mandatory_even_when_launch_backups_are_disabled() {
-        let directory = PathBuf::from("target/test-ledger-open").join(format!(
-            "pending-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory =
+            crate::test_support::workspace_target_path("test-ledger-open").join(format!(
+                "pending-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("ledger.sqlite");
         let location = resolve(
@@ -249,13 +250,14 @@ mod tests {
 
     #[tokio::test]
     async fn unresolved_directory_blocks_pending_migration_but_not_launch() {
-        let directory = PathBuf::from("target/test-ledger-open").join(format!(
-            "unresolved-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory =
+            crate::test_support::workspace_target_path("test-ledger-open").join(format!(
+                "unresolved-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("ledger.sqlite");
         let location = resolve(
@@ -294,13 +296,14 @@ mod tests {
 
     #[tokio::test]
     async fn unresolved_directory_is_a_nonfatal_failed_launch_after_migration() {
-        let directory = PathBuf::from("target/test-ledger-open").join(format!(
-            "launch-failure-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory =
+            crate::test_support::workspace_target_path("test-ledger-open").join(format!(
+                "launch-failure-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("ledger.sqlite");
         let location = resolve(

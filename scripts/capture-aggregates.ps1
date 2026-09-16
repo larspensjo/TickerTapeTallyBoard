@@ -115,11 +115,14 @@ function Get-UserAgent {
         return $ExplicitUserAgent
     }
 
-    $cargoManifest = Get-Content (Join-Path $RepoRoot "backend/Cargo.toml")
-    $packageName = ($cargoManifest | Select-String '^name\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
-    $packageVersion = ($cargoManifest | Select-String '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+    $backendManifest = Get-Content (Join-Path $RepoRoot "backend/Cargo.toml")
+    $workspaceManifest = Get-Content (Join-Path $RepoRoot "Cargo.toml")
+    $packageNameMatch = $backendManifest | Select-String '^name\s*=\s*"([^"]+)"' | Select-Object -First 1
+    $packageVersionMatch = $workspaceManifest | Select-String '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+    $packageName = if ($null -ne $packageNameMatch) { $packageNameMatch.Matches.Groups[1].Value } else { $null }
+    $packageVersion = if ($null -ne $packageVersionMatch) { $packageVersionMatch.Matches.Groups[1].Value } else { $null }
     if ([string]::IsNullOrWhiteSpace($packageName) -or [string]::IsNullOrWhiteSpace($packageVersion)) {
-        throw "Could not derive the backend User-Agent from backend/Cargo.toml."
+        throw "Could not derive the backend User-Agent from backend/Cargo.toml and the root Cargo.toml."
     }
     return "$packageName/$packageVersion"
 }

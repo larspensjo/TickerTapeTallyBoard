@@ -828,10 +828,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after UNIX_EPOCH")
             .as_nanos();
-        env::current_dir()
-            .expect("current directory should resolve")
-            .join("target")
-            .join("test-config")
+        crate::test_support::workspace_target_path("test-config")
             .join(format!("{stem}-{unique}.{extension}"))
     }
 

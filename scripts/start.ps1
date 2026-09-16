@@ -308,9 +308,14 @@ if (-not $SkipInstall) {
 }
 if (-not $SkipBuild) {
     Invoke-Step "Build backend" {
-        Push-Location $BackendDir
+        Push-Location $RepoRoot
         try {
-            $arguments = if ($UsesVite) { @("build") } else { @("build", "--release") }
+            $arguments = if ($UsesVite) {
+                @("build", "-p", "ticker-tape-tally-board-backend")
+            }
+            else {
+                @("build", "-p", "ticker-tape-tally-board-backend", "--release")
+            }
             Invoke-NativeCommand "cargo" $arguments
         }
         finally { Pop-Location }
@@ -371,7 +376,7 @@ Write-Host "Press Ctrl+C to stop the application."
 Write-Host ""
 
 $BuildProfile = if ($UsesVite) { "debug" } else { "release" }
-$BackendExe = Join-Path $BackendDir "target/$BuildProfile/ticker-tape-tally-board-backend.exe"
+$BackendExe = Join-Path $RepoRoot "target/$BuildProfile/ticker-tape-tally-board-backend.exe"
 if (-not (Test-Path $BackendExe)) {
     throw "Backend executable not found: $BackendExe. Run without -SkipBuild first."
 }

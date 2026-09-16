@@ -259,7 +259,7 @@ mod tests {
         initialize, plan_rotation, rotated_path, LogSettings, RotatingFileWriter, RotationRename,
     };
     use std::{
-        env, fs,
+        fs,
         io::Write,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -411,10 +411,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after UNIX_EPOCH")
             .as_nanos();
-        env::current_dir()
-            .expect("current directory should resolve")
-            .join("target")
-            .join("test-engine-logging")
+        crate::test_support::workspace_target_path("test-engine-logging")
             .join(format!("{name}-{unique}"))
     }
 }

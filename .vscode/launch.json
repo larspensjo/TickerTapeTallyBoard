@@ -5,7 +5,7 @@
       "name": "Debug backend",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/backend/target/debug/ticker-tape-tally-board-backend.exe",
+      "program": "${workspaceFolder}/target/debug/ticker-tape-tally-board-backend.exe",
       "args": [],
       "cwd": "${workspaceFolder}/backend",
       "console": "integratedTerminal",

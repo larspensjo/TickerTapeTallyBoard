@@ -30,8 +30,9 @@ investigation, implementation, and verification; explain observable outcomes.
 - Keep entry points and orchestration thin. Name runtime modules after stable
   behavior or domain concepts, not temporary plan phases or milestones.
 - Follow `docs/VisualDesign.DarkTheme.md` for UI work.
-- The UI displays separate frontend and backend versions: `frontend/package.json`
-  and `backend/Cargo.toml`, with the latter exposed through `/api/health`.
+- The UI displays two version values: frontend from `frontend/package.json` and
+  backend from the workspace `[workspace.package].version` (inherited by the
+  backend crate) via `/api/health`.
   Update the relevant versions when warranted by the change.
 - Use `engine_logging` for backend runtime logging, with enough context to identify
   the failing job, URL, or operation.
@@ -44,8 +45,13 @@ investigation, implementation, and verification; explain observable outcomes.
 
 - Select verification appropriate to the change and report checks that could not
   be completed. Documentation-only edits do not need application builds or tests.
-- For backend Rust changes, run `cargo build`, relevant tests,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` from `backend/`.
+- The repository is a Cargo workspace sharing one `target/` directory. Cargo
+  commands run from the repository root.
+- Build with `cargo build -p ticker-tape-tally-board-backend`.
+- Test with `cargo test -p ticker-tape-tally-board-backend`.
+- When a backend task is complete, run
+  `cargo clippy -p ticker-tape-tally-board-backend --all-targets -- -D warnings`
+  and then `cargo fmt`.
 - For frontend changes, run relevant tests, `npm run check`, and `npm run fmt`
   from `frontend/`. The check covers TypeScript and Biome lint.
 - When launching npm through PowerShell `Start-Process`, use `npm.cmd` explicitly;

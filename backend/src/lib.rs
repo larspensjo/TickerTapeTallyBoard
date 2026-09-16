@@ -19,3 +19,6 @@ mod mode;
 pub mod providers;
 pub mod startup_error;
 pub mod state;
+
+#[cfg(test)]
+pub(crate) mod test_support;

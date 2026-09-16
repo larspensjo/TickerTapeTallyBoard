@@ -550,9 +550,9 @@ Frontend verification:
 Standard repo checks after implementation phases:
 
 ```text
-backend/: cargo build
-backend/: cargo clippy --all-targets -- -D warnings
-backend/: cargo fmt
+repository root: cargo build -p ticker-tape-tally-board-backend
+repository root: cargo clippy -p ticker-tape-tally-board-backend --all-targets -- -D warnings
+repository root: cargo fmt
 frontend/: npm run check
 frontend/: npm run fmt
 ```

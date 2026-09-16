@@ -298,7 +298,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory = PathBuf::from("target/test-backups").join(format!("{name}-{unique}"));
+        let directory = crate::test_support::workspace_target_path("test-backups")
+            .join(format!("{name}-{unique}"));
         fs::create_dir_all(&directory).unwrap();
         directory
     }

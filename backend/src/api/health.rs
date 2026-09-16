@@ -102,7 +102,6 @@ mod tests {
     use serde_json::Value;
     use std::{
         fs,
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
     use tower::ServiceExt;
@@ -148,7 +147,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let directory = PathBuf::from("target/test-health-backups").join(unique.to_string());
+        let directory = crate::test_support::workspace_target_path("test-health-backups")
+            .join(unique.to_string());
         fs::create_dir_all(&directory).expect("backup directory");
         fs::write(directory.join("portfolio-20260829T143012000Z.sqlite"), [])
             .expect("snapshot marker");

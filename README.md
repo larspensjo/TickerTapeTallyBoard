@@ -105,12 +105,12 @@ window option.
 
 ## Backend Commands
 
-Run from `backend/`:
+Run from the repository root:
 
 ```powershell
-cargo build
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo build -p ticker-tape-tally-board-backend
+cargo test -p ticker-tape-tally-board-backend
+cargo clippy -p ticker-tape-tally-board-backend --all-targets -- -D warnings
 cargo fmt
 ```
 
@@ -120,7 +120,7 @@ Configuration:
 - `TTTB_HOST`: backend bind IP address, default `127.0.0.1`; only `127.0.0.0/8` and `::1` are accepted.
 - `TTTB_PORT`: backend port, default `8480`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
-- `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist`
+- `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist` (relative to the backend crate directory)
 - `TTTB_DATABASE_URL`: optional explicit backend SQLite database URL. When omitted, production uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` and development uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
 - `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
@@ -377,13 +377,11 @@ Invoke-WebRequest http://127.0.0.1:8480/api/health -UseBasicParsing
 Run the Sharesight import spike against the local private export:
 
 ```powershell
-cd backend
-cargo run --example sharesight_import_spike
+cargo run -p ticker-tape-tally-board-backend --example sharesight_import_spike -- --csv docs/AllTradesReport_Sharesight_2026-06-12.csv
 ```
 
 To verify the split-position invariant when the current Sharesight `NOW` position is known:
 
 ```powershell
-cd backend
-cargo run --example sharesight_import_spike -- --split-current-position <CURRENT_NOW_POSITION>
+cargo run -p ticker-tape-tally-board-backend --example sharesight_import_spike -- --csv docs/AllTradesReport_Sharesight_2026-06-12.csv --split-current-position <CURRENT_NOW_POSITION>
 ```
