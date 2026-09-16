@@ -637,3 +637,8 @@ depends on the frontend shipping no inline script and no image asset small
 enough for the bundler to inline; introducing either is what would require the
 policy to change, and an inline script would blank the window rather than
 degrade gracefully.
+
+## 2026-09-16 - Runtime Path Overrides Must Be Absolute
+Decision: Database URL, log file and backup directory overrides must be absolute in every shell. Relative values use each resource's existing failure route: startup failure for the database, terminal-only logging for the log, and failed backup status for backups. The database URL is otherwise passed through unchanged.
+Context: Absolute defaults did not make overrides absolute, so a shortcut's working directory could choose which existing file opened.
+Consequences: The launch script already makes the database override absolute; log and backup overrides it passes through must now be absolute themselves. The static-assets override is unaffected.

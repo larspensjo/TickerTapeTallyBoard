@@ -184,7 +184,16 @@ impl AppConfig {
 
 fn resolve_log_file(mode: Mode) -> LogFile {
     match read_optional_result(LOG_FILE_ENV, env::var(LOG_FILE_ENV)) {
-        Ok(Some(path)) => LogFile::Resolved(PathBuf::from(path)),
+        Ok(Some(path)) => {
+            let path_buf = PathBuf::from(&path);
+            if path_buf.is_absolute() {
+                LogFile::Resolved(path_buf)
+            } else {
+                LogFile::Unresolved(format!(
+                    "{LOG_FILE_ENV} value {path:?} must be an absolute path"
+                ))
+            }
+        }
         Ok(None) => log_file_from_result(env::var(LOCAL_APP_DATA_ENV), mode),
         Err(error) => LogFile::Unresolved(error.to_string()),
     }
@@ -214,7 +223,7 @@ fn resolve_backup_dir(mode: Mode) -> BackupDirectory {
     if mode.is_demo() {
         return BackupDirectory::Unresolved("demo mode does not use backups".to_owned());
     }
-    if let Some(directory) = backup_directory_from_env(BACKUP_DIR_ENV, &[]) {
+    if let Some(directory) = backup_directory_override_from_env(BACKUP_DIR_ENV) {
         return directory;
     }
     match mode {
@@ -232,6 +241,16 @@ fn resolve_backup_dir(mode: Mode) -> BackupDirectory {
         }
         Mode::Demo => unreachable!(),
     }
+}
+
+fn backup_directory_override_from_env(variable: &'static str) -> Option<BackupDirectory> {
+    backup_directory_from_result(variable, &[], env::var(variable)).map(|directory| match directory
+    {
+        BackupDirectory::Resolved(path) if !path.is_absolute() => BackupDirectory::Unresolved(
+            format!("{variable} value {path:?} must be an absolute path"),
+        ),
+        directory => directory,
+    })
 }
 
 fn backup_directory_from_env(variable: &'static str, suffix: &[&str]) -> Option<BackupDirectory> {
@@ -544,6 +563,47 @@ mod tests {
     }
 
     #[test]
+    fn relative_database_url_becomes_typed_startup_error() {
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some("sqlite://ledger.sqlite"))]);
+
+        let error =
+            StartupError::from(AppConfig::from_env().expect_err("relative URL should fail"));
+
+        assert!(matches!(error, StartupError::LedgerNotAbsolute { .. }));
+        assert!(error.to_string().contains("must be absolute"));
+    }
+
+    #[test]
+    fn demo_ignores_relative_database_url_without_creating_a_file() {
+        let relative_path = Path::new("relative-demo.sqlite");
+        assert!(
+            !relative_path.exists(),
+            "test ledger must not already exist"
+        );
+        let _guard = TestEnv::new(&[
+            (MODE_ENV, Some("demo")),
+            (DATABASE_URL_ENV, Some("sqlite://relative-demo.sqlite")),
+        ]);
+
+        let config = AppConfig::from_env().expect("demo config should use memory");
+
+        assert!(config.ledger.path.is_none());
+        assert!(!relative_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn root_relative_database_url_is_not_absolute_on_windows() {
+        let _guard = TestEnv::new(&[(DATABASE_URL_ENV, Some("sqlite:///ledger.sqlite"))]);
+
+        let error =
+            StartupError::from(AppConfig::from_env().expect_err("root-relative URL should fail"));
+
+        assert!(matches!(error, StartupError::LedgerNotAbsolute { .. }));
+        assert!(error.to_string().contains("must be absolute"));
+    }
+
+    #[test]
     fn from_env_uses_create_ledger_flag() {
         let _guard = TestEnv::new(&[
             (MODE_ENV, Some("demo")),
@@ -641,6 +701,61 @@ mod tests {
             config.log_file.path(),
             Some(Path::new("C:/logs/override.log"))
         );
+    }
+
+    #[test]
+    fn relative_log_file_override_becomes_unresolved() {
+        let _guard = TestEnv::new(&[(MODE_ENV, Some("demo")), (LOG_FILE_ENV, Some("engine.log"))]);
+
+        let config = AppConfig::from_env().expect("relative log path must not reject config");
+
+        assert!(matches!(
+            config.log_file,
+            LogFile::Unresolved(reason) if reason.contains("absolute")
+        ));
+    }
+
+    #[test]
+    fn relative_backup_directory_override_becomes_unresolved() {
+        let database_url = sqlite_url(&unique_path("backup-relative", "sqlite"));
+        let _guard = TestEnv::new(&[
+            (MODE_ENV, Some("production")),
+            (DATABASE_URL_ENV, Some(&database_url)),
+            (BACKUP_DIR_ENV, Some("backups")),
+        ]);
+
+        let config = AppConfig::from_env().expect("relative backup path must not reject config");
+
+        assert!(matches!(
+            config.backup_dir,
+            BackupDirectory::Unresolved(reason) if reason.contains("absolute")
+        ));
+    }
+
+    #[test]
+    fn absolute_backup_directory_override_is_resolved_unchanged() {
+        let database_url = sqlite_url(&unique_path("backup-absolute", "sqlite"));
+        let _guard = TestEnv::new(&[
+            (MODE_ENV, Some("production")),
+            (DATABASE_URL_ENV, Some(&database_url)),
+            (BACKUP_DIR_ENV, Some("C:/backups")),
+        ]);
+
+        let config = AppConfig::from_env().expect("absolute backup path should load");
+
+        assert_eq!(config.backup_dir.path(), Some(Path::new("C:/backups")));
+    }
+
+    #[test]
+    fn demo_ignores_relative_backup_directory_override() {
+        let _guard = TestEnv::new(&[(MODE_ENV, Some("demo")), (BACKUP_DIR_ENV, Some("backups"))]);
+
+        let config = AppConfig::from_env().expect("relative backup path must not reject config");
+
+        assert!(matches!(
+            config.backup_dir,
+            BackupDirectory::Unresolved(reason) if reason == "demo mode does not use backups"
+        ));
     }
 
     #[test]
@@ -745,6 +860,18 @@ mod tests {
 
         assert!(message.contains("LOCALAPPDATA"));
         assert!(message.contains("TTTB_DATABASE_URL"));
+    }
+
+    #[test]
+    fn relative_local_app_data_makes_default_database_url_not_absolute() {
+        let _guard = TestEnv::new(&[(LOCAL_APP_DATA_ENV, Some("relative-appdata"))]);
+
+        let error = StartupError::from(
+            AppConfig::from_env().expect_err("relative default ledger path should fail"),
+        );
+
+        assert!(matches!(error, StartupError::LedgerNotAbsolute { .. }));
+        assert!(error.to_string().contains("must be absolute"));
     }
 
     #[test]

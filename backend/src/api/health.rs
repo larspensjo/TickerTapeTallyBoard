@@ -137,6 +137,7 @@ mod tests {
         assert!(body["backup"].get("launch_error").is_some());
         assert!(body["backup"].get("listing_error").is_some());
         assert!(body.get("demo").is_none());
+        assert!(body.get("shell").is_none());
         assert_eq!(body["build"]["package"], env!("CARGO_PKG_NAME"));
         assert!(body["build"]["profile"].is_string());
     }
@@ -218,5 +219,6 @@ mod tests {
         assert_eq!(body["ledger"]["mode"], "memory");
         assert!(body["ledger"]["path"].is_null());
         assert!(body.get("demo").is_none());
+        assert!(body.get("shell").is_none());
     }
 }

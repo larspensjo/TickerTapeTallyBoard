@@ -137,11 +137,11 @@ Configuration:
 - `TTTB_PORT`: backend port, default `8480`
 - `PORT`: hosting-platform fallback port when `TTTB_PORT` is not set
 - `TTTB_STATIC_DIR`: built frontend directory, default `../frontend/dist` (relative to the backend crate directory)
-- `TTTB_DATABASE_URL`: optional explicit backend SQLite database URL. When omitted, production uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` and development uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
+- `TTTB_DATABASE_URL`: optional explicit backend SQLite database URL whose file path must be absolute; a relative path fails startup. When omitted, production uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` and development uses `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`; demo always uses memory and ignores this setting.
 - `TTTB_CREATE_LEDGER_IF_MISSING`: default `false`; set to `1` only to create and migrate a missing ledger (the script's `-InitLedger` switch does this). Otherwise a missing ledger is refused and no empty file is created.
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
-- `TTTB_BACKUP_DIR`: backup directory. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending.
-- `TTTB_LOG_FILE`: backend log file. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
+- `TTTB_BACKUP_DIR`: backup directory; an override must be an absolute path, or backup status is failed. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending. Demo ignores this setting and takes no backups.
+- `TTTB_LOG_FILE`: backend log file; an override must be an absolute path, or logging uses the terminal only. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: primary launch-time market-data refresh setting, default `true`. `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED` is an accepted alias for the same launch refresh and is what `-NoRefresh` sets. Both default to `true`; if both are set, either one being `false` disables the refresh.
 
 ## Logs

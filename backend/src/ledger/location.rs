@@ -14,6 +14,7 @@ pub struct LedgerLocation {
 pub enum LedgerLocationError {
     MustBeFileBacked { url: String, mode: Mode },
     UnsupportedUrl { url: String },
+    NotAbsolute { url: String },
     NotAFile { path: PathBuf },
 }
 impl fmt::Display for LedgerLocationError {
@@ -27,6 +28,7 @@ impl fmt::Display for LedgerLocationError {
                 )
             }
             Self::UnsupportedUrl { url } => write!(f, "unsupported ledger URL: {url}"),
+            Self::NotAbsolute { url } => write!(f, "ledger path in {url} must be absolute"),
             Self::NotAFile { path } => {
                 write!(f, "ledger path is not a file: {}", path.display())
             }
@@ -61,6 +63,11 @@ pub fn resolve(url: &str, mode: Mode) -> Result<LedgerLocation, LedgerLocationEr
         return Err(LedgerLocationError::MustBeFileBacked {
             url: url.to_owned(),
             mode,
+        });
+    }
+    if !path.is_absolute() {
+        return Err(LedgerLocationError::NotAbsolute {
+            url: url.to_owned(),
         });
     }
     if path.is_dir() {
@@ -113,5 +120,37 @@ mod tests {
                 Err(LedgerLocationError::MustBeFileBacked { .. })
             ));
         }
+    }
+
+    #[test]
+    fn rejects_relative_file_urls_outside_demo() {
+        for mode in [Mode::Production, Mode::Development] {
+            for url in [
+                "sqlite://ledger.sqlite",
+                "sqlite:ledger.sqlite",
+                "sqlite://./x/ledger.sqlite",
+            ] {
+                assert!(matches!(
+                    resolve(url, mode),
+                    Err(LedgerLocationError::NotAbsolute { url: ref rejected })
+                        if rejected == url
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_absolute_file_url_query_options() {
+        let url = "sqlite://C:/temp/ledger.sqlite?mode=rwc";
+        let location = resolve(url, Mode::Production).expect("absolute ledger URL");
+
+        assert_eq!(location.url, url);
+    }
+
+    #[test]
+    fn demo_ignores_relative_file_url() {
+        let location = resolve("sqlite://ledger.sqlite", Mode::Demo).expect("demo location");
+
+        assert_eq!(location, memory());
     }
 }

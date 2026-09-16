@@ -16,6 +16,9 @@ pub enum StartupError {
         url: String,
         mode: Mode,
     },
+    LedgerNotAbsolute {
+        url: String,
+    },
     LedgerNotAFile {
         path: PathBuf,
     },
@@ -72,6 +75,7 @@ impl From<LedgerLocationError> for StartupError {
                 Self::LedgerMustBeFileBacked { url, mode }
             }
             LedgerLocationError::UnsupportedUrl { url } => Self::LedgerUnsupportedUrl { url },
+            LedgerLocationError::NotAbsolute { url } => Self::LedgerNotAbsolute { url },
             LedgerLocationError::NotAFile { path } => Self::LedgerNotAFile { path },
         }
     }
@@ -98,6 +102,11 @@ impl fmt::Display for StartupError {
                 f,
                 "{}",
                 LedgerLocationError::NotAFile { path: path.clone() }
+            ),
+            Self::LedgerNotAbsolute { url } => write!(
+                f,
+                "{}",
+                LedgerLocationError::NotAbsolute { url: url.clone() }
             ),
             Self::LedgerUnsupportedUrl { url } => write!(
                 f,
