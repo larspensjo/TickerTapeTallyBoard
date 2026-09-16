@@ -1925,7 +1925,23 @@ The window becomes something you can put on the Start menu.
    enabled, so the release build has no console.
 7. Window close drives graceful shutdown: handle `RunEvent::Exit` and call
    `handle.block_on(application.shutdown())`.
-8. **`scripts/start.ps1 -Desktop` — the desktop launch is a mode of the existing
+8. **The window remembers its size, position and maximized state** across
+   launches, using Tauri's official `tauri-plugin-window-state` (v2) as a normal
+   dependency of the desktop crate only — no frontend change, no JS API, so
+   `withGlobalTauri: false` stays. Requirements:
+   - State is saved when the window closes and restored before the window is
+     first shown, so it does not visibly jump from the default placement.
+   - The saved file lives in the plugin's per-user app-data location, never the
+     build tree or the CWD (settled decision 13). It is UI placement only: never
+     in the ledger, the backups or the logs.
+   - **A saved position that no longer lies on a connected monitor falls back to
+     the default placement** — the window must never open off-screen after a
+     monitor is disconnected. Verify whether the plugin already guarantees this;
+     if it does not, add the check rather than accepting the risk.
+   - One saved layout serves every mode (production, development, demo).
+   - The `--probe-webview` harness window neither restores nor saves state, so the
+     gate stays independent of a user's last window layout.
+9. **`scripts/start.ps1 -Desktop` — the desktop launch is a mode of the existing
    script, not a second script.** One script keeps ledger resolution, the
    legacy-name guard, the demo wiring and environment save/restore in one place,
    which is the same DRY argument the plan applies to the router and the
@@ -2011,7 +2027,7 @@ The window becomes something you can put on the Start menu.
    app.** Ctrl+C in the console falls into the existing `Stop-ProcessTree`
    `finally`, which is a hard kill that skips the graceful pool close. SQLite
    recovers from that through WAL, but it is not the intended path.
-9. **Demo mode reaches the desktop shell.** The desktop entry point reads
+10. **Demo mode reaches the desktop shell.** The desktop entry point reads
    `TTTB_MODE=demo` exactly like the server does — no shell-specific override, no
    ignore-warning. `scripts/start.ps1 -Desktop -Demo` therefore opens the seeded,
    read-only, in-memory demo in the native window, and the demo becomes a
@@ -2028,7 +2044,7 @@ The window becomes something you can put on the Start menu.
      only in the bridge tests;
    - `/api/health` reports `mode: "memory"`, `path: null`, and the footer renders
      `In-memory demo` beside the `DEMO` chip (Phase 4).
-10. **Decision-log entries land here:** the working-directory-independence /
+11. **Decision-log entries land here:** the working-directory-independence /
     logging / visible-failure entry, and the demo-in-both-shells refinement entry.
 
 Tests:
@@ -2063,6 +2079,10 @@ Tests:
   created file at the path, not in the renamed one.
 - The startup/shutdown banner renders an absent ledger path as `in-memory (demo)`
   rather than an empty field, and names the shell.
+- If an off-screen fallback check is added for the remembered window placement,
+  it is a pure function (saved rectangle plus monitor rectangles in, placement
+  out) with unit tests for: fully on a monitor (kept), on a monitor that is gone
+  (default placement), and partly overlapping a monitor edge.
 - `StartupError` `Display` includes the resolved path for each variant, including
   `StaticAssetsMissing` (the dialog and the log line share that text — one source
   of truth).
@@ -2090,6 +2110,13 @@ Verify:
     (`cargo build --release -p ticker-tape-tally-board-desktop`).
   - Close the window with the X and confirm the shutdown banner is written, the
     process exits, and no `-wal` file is left mid-transaction.
+  - **Remembered window placement:** move and resize the window, close it,
+    relaunch — it reopens at the same size and position. Maximize, close,
+    relaunch — it reopens maximized. If a second monitor is available, close the
+    window on it, disconnect that monitor (or change the display arrangement),
+    relaunch — the window opens on a connected monitor. Run the probe
+    afterwards and confirm its window uses the default placement and does not
+    change the remembered layout.
   - Confirm again that `Get-NetTCPConnection -OwningProcess <pid>` shows no
     listener and no firewall prompt appears.
   - Launch two desktop instances at once (same mode, so they share one file),
