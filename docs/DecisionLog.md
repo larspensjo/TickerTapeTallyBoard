@@ -593,3 +593,47 @@ as a generic failure — to carrying specific codes in the standard envelope.
 Decision: The Cargo workspace has backend and desktop members. Checks widen to the whole workspace whenever the desktop member or workspace manifest changes.
 Context: The native desktop crate is now a workspace member and shares the workspace target directory and package version.
 Consequences: Routine backend-only work keeps its faster per-package commands; desktop and workspace-manifest changes use workspace-wide build, test, and clippy checks.
+
+## 2026-09-16 - In-Process Desktop Transport Over One Custom URI Scheme
+Decision: The desktop shell serves both the built frontend and the API to its
+webview through a single registered custom URI scheme whose handler feeds
+requests into the same router the web server uses. The desktop process opens no
+TCP listener and no port. Because the page and the API share one origin, the
+frontend's HTTP client needs no transport branch and the CORS layer is not
+widened. Both shells are constructed from one composition root: one router
+construction, one state construction, one ledger-path resolution, one shutdown.
+The shell also emits its own Content-Security-Policy header, because a policy
+configured in the webview framework covers only that framework's own asset
+resolution and not responses produced by a registered handler. The policy value
+is fixed in the shell's source, permits inline styles but not inline scripts, and
+permits `data:` images solely because the application's favicon is an inline SVG.
+Context: A native window was wanted without a firewall prompt or a port, while
+the unauthenticated and, today, loopback-only web-server deployment had to keep
+working unchanged from the same source. Typed per-endpoint commands were
+rejected as doubling per-endpoint maintenance forever; a two-origin split was
+rejected because it would have required relaxing the CORS layer that guards the
+web server. The awkward cases — a rejected write with a JSON error body, an
+empty 204, and a multi-megabyte upload — were proven inside the real window
+before the design was adopted, on the following recorded platform versions:
+
+```json
+"versions": {
+  "app": "0.18.1",
+  "tauri": "2.11.5",
+  "webview2_com": "0.38.2",
+  "webview2_runtime": "153.0.4234.32",
+  "wry": "0.55.1"
+}
+```
+
+Consequences: The desktop window's origin differs from the browser's, so under
+the 2026-07-10 View settings are persisted client-side decision, client-side
+view preferences are per-shell; that decision's persistence promise holds
+within each shell, not across them. Any future work that would require the
+frontend to know which shell it is running in reopens this decision. Because the
+platform stack decides the behavior, the in-window probe is kept and re-run when
+the webview or its framework is upgraded. The content-security policy's value
+depends on the frontend shipping no inline script and no image asset small
+enough for the bundler to inline; introducing either is what would require the
+policy to change, and an inline script would blank the window rather than
+degrade gracefully.

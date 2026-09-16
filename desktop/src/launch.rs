@@ -1,11 +1,9 @@
-use std::{error::Error, sync::Arc, time::Duration};
+use std::{error::Error, path::PathBuf, time::Duration};
 
 use ticker_tape_tally_board_backend::{
-    api,
-    config::{AppConfig, Mode},
+    app::Application,
+    config::{AppConfig, AssetPolicy, BackupDirectory, LogFile, Mode},
     engine_logging, ledger,
-    market_data::MarketDataService,
-    state::AppState,
 };
 
 use crate::{
@@ -22,18 +20,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let handle = runtime.handle().clone();
-    let state = if probe_mode {
-        handle.block_on(AppState::for_tests()).with_mode(Mode::Demo)
+    let config = if probe_mode {
+        probe_config()
     } else {
-        let config = AppConfig::from_env()?;
-        let opened = handle.block_on(ledger::open(&config))?;
-        AppState::new(opened.pool, Arc::new(MarketDataService::live()))
-            .with_mode(config.mode)
-            .with_ledger_path(config.ledger.path.clone())
-            .with_backup(config.backup_dir.clone(), opened.launch_backup)
+        let mut config = AppConfig::from_env()?;
+        config.static_assets_dir = desktop_assets_dir();
+        config
     };
-    let assets = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist");
-    let app_router = api::router_with_static_assets(assets, state);
+    let mut application = handle.block_on(Application::build(&config, AssetPolicy::Required))?;
+    application.start_launch_refresh(&config);
+    let app_router = application.router.clone();
     let probe = ProbeState::new();
     let router = if probe_mode {
         webview_probe::wrap_with_state(app_router, probe.clone())
@@ -47,7 +43,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let version_probe = probe.clone();
     let exit_probe = probe.clone();
     let watchdog_probe = probe.clone();
-    let result = tauri::Builder::default()
+    let setup_runtime = handle.clone();
+    let result = match tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol(
             WEBVIEW_SCHEME,
             move |_context, request, responder| {
@@ -73,7 +70,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             if probe_mode {
                 let app_handle = app.handle().clone();
                 let exit_probe = exit_probe.clone();
-                handle.spawn(async move {
+                setup_runtime.spawn(async move {
                     loop {
                         if let Some(code) = exit_probe.requested_exit_code() {
                             app_handle.exit(code);
@@ -83,7 +80,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     }
                 });
                 let watchdog = watchdog_probe.clone();
-                handle.spawn(async move {
+                setup_runtime.spawn(async move {
                     tokio::time::sleep(Duration::from_secs(
                         webview_probe::watchdog_timeout_seconds(),
                     ))
@@ -93,10 +90,38 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())?;
+        .build(tauri::generate_context!())
+    {
+        Ok(result) => result,
+        Err(error) => {
+            handle.block_on(application.shutdown());
+            return Err(error.into());
+        }
+    };
     result.run_return(|_, _| {});
+    handle.block_on(application.shutdown());
     if probe_mode && probe.process_exit_code() != 0 {
         return Err("the WebView2 probe reported a failure".into());
     }
     Ok(())
+}
+
+fn desktop_assets_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist")
+}
+
+fn probe_config() -> AppConfig {
+    AppConfig {
+        host: "127.0.0.1".parse().expect("probe host is valid"),
+        port: 8480,
+        ledger: ledger::memory(),
+        static_assets_dir: desktop_assets_dir(),
+        mode: Mode::Demo,
+        create_ledger_if_missing: false,
+        backup_enabled: false,
+        backup_dir: BackupDirectory::Unresolved("probe mode".to_owned()),
+        log_file: LogFile::Unresolved("probe mode".to_owned()),
+        market_data_refresh_enabled: false,
+        launch_refresh_enabled: false,
+    }
 }
