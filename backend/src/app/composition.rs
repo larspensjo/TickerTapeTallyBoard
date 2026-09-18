@@ -197,6 +197,7 @@ mod tests {
             backup_enabled: false,
             backup_dir: BackupDirectory::Unresolved("test".to_owned()),
             log_file: LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: true,
             launch_refresh_enabled: true,
         }
@@ -424,6 +425,7 @@ mod tests {
             backup_enabled: false,
             backup_dir: BackupDirectory::Unresolved("test".to_owned()),
             log_file: LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         }

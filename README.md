@@ -35,6 +35,20 @@ release build can take several minutes.
 The script blocks until Ctrl+C. Run a second PowerShell window when a procedure
 needs a second instance.
 
+Run the same built frontend in a native Windows window:
+
+```powershell
+.\scripts\start.ps1 -Desktop
+```
+
+The desktop shell uses the same production ledger configuration as the web
+shell but has no listener or browser step. Close the window to stop the app.
+For the seeded, read-only presentation demo in the native window:
+
+```powershell
+.\scripts\start.ps1 -Desktop -Demo
+```
+
 For the debug backend plus Vite development loop (including HMR):
 
 ```powershell
@@ -101,7 +115,8 @@ variables `TTTB_DEMO_MODE`, `TTTB_PRODUCTION_DATABASE_URL`, and
 The remaining launcher switches are `-FrontendPort` (preferred Vite port in
 development), `-SkipInstall`, `-SkipBuild`, `-BuildOnly`, and `-NoBrowser`.
 `-NoBrowser` suppresses the browser opened by web runs; it is not a desktop
-window option.
+window option. `-Desktop -ProbeWebView` runs the native transport probe; it
+always uses demo mode and rejects a database override.
 
 ## Backend Commands
 
@@ -116,14 +131,10 @@ cargo fmt
 
 ## Desktop transport probe
 
-The native-window transport probe is run directly; there is no launcher mode
-for it yet:
+The native-window transport probe is available through the launcher:
 
 ```powershell
-cd frontend
-npm run build
-cd ..
-cargo run -p ticker-tape-tally-board-desktop -- --probe-webview
+.\scripts\start.ps1 -Desktop -ProbeWebView
 ```
 
 Run it in an interactive Windows session with WebView2 available. It renders
@@ -142,20 +153,23 @@ Configuration:
 - `TTTB_BACKUP_ENABLED`: enables the ordinary launch snapshot; default `true` outside demo mode. It never disables a mandatory pre-migration snapshot.
 - `TTTB_BACKUP_DIR`: backup directory; an override must be an absolute path, or backup status is failed. Defaults to `%OneDrive%/TickerTapeTallyBoard/Backups` in production and `%LOCALAPPDATA%/TickerTapeTallyBoard/backups-dev` in development. If the production default cannot resolve, startup remains available unless a migration is pending. Demo ignores this setting and takes no backups.
 - `TTTB_LOG_FILE`: backend log file; an override must be an absolute path, or logging uses the terminal only. Defaults to `%LOCALAPPDATA%/TickerTapeTallyBoard/logs/engine.log` in production, `engine-development.log` in development, and `engine-demo.log` in demo.
+- `TTTB_LOG_MAX_BYTES`: positive maximum size of the active runtime log before rotation, read by both the server and desktop shells; default `5242880` (5 MiB).
 - `TTTB_MARKET_DATA_REFRESH_ENABLED`: primary launch-time market-data refresh setting, default `true`. `TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED` is an accepted alias for the same launch refresh and is what `-NoRefresh` sets. Both default to `true`; if both are set, either one being `false` disables the refresh.
 
 ## Logs
 
-The backend log lives outside the repository at
-`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`. Its mode-specific name keeps
-production, development, and demo timelines separate. The active log is capped
-at 5 MiB and keeps three rotations, for an approximate 20 MiB maximum.
+Runtime logs live outside the repository at
+`%LOCALAPPDATA%\TickerTapeTallyBoard\logs\`. Server logs are `engine.log`,
+`engine-development.log`, and `engine-demo.log`; desktop logs use the matching
+`engine-desktop*.log` names. The active log is capped at 5 MiB by default and
+keeps three rotations, for an approximate 20 MiB maximum. Set
+`TTTB_LOG_MAX_BYTES` to a smaller positive byte count for a rotation drill.
 Rotation never splits a newline-delimited log line; embedded newlines in one
 message create separate rotation boundaries.
 If the log file cannot be opened, the app still starts and writes logs to the
 terminal instead.
 
-Each `scripts/start.ps1` launch writes its redirected process output under
+Each web-mode `scripts/start.ps1` launch writes its redirected process output under
 `.local/logs/run-<UTC timestamp>/` as `backend.out.log`, `backend.err.log`,
 `frontend.out.log`, and `frontend.err.log`. The launcher keeps the five newest
 run directories; connectivity and provider probe logs directly under

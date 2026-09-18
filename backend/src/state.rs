@@ -10,6 +10,21 @@ use crate::{
     market_data::MarketDataService,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppShell {
+    Server,
+    Desktop,
+}
+
+impl AppShell {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Server => "server",
+            Self::Desktop => "desktop",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BackupState {
     pub directory: BackupDirectory,

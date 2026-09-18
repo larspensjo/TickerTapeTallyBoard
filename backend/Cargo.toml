@@ -39,5 +39,8 @@ tokio = { version = "1.53.1", features = [
 ] }
 tower-http = { version = "0.7.1", features = ["cors", "fs"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

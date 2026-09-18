@@ -7,7 +7,13 @@
     runs the backend as the single application process on port 8480.
 
 .PARAMETER Dev
-    Uses the debug backend and Vite development server.
+    Uses debug builds; web mode also starts the Vite development server.
+
+.PARAMETER Desktop
+    Opens the native desktop window. Close the window to stop the app.
+
+.PARAMETER ProbeWebView
+    Runs the native WebView2 probe (requires -Desktop).
 
 .PARAMETER Demo
     Runs the seeded, in-memory demo. Alone it uses release static serving; with
@@ -34,6 +40,8 @@
 [CmdletBinding()]
 param(
     [switch]$Dev,
+    [switch]$Desktop,
+    [switch]$ProbeWebView,
     [switch]$Demo,
     [switch]$InitLedger,
     [switch]$NoBackup,
@@ -263,7 +271,22 @@ if ($Demo -and $PSBoundParameters.ContainsKey("DatabaseUrl")) {
 if ($Demo -and $InitLedger) {
     throw "-Demo cannot be combined with -InitLedger. Demo mode uses an in-memory ledger."
 }
-if (-not $Demo -and -not $BuildOnly) {
+if ($ProbeWebView -and -not $Desktop) {
+    throw "-ProbeWebView requires -Desktop."
+}
+if ($Desktop -and $PSBoundParameters.ContainsKey("Port")) {
+    throw "-Desktop cannot be combined with -Port because the desktop shell has no listener."
+}
+if ($Desktop -and $PSBoundParameters.ContainsKey("FrontendPort")) {
+    throw "-Desktop cannot be combined with -FrontendPort because it does not start Vite."
+}
+if ($Desktop -and $NoBrowser) {
+    throw "-Desktop cannot be combined with -NoBrowser because it opens no browser."
+}
+if ($ProbeWebView -and $PSBoundParameters.ContainsKey("DatabaseUrl")) {
+    throw "-Desktop -ProbeWebView cannot be combined with -DatabaseUrl; the probe always uses demo mode."
+}
+if (-not $Demo -and -not $ProbeWebView -and -not $BuildOnly) {
     $legacyArtifacts = @(
         $LegacyDatabasePath,
         "$LegacyDatabasePath-wal",
@@ -281,8 +304,8 @@ if (-not (Test-Path $BackendDir)) { throw "Backend directory not found: $Backend
 if (-not (Test-Path $FrontendDir)) { throw "Frontend directory not found: $FrontendDir" }
 
 $RunMode = if ($Demo) { "demo" } elseif ($Dev) { "development" } else { "production" }
-$UsesVite = $Dev.IsPresent
-$UsesPinnedPort = (-not $Dev) -and (-not $Demo)
+$UsesVite = $Dev.IsPresent -and (-not $Desktop)
+$UsesPinnedPort = (-not $Desktop) -and (-not $Dev) -and (-not $Demo)
 $BackendPort = if ($UsesPinnedPort) {
     if ($PSBoundParameters.ContainsKey("Port")) { $Port } else { $DefaultBackendPort }
 } else {
@@ -307,20 +330,21 @@ if (-not $SkipInstall) {
     }
 }
 if (-not $SkipBuild) {
-    Invoke-Step "Build backend" {
+    Invoke-Step $(if ($Desktop) { "Build desktop" } else { "Build backend" }) {
         Push-Location $RepoRoot
         try {
-            $arguments = if ($UsesVite) {
-                @("build", "-p", "ticker-tape-tally-board-backend")
+            $package = if ($Desktop) { "ticker-tape-tally-board-desktop" } else { "ticker-tape-tally-board-backend" }
+            $arguments = if ($Dev) {
+                @("build", "-p", $package)
             }
             else {
-                @("build", "-p", "ticker-tape-tally-board-backend", "--release")
+                @("build", "-p", $package, "--release")
             }
             Invoke-NativeCommand "cargo" $arguments
         }
         finally { Pop-Location }
     }
-    if (-not $UsesVite) {
+    if ($Desktop -or -not $UsesVite) {
         Invoke-Step "Build frontend" {
             Push-Location $FrontendDir
             try { Invoke-NativeCommand "npm.cmd" @("run", "build") }
@@ -328,7 +352,7 @@ if (-not $SkipBuild) {
         }
     }
 }
-elseif (-not $UsesVite) {
+elseif ($Desktop -or -not $UsesVite) {
     Write-Warning "-SkipBuild can serve a stale frontend/dist and stale release binary."
 }
 
@@ -336,6 +360,12 @@ if ($BuildOnly) {
     Write-Host ""
     Write-Host "Build-only run completed." -ForegroundColor Green
     exit 0
+}
+
+$BuildProfile = if ($Dev) { "debug" } else { "release" }
+$DesktopExe = Join-Path $RepoRoot "target/$BuildProfile/ticker-tape-tally-board-desktop.exe"
+if ($Desktop -and -not (Test-Path $DesktopExe)) {
+    throw "Desktop executable not found: $DesktopExe. Run without -SkipBuild first."
 }
 
 $ResolvedFrontendPort = $null
@@ -362,48 +392,62 @@ if (-not $UsesPinnedPort) {
 
 Write-Host ""
 Write-Host "==> Start application" -ForegroundColor Cyan
-Write-Host "Backend: http://127.0.0.1:$BackendPort/"
+if ($Desktop) { Write-Host "Desktop: $DesktopExe" }
+else { Write-Host "Backend: http://127.0.0.1:$BackendPort/" }
 if ($UsesVite) {
     Write-Host "Frontend: http://127.0.0.1:$ResolvedFrontendPort/"
     if ($ResolvedFrontendPort -ne $FrontendPort) {
         Write-Host "Preferred frontend port $FrontendPort was busy; using $ResolvedFrontendPort instead." -ForegroundColor Yellow
     }
 }
-if ($Demo) { Write-Host "Database: demo (in-memory, seeded)" }
+if ($ProbeWebView) { Write-Host "Database: demo (in-memory, seeded; probe mode)" }
+elseif ($Demo) { Write-Host "Database: demo (in-memory, seeded)" }
 elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) { Write-Host "Database: $ExplicitDatabaseUrl" }
-else { Write-Host "Database: backend resolves the $RunMode default ledger; see engine.log for the resolved path" }
-Write-Host "Press Ctrl+C to stop the application."
+else { Write-Host "Database: application resolves the $RunMode default ledger; the runtime log records the resolved path" }
+if ($Desktop) {
+    if ($env:LOCALAPPDATA) {
+        Write-Host "Desktop logs: $(Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard\logs") (engine-desktop*.log)"
+    }
+    else { Write-Host "Desktop log: LOCALAPPDATA is unavailable (terminal logging only)" }
+}
+if ($Desktop) { Write-Host "Close the window to stop the app." }
+else { Write-Host "Press Ctrl+C to stop the application." }
 Write-Host ""
 
-$BuildProfile = if ($UsesVite) { "debug" } else { "release" }
 $BackendExe = Join-Path $RepoRoot "target/$BuildProfile/ticker-tape-tally-board-backend.exe"
-if (-not (Test-Path $BackendExe)) {
+if (-not $Desktop -and -not (Test-Path $BackendExe)) {
     throw "Backend executable not found: $BackendExe. Run without -SkipBuild first."
 }
-$LogRoot = Join-Path $RepoRoot ".local/logs"
-New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
-$RunStamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
-$RunLogDir = Join-Path $LogRoot "run-$RunStamp"
-New-Item -ItemType Directory -Path $RunLogDir -ErrorAction Stop | Out-Null
-$BackendStdout = Join-Path $RunLogDir "backend.out.log"
-$BackendStderr = Join-Path $RunLogDir "backend.err.log"
-$FrontendStdout = Join-Path $RunLogDir "frontend.out.log"
-$FrontendStderr = Join-Path $RunLogDir "frontend.err.log"
+$BackendStdout = $null
+$BackendStderr = $null
+$FrontendStdout = $null
+$FrontendStderr = $null
+if (-not $Desktop) {
+    $LogRoot = Join-Path $RepoRoot ".local/logs"
+    New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+    $RunStamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
+    $RunLogDir = Join-Path $LogRoot "run-$RunStamp"
+    New-Item -ItemType Directory -Path $RunLogDir -ErrorAction Stop | Out-Null
+    $BackendStdout = Join-Path $RunLogDir "backend.out.log"
+    $BackendStderr = Join-Path $RunLogDir "backend.err.log"
+    $FrontendStdout = Join-Path $RunLogDir "frontend.out.log"
+    $FrontendStderr = Join-Path $RunLogDir "frontend.err.log"
 
-# Keep probe logs and other files directly under .local/logs; only completed
-# run directories participate in launcher-log retention.
-Get-ChildItem -LiteralPath $LogRoot -Directory |
-    Where-Object { $_.Name -like "run-*" } |
-    Sort-Object -Property Name -Descending |
-    Select-Object -Skip 5 |
-    ForEach-Object {
-        try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    # Keep probe logs and other files directly under .local/logs; only completed
+    # run directories participate in launcher-log retention.
+    Get-ChildItem -LiteralPath $LogRoot -Directory |
+        Where-Object { $_.Name -like "run-*" } |
+        Sort-Object -Property Name -Descending |
+        Select-Object -Skip 5 |
+        ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            }
+            catch {
+                Write-Host "Warning: could not prune old run log directory '$($_.FullName)': $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
-        catch {
-            Write-Host "Warning: could not prune old run log directory '$($_.FullName)': $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    }
+}
 
 $PreviousDatabaseUrl = $env:TTTB_DATABASE_URL
 $PreviousBackendPort = $env:TTTB_PORT
@@ -416,16 +460,37 @@ $backendProcess = $null
 $frontendProcess = $null
 
 try {
-    if ($Demo) { Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue }
+    if ($Demo -or $ProbeWebView) { Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue }
     elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) { $env:TTTB_DATABASE_URL = $ExplicitDatabaseUrl }
     else { Remove-Item Env:\TTTB_DATABASE_URL -ErrorAction SilentlyContinue }
-    $env:TTTB_MODE = $RunMode
+    $env:TTTB_MODE = if ($ProbeWebView) { "demo" } else { $RunMode }
     $env:TTTB_CREATE_LEDGER_IF_MISSING = if ($InitLedger) { "1" } else { "0" }
     $env:TTTB_BACKUP_ENABLED = if ($NoBackup) { "0" } else { "1" }
     $env:TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED = if ($NoRefresh) { "0" } else { "1" }
-    $env:TTTB_PORT = $BackendPort
+    if ($Desktop) { Remove-Item Env:\TTTB_PORT -ErrorAction SilentlyContinue }
+    else { $env:TTTB_PORT = $BackendPort }
     if ($UsesVite) { Remove-Item Env:\TTTB_STATIC_DIR -ErrorAction SilentlyContinue }
     else { $env:TTTB_STATIC_DIR = $StaticAssetsDir }
+
+    if ($Desktop) {
+        $desktopArguments = if ($ProbeWebView) { @("--probe-webview") } else { @() }
+        $desktopStart = @{
+            FilePath = $DesktopExe
+            WorkingDirectory = $RepoRoot
+            NoNewWindow = $true
+            Wait = $true
+            PassThru = $true
+        }
+        if ($desktopArguments.Count -gt 0) {
+            $desktopStart.ArgumentList = $desktopArguments
+        }
+        $desktopProcess = Start-Process @desktopStart
+        $desktopExitCode = $desktopProcess.ExitCode
+        if ($desktopExitCode -ne 0) {
+            Write-Host "Desktop process exited with code $desktopExitCode." -ForegroundColor Red
+        }
+        exit $desktopExitCode
+    }
 
     $backendProcess = Start-Process `
         -FilePath $BackendExe `

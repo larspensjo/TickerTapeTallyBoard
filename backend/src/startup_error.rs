@@ -142,3 +142,102 @@ impl fmt::Display for StartupError {
 }
 
 impl std::error::Error for StartupError {}
+
+#[cfg(test)]
+mod tests {
+    use super::StartupError;
+    use crate::{
+        config::{ConfigError, Mode},
+        ledger::BackupError,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn display_preserves_the_identifying_value_for_every_variant() {
+        let cases = vec![
+            (
+                StartupError::Config(ConfigError::value(
+                    "TTTB_TEST",
+                    "configured-value".to_owned(),
+                    "test failure",
+                )),
+                "configured-value",
+            ),
+            (
+                StartupError::LedgerMissing {
+                    path: PathBuf::from("C:/ledgers/missing.sqlite"),
+                },
+                "C:/ledgers/missing.sqlite",
+            ),
+            (
+                StartupError::LedgerMustBeFileBacked {
+                    url: "sqlite::memory:".to_owned(),
+                    mode: Mode::Production,
+                },
+                "sqlite::memory:",
+            ),
+            (
+                StartupError::LedgerNotAbsolute {
+                    url: "sqlite://relative.sqlite".to_owned(),
+                },
+                "sqlite://relative.sqlite",
+            ),
+            (
+                StartupError::LedgerNotAFile {
+                    path: PathBuf::from("C:/ledgers/directory"),
+                },
+                "C:/ledgers/directory",
+            ),
+            (
+                StartupError::LedgerUnsupportedUrl {
+                    url: "postgres://ledger".to_owned(),
+                },
+                "postgres://ledger",
+            ),
+            (
+                StartupError::LedgerOpenFailed {
+                    path: Some(PathBuf::from("C:/ledgers/open.sqlite")),
+                    source: Box::new(std::io::Error::other("open failure")),
+                },
+                "C:/ledgers/open.sqlite",
+            ),
+            (
+                StartupError::MigrationFailed {
+                    path: Some(PathBuf::from("C:/ledgers/migrate.sqlite")),
+                    source: Box::new(std::io::Error::other("migration failure")),
+                },
+                "C:/ledgers/migrate.sqlite",
+            ),
+            (
+                StartupError::PreMigrationBackupFailed(Box::new(BackupError {
+                    ledger_path: PathBuf::from("C:/ledgers/backup.sqlite"),
+                    backup_directory: PathBuf::from("D:/backups"),
+                    snapshot_path: None,
+                    operation: "test",
+                    source: "backup failure".to_owned(),
+                })),
+                "C:/ledgers/backup.sqlite",
+            ),
+            (
+                StartupError::StaticAssetsMissing {
+                    dir: PathBuf::from("C:/source/frontend/dist"),
+                },
+                "C:/source/frontend/dist",
+            ),
+            (
+                StartupError::PortUnavailable {
+                    address: "127.0.0.1:8480".to_owned(),
+                    source: std::io::Error::new(std::io::ErrorKind::AddrInUse, "already in use"),
+                },
+                "127.0.0.1:8480",
+            ),
+        ];
+
+        for (error, identifying_value) in cases {
+            assert!(
+                error.to_string().contains(identifying_value),
+                "{error:?} must retain {identifying_value:?}"
+            );
+        }
+    }
+}

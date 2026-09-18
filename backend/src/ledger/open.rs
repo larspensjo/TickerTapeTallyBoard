@@ -181,6 +181,7 @@ mod tests {
             backup_enabled: false,
             backup_dir: crate::config::BackupDirectory::Resolved(directory.join("backups")),
             log_file: crate::config::LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -229,6 +230,7 @@ mod tests {
             backup_enabled: false,
             backup_dir: crate::config::BackupDirectory::Resolved(directory.join("backups")),
             log_file: crate::config::LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -281,6 +283,7 @@ mod tests {
                 "OneDrive is not set".to_owned(),
             ),
             log_file: crate::config::LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };
@@ -328,6 +331,7 @@ mod tests {
                 "OneDrive is not set".to_owned(),
             ),
             log_file: crate::config::LogFile::Unresolved("test".to_owned()),
+            log_max_bytes: crate::engine_logging::DEFAULT_MAX_BYTES,
             market_data_refresh_enabled: false,
             launch_refresh_enabled: false,
         };

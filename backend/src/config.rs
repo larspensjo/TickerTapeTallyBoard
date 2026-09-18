@@ -9,6 +9,7 @@ use std::{
 pub use crate::mode::Mode;
 
 use crate::ledger::{resolve, LedgerLocation, LedgerLocationError};
+use crate::{engine_logging::DEFAULT_MAX_BYTES, state::AppShell};
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DEFAULT_PORT: u16 = 8480;
@@ -26,6 +27,7 @@ const STATIC_ASSETS_DIR_ENV: &str = "TTTB_STATIC_DIR";
 pub const BACKUP_ENABLED_ENV: &str = "TTTB_BACKUP_ENABLED";
 pub const BACKUP_DIR_ENV: &str = "TTTB_BACKUP_DIR";
 pub const LOG_FILE_ENV: &str = "TTTB_LOG_FILE";
+pub const LOG_MAX_BYTES_ENV: &str = "TTTB_LOG_MAX_BYTES";
 const ONE_DRIVE_ENV: &str = "OneDrive";
 
 impl Mode {
@@ -84,6 +86,13 @@ impl LogFile {
     }
 }
 
+/// The native shell always uses its own app-data log timeline. It deliberately
+/// does not inherit `TTTB_LOG_FILE`, whose server-facing override could make a
+/// shortcut depend on an operator's working-directory assumptions.
+pub fn desktop_log_file(mode: Mode) -> LogFile {
+    log_file_from_result(env::var(LOCAL_APP_DATA_ENV), mode, AppShell::Desktop)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -95,6 +104,7 @@ pub struct AppConfig {
     pub backup_enabled: bool,
     pub backup_dir: BackupDirectory,
     pub log_file: LogFile,
+    pub log_max_bytes: u64,
     pub market_data_refresh_enabled: bool,
     pub launch_refresh_enabled: bool,
 }
@@ -139,6 +149,10 @@ impl AppConfig {
             .unwrap_or(!mode.is_demo());
         let backup_dir = resolve_backup_dir(mode);
         let log_file = resolve_log_file(mode);
+        let log_max_bytes = read_optional(LOG_MAX_BYTES_ENV)?
+            .map(|value| parse_positive_u64(LOG_MAX_BYTES_ENV, &value))
+            .transpose()?
+            .unwrap_or(DEFAULT_MAX_BYTES);
 
         let market_data_refresh_enabled = read_optional(MARKET_DATA_REFRESH_ENABLED_ENV)?
             .map(|value| parse_bool(MARKET_DATA_REFRESH_ENABLED_ENV, &value))
@@ -164,6 +178,7 @@ impl AppConfig {
             backup_enabled,
             backup_dir,
             log_file,
+            log_max_bytes,
             market_data_refresh_enabled,
             launch_refresh_enabled,
         })
@@ -194,18 +209,25 @@ fn resolve_log_file(mode: Mode) -> LogFile {
                 ))
             }
         }
-        Ok(None) => log_file_from_result(env::var(LOCAL_APP_DATA_ENV), mode),
+        Ok(None) => log_file_from_result(env::var(LOCAL_APP_DATA_ENV), mode, AppShell::Server),
         Err(error) => LogFile::Unresolved(error.to_string()),
     }
 }
 
-fn log_file_from_result(result: Result<String, env::VarError>, mode: Mode) -> LogFile {
+fn log_file_from_result(
+    result: Result<String, env::VarError>,
+    mode: Mode,
+    shell: AppShell,
+) -> LogFile {
     match read_optional_result(LOCAL_APP_DATA_ENV, result) {
         Ok(Some(root)) => {
-            let file = match mode {
-                Mode::Production => "engine.log",
-                Mode::Development => "engine-development.log",
-                Mode::Demo => "engine-demo.log",
+            let file = match (shell, mode) {
+                (AppShell::Desktop, Mode::Production) => "engine-desktop.log",
+                (AppShell::Desktop, Mode::Development) => "engine-desktop-development.log",
+                (AppShell::Desktop, Mode::Demo) => "engine-desktop-demo.log",
+                (AppShell::Server, Mode::Production) => "engine.log",
+                (AppShell::Server, Mode::Development) => "engine-development.log",
+                (AppShell::Server, Mode::Demo) => "engine-demo.log",
             };
             LogFile::Resolved(
                 PathBuf::from(root)
@@ -307,7 +329,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
-    fn value(variable: &'static str, value: String, message: &'static str) -> Self {
+    pub(crate) fn value(variable: &'static str, value: String, message: &'static str) -> Self {
         Self {
             variable,
             value,
@@ -392,6 +414,17 @@ fn parse_port(variable: &'static str, value: &str) -> Result<u16, ConfigError> {
         .map_err(|_| ConfigError::value(variable, value.to_owned(), "must be a TCP port number"))
 }
 
+fn parse_positive_u64(variable: &'static str, value: &str) -> Result<u64, ConfigError> {
+    match value.parse() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        _ => Err(ConfigError::value(
+            variable,
+            value.to_owned(),
+            "must be a positive integer",
+        )),
+    }
+}
+
 fn parse_bool(variable: &'static str, value: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -446,6 +479,7 @@ mod tests {
         BACKUP_ENABLED_ENV,
         BACKUP_DIR_ENV,
         LOG_FILE_ENV,
+        LOG_MAX_BYTES_ENV,
         ONE_DRIVE_ENV,
     ];
 
@@ -475,6 +509,7 @@ mod tests {
                 "C:/temp/appdata/TickerTapeTallyBoard/logs/engine.log"
             ))
         );
+        assert_eq!(config.log_max_bytes, DEFAULT_MAX_BYTES);
     }
 
     #[test]
@@ -574,21 +609,30 @@ mod tests {
     }
 
     #[test]
-    fn demo_ignores_relative_database_url_without_creating_a_file() {
-        let relative_path = Path::new("relative-demo.sqlite");
-        assert!(
-            !relative_path.exists(),
-            "test ledger must not already exist"
-        );
+    fn demo_ignores_an_absolute_nonexistent_database_url_and_starts_in_memory() {
+        let path = unique_path("absolute-demo-ledger", "sqlite");
+        let database_url = sqlite_url(&path);
         let _guard = TestEnv::new(&[
             (MODE_ENV, Some("demo")),
-            (DATABASE_URL_ENV, Some("sqlite://relative-demo.sqlite")),
+            (DATABASE_URL_ENV, Some(&database_url)),
         ]);
 
         let config = AppConfig::from_env().expect("demo config should use memory");
 
         assert!(config.ledger.path.is_none());
-        assert!(!relative_path.exists());
+        assert!(!path.exists());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build");
+        let mut application = runtime
+            .block_on(crate::app::Application::build(
+                &config,
+                AssetPolicy::Optional,
+            ))
+            .expect("demo application should start without the nonexistent ledger");
+        runtime.block_on(application.shutdown());
+        assert!(!path.exists());
     }
 
     #[cfg(windows)]
@@ -701,6 +745,54 @@ mod tests {
             config.log_file.path(),
             Some(Path::new("C:/logs/override.log"))
         );
+    }
+
+    #[test]
+    fn log_file_defaults_cover_every_shell_and_mode() {
+        for (shell, mode, file) in [
+            (AppShell::Server, Mode::Production, "engine.log"),
+            (
+                AppShell::Server,
+                Mode::Development,
+                "engine-development.log",
+            ),
+            (AppShell::Server, Mode::Demo, "engine-demo.log"),
+            (AppShell::Desktop, Mode::Production, "engine-desktop.log"),
+            (
+                AppShell::Desktop,
+                Mode::Development,
+                "engine-desktop-development.log",
+            ),
+            (AppShell::Desktop, Mode::Demo, "engine-desktop-demo.log"),
+        ] {
+            let log_file = log_file_from_result(Ok("C:/app-data".to_owned()), mode, shell);
+            assert_eq!(
+                log_file.path(),
+                Some(Path::new(&format!(
+                    "C:/app-data/TickerTapeTallyBoard/logs/{file}"
+                )))
+            );
+        }
+    }
+
+    #[test]
+    fn log_max_bytes_defaults_and_rejects_zero_or_unparseable_values() {
+        let _guard = TestEnv::new(&[(MODE_ENV, Some("demo")), (LOG_MAX_BYTES_ENV, Some("4096"))]);
+        assert_eq!(
+            AppConfig::from_env()
+                .expect("positive limit should load")
+                .log_max_bytes,
+            4096
+        );
+        drop(_guard);
+
+        for invalid in ["0", "many"] {
+            let _guard =
+                TestEnv::new(&[(MODE_ENV, Some("demo")), (LOG_MAX_BYTES_ENV, Some(invalid))]);
+            let error = AppConfig::from_env().expect_err("invalid limit should be rejected");
+            assert_eq!(error.variable, LOG_MAX_BYTES_ENV);
+            assert_eq!(error.value, invalid);
+        }
     }
 
     #[test]

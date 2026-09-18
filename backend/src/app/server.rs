@@ -1,8 +1,9 @@
 use crate::{
     app::composition::Application,
-    config::{AppConfig, LogFile},
-    engine_logging::{LogInitOutcome, LogSettings},
+    config::AppConfig,
+    engine_logging::{initialize_for_shell, lifecycle_banner, LifecycleEvent, LogInitOutcome},
     startup_error::StartupError,
+    state::AppShell,
 };
 
 pub async fn run() -> Result<(), StartupError> {
@@ -25,29 +26,24 @@ async fn run_inner() -> Result<(), StartupFailure> {
 }
 
 pub async fn serve(config: AppConfig) -> Result<(), StartupError> {
-    let log_outcome = match &config.log_file {
-        LogFile::Resolved(path) => {
-            crate::engine_logging::initialize(&LogSettings::with_defaults(path.to_path_buf()))
-        }
-        LogFile::Unresolved(reason) => {
-            crate::engine_logging::initialize_terminal();
-            LogInitOutcome {
-                file_path: None,
-                file_error: Some(reason.clone()),
-            }
-        }
-    };
-    if let Some(error) = &log_outcome.file_error {
-        crate::engine_error!("file logging unavailable; using terminal logging only: {error}");
-    }
-    crate::engine_info!("{}", startup_banner(&config, &log_outcome));
+    let log_outcome = initialize_for_shell(AppShell::Server, &config);
+    crate::engine_info!(
+        "{} listen={}",
+        lifecycle_banner(
+            LifecycleEvent::Startup,
+            AppShell::Server,
+            &config,
+            &log_outcome
+        ),
+        config.socket_addr()
+    );
 
     let mut application = Application::build(&config, config.asset_policy()).await?;
     let address = config.socket_addr();
     let listener = match tokio::net::TcpListener::bind(address).await {
         Ok(listener) => listener,
         Err(source) => {
-            application.shutdown().await;
+            shutdown_application(&mut application, &config, &log_outcome).await;
             return Err(StartupError::PortUnavailable {
                 address: address.to_string(),
                 source,
@@ -57,7 +53,7 @@ pub async fn serve(config: AppConfig) -> Result<(), StartupError> {
     let local_addr = match listener.local_addr() {
         Ok(local_addr) => local_addr,
         Err(source) => {
-            application.shutdown().await;
+            shutdown_application(&mut application, &config, &log_outcome).await;
             return Err(StartupError::PortUnavailable {
                 address: address.to_string(),
                 source,
@@ -73,37 +69,27 @@ pub async fn serve(config: AppConfig) -> Result<(), StartupError> {
             address: address.to_string(),
             source,
         });
-    application.shutdown().await;
+    shutdown_application(&mut application, &config, &log_outcome).await;
     result?;
-    crate::engine_info!("backend shutdown complete");
     Ok(())
 }
 
-fn startup_banner(config: &AppConfig, log_outcome: &LogInitOutcome) -> String {
-    let ledger = config
-        .ledger
-        .path
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "in-memory (demo)".to_owned());
-    let log_path = log_outcome.file_path.as_ref().map_or_else(
-        || {
-            format!(
-                "unavailable ({})",
-                log_outcome.file_error.as_deref().unwrap_or("unknown error")
-            )
-        },
-        |path| path.display().to_string(),
+async fn shutdown_application(
+    application: &mut Application,
+    config: &AppConfig,
+    log_outcome: &LogInitOutcome,
+) {
+    application.shutdown().await;
+    crate::engine_info!(
+        "{} listen={}",
+        lifecycle_banner(
+            LifecycleEvent::Shutdown,
+            AppShell::Server,
+            config,
+            log_outcome
+        ),
+        config.socket_addr()
     );
-    format!(
-        "startup: mode={} ledger={} backup_dir={} static_assets_dir={} log={} listen={}",
-        config.mode.as_str(),
-        ledger,
-        config.backup_dir.display(),
-        config.static_assets_dir().display(),
-        log_path,
-        config.socket_addr(),
-    )
 }
 
 struct StartupFailure {
@@ -132,64 +118,5 @@ async fn shutdown_signal() {
         Ok(()) => crate::engine_info!("shutdown signal received"),
         // Signal registration failures are terminal for this local server path.
         Err(error) => crate::engine_error!("failed to listen for shutdown signal: {error}"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        net::{IpAddr, Ipv4Addr},
-        path::PathBuf,
-    };
-
-    use crate::{
-        config::{LogFile, Mode},
-        ledger::memory,
-    };
-
-    fn test_config(mode: Mode) -> AppConfig {
-        AppConfig {
-            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 8480,
-            ledger: memory(),
-            static_assets_dir: PathBuf::from("test-assets"),
-            mode,
-            create_ledger_if_missing: false,
-            backup_enabled: false,
-            backup_dir: crate::config::BackupDirectory::Unresolved("test".to_owned()),
-            log_file: LogFile::Unresolved("test".to_owned()),
-            market_data_refresh_enabled: true,
-            launch_refresh_enabled: true,
-        }
-    }
-
-    #[test]
-    fn startup_banner_names_in_memory_demo_ledger_on_one_line() {
-        let config = test_config(Mode::Demo);
-        let log_outcome = LogInitOutcome {
-            file_path: Some(PathBuf::from("C:/logs/engine-demo.log")),
-            file_error: None,
-        };
-
-        let banner = startup_banner(&config, &log_outcome);
-
-        assert!(banner.contains("mode=demo ledger=in-memory (demo)"));
-        assert!(!banner.contains("ledger= backup_dir="));
-        assert!(!banner.contains(['\r', '\n']));
-    }
-
-    #[test]
-    fn startup_banner_reports_unavailable_file_logging_on_one_line() {
-        let config = test_config(Mode::Production);
-        let log_outcome = LogInitOutcome {
-            file_path: None,
-            file_error: Some("invalid TTTB_LOG_FILE value".to_owned()),
-        };
-
-        let banner = startup_banner(&config, &log_outcome);
-
-        assert!(banner.contains("log=unavailable (invalid TTTB_LOG_FILE value)"));
-        assert!(!banner.contains(['\r', '\n']));
     }
 }
