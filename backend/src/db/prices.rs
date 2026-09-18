@@ -189,7 +189,10 @@ pub async fn list_for_instrument_in_range(
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
-pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoError> {
+pub async fn upsert<'e, E>(executor: E, new: &NewPrice) -> Result<PriceRow, RepoError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query_as::<_, RawPriceRow>(UPSERT_SQL)
         .bind(new.instrument_id)
         .bind(new.provider.as_str())
@@ -198,7 +201,7 @@ pub async fn upsert(pool: &SqlitePool, new: &NewPrice) -> Result<PriceRow, RepoE
         .bind(new.close.to_string())
         .bind(&new.currency)
         .bind(&new.fetched_at)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
     row.try_into()
 }

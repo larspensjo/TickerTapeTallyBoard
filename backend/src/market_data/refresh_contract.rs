@@ -308,6 +308,7 @@ impl PriceSnapshotState {
 #[derive(Debug)]
 pub enum MarketDataError {
     InvalidRequest { code: &'static str, message: String },
+    LeaseLost,
     Internal(String),
     Repo(RepoError),
 }
@@ -329,6 +330,7 @@ impl fmt::Display for MarketDataError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRequest { code, message } => write!(f, "{code}: {message}"),
+            Self::LeaseLost => f.write_str("lease_lost"),
             Self::Internal(message) => f.write_str(message),
             Self::Repo(error) => write!(f, "{error}"),
         }

@@ -170,7 +170,9 @@ async fn data_revision_layer(
     let response = next.run(request).await;
 
     if mutating && !response.status().is_client_error() {
-        state.revision.bump();
+        if let Err(error) = state.revision.bump().await {
+            crate::engine_error!("failed to bump data revision after mutation: {error}");
+        }
     }
 
     response

@@ -173,7 +173,10 @@ pub async fn list_for_pair(
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
-pub async fn upsert(pool: &SqlitePool, new: &NewFxRate) -> Result<FxRateRow, RepoError> {
+pub async fn upsert<'e, E>(executor: E, new: &NewFxRate) -> Result<FxRateRow, RepoError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query_as::<_, RawFxRateRow>(UPSERT_SQL)
         .bind(&new.base)
         .bind(&new.quote)
@@ -181,7 +184,7 @@ pub async fn upsert(pool: &SqlitePool, new: &NewFxRate) -> Result<FxRateRow, Rep
         .bind(new.rate.to_string())
         .bind(new.provider.as_str())
         .bind(&new.fetched_at)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
     row.try_into()
 }

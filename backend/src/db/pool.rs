@@ -211,6 +211,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ledger_with_refresh_claim_migration_gains_a_ledger_id_and_keeps_its_counter() {
+        // Migration 8 was applied to a production ledger in this exact form;
+        // its bytes must never change again.
+        let migrator = sqlx::migrate!("./migrations");
+        let refresh_claim = migrator
+            .iter()
+            .find(|migration| migration.version == 8)
+            .expect("refresh claim migration should exist");
+        let checksum: String = refresh_claim
+            .checksum
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            checksum,
+            "15cb0cfe2f2e012d7e3a95296e8b328b3c89a3e633f1eae7114a3e4455f4d0c6\
+             5e093a0a54edfd9a49dfac01c4d82b93"
+        );
+
+        let path = test_db_path("refresh-claim-upgrade");
+        let opened = open(&location_for(&path), CreateMissing::Yes)
+            .await
+            .expect("file database should open");
+        migrator
+            .run_to(8, &opened.pool)
+            .await
+            .expect("migrations through the refresh claim should apply");
+        sqlx::query("UPDATE data_revision SET counter = 3 WHERE id = 1")
+            .execute(&opened.pool)
+            .await
+            .expect("counter should be writable");
+
+        migrate(&opened.pool)
+            .await
+            .expect("remaining migrations should apply");
+
+        let (ledger_id, counter): (String, i64) =
+            sqlx::query_as("SELECT ledger_id, counter FROM data_revision WHERE id = 1")
+                .fetch_one(&opened.pool)
+                .await
+                .expect("data revision row should exist");
+        assert_eq!(counter, 3);
+        assert_eq!(ledger_id.len(), 32);
+        assert!(ledger_id.chars().all(|c| c.is_ascii_hexdigit()));
+
+        opened.pool.close().await;
+        cleanup_sqlite_files(&path);
+    }
+
+    #[tokio::test]
     async fn memory_location_returns_typed_error() {
         let result = open(&crate::ledger::memory(), CreateMissing::Yes).await;
 

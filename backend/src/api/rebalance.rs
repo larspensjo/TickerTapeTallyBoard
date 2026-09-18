@@ -124,7 +124,9 @@ pub async fn handler(
                 plan: RebalancePlanResponse::Unavailable {
                     reasons: vec![reason.as_str().to_owned()],
                 },
-                data_revision: state.revision.current(),
+                data_revision: state.revision.current().await.map_err(|error| {
+                    ApiError::internal(format!("could not read data revision: {error}"))
+                })?,
             }));
         }
     };
@@ -135,7 +137,9 @@ pub async fn handler(
         amount_base: money_string(amount),
         base_currency: BASE_CURRENCY,
         plan,
-        data_revision: state.revision.current(),
+        data_revision: state.revision.current().await.map_err(|error| {
+            ApiError::internal(format!("could not read data revision: {error}"))
+        })?,
     }))
 }
 

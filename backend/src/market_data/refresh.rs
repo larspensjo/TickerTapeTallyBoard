@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, OnceLock,
 };
 
 use chrono::{Duration, NaiveDate};
@@ -8,7 +8,6 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::{
     db::{market_data_runs, transactions},
-    import::now_iso8601,
     providers::{FxRateProvider, MarketDataProvider, PriceProvider, SymbolSearchProvider},
 };
 
@@ -32,6 +31,7 @@ pub use super::refresh_contract::{
 };
 
 const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
+const REFRESH_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Clone)]
 pub struct MarketDataService {
     inner: Arc<MarketDataServiceInner>,
@@ -39,36 +39,89 @@ pub struct MarketDataService {
 
 struct MarketDataServiceInner {
     providers: ProviderSet,
-    running: Arc<AtomicBool>,
-    active: Arc<Mutex<Option<RefreshRunSummary>>>,
+    owner: String,
+    stale_after: std::time::Duration,
+    heartbeat_interval: std::time::Duration,
+}
+
+#[derive(Clone)]
+pub(crate) struct RefreshLease {
+    pub(crate) run_id: i64,
+    pub(crate) owner: String,
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 struct RefreshFlightGuard {
-    running: Arc<AtomicBool>,
-    active: Arc<Mutex<Option<RefreshRunSummary>>>,
+    heartbeat: Option<tokio::task::JoinHandle<()>>,
+    pool: SqlitePool,
+    run_id: i64,
+    owner: String,
+    clock: crate::clock::Clock,
+    armed: bool,
 }
 
 impl RefreshFlightGuard {
-    fn new(running: Arc<AtomicBool>, active: Arc<Mutex<Option<RefreshRunSummary>>>) -> Self {
-        Self { running, active }
+    async fn stop_heartbeat(&mut self) {
+        if let Some(heartbeat) = self.heartbeat.take() {
+            heartbeat.abort();
+            let _ = heartbeat.await;
+        }
     }
 
-    fn activate(&self, summary: RefreshRunSummary) {
-        let mut active_run = self
-            .active
-            .lock()
-            .expect("market-data active run mutex should not be poisoned");
-        *active_run = Some(summary);
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+impl Drop for RefreshFlightGuard {
+    fn drop(&mut self) {
+        if let Some(heartbeat) = self.heartbeat.take() {
+            heartbeat.abort();
+        }
+        if !self.armed {
+            return;
+        }
+        let pool = self.pool.clone();
+        let run_id = self.run_id;
+        let owner = self.owner.clone();
+        let finished_at = self.clock.now_utc();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                match market_data_runs::cancel_run(&pool, run_id, &owner, finished_at).await {
+                    Ok(market_data_runs::LeaseState::Held) => crate::engine_warn!(
+                        "market data refresh cancelled and released run_id={} owner={}",
+                        run_id,
+                        owner
+                    ),
+                    Ok(market_data_runs::LeaseState::Lost) => crate::engine_warn!(
+                        "market data refresh cancellation found lease lost run_id={} owner={}",
+                        run_id,
+                        owner
+                    ),
+                    Err(error) => crate::engine_warn!(
+                        "market data refresh cancellation cleanup failed run_id={} owner={} error={}",
+                        run_id,
+                        owner,
+                        error
+                    ),
+                }
+            });
+        }
     }
 }
 
-impl Drop for RefreshFlightGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = self.active.lock() {
-            *active = None;
-        }
-        self.running.store(false, Ordering::Release);
-    }
+fn process_owner() -> &'static str {
+    static OWNER: OnceLock<String> = OnceLock::new();
+    OWNER.get_or_init(|| {
+        let host = std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .unwrap_or_else(|_| "unknown-host".to_owned());
+        format!(
+            "{}:{}:{}",
+            host,
+            std::process::id(),
+            crate::clock::now_utc().timestamp_millis()
+        )
+    })
 }
 
 impl MarketDataService {
@@ -131,70 +184,176 @@ impl MarketDataService {
     }
 
     pub fn with_provider_registry(registry: ProviderRegistry) -> Self {
+        Self::with_provider_registry_and_lease(
+            registry,
+            process_owner().to_owned(),
+            market_data_runs::REFRESH_CLAIM_STALE_AFTER,
+            REFRESH_HEARTBEAT_INTERVAL,
+        )
+    }
+
+    fn with_provider_registry_and_lease(
+        registry: ProviderRegistry,
+        owner: String,
+        stale_after: std::time::Duration,
+        heartbeat_interval: std::time::Duration,
+    ) -> Self {
         Self {
             inner: Arc::new(MarketDataServiceInner {
                 providers: ProviderSet::from_registry(registry),
-                running: Arc::new(AtomicBool::new(false)),
-                active: Arc::new(Mutex::new(None)),
+                owner,
+                stale_after,
+                heartbeat_interval,
             }),
         }
     }
 
-    pub fn is_refreshing(&self) -> bool {
-        self.inner.running.load(Ordering::Acquire)
+    pub async fn is_refreshing(
+        &self,
+        pool: &SqlitePool,
+        clock: &crate::clock::Clock,
+    ) -> Result<bool, MarketDataError> {
+        Ok(
+            market_data_runs::live_claim(pool, clock.now_utc(), self.inner.stale_after)
+                .await?
+                .is_some(),
+        )
     }
 
-    pub fn active_run(&self) -> Option<RefreshRunSummary> {
-        self.inner
-            .active
-            .lock()
-            .expect("market-data active run mutex should not be poisoned")
-            .clone()
+    pub async fn active_run(
+        &self,
+        pool: &SqlitePool,
+        clock: &crate::clock::Clock,
+    ) -> Result<Option<RefreshRunSummary>, MarketDataError> {
+        Ok(
+            market_data_runs::live_claim(pool, clock.now_utc(), self.inner.stale_after)
+                .await?
+                .map(run_summary),
+        )
     }
 
     pub async fn refresh(
         &self,
         pool: &SqlitePool,
-        today: NaiveDate,
+        clock: &crate::clock::Clock,
         trigger: RefreshTrigger,
         request: RefreshPricesRequest,
     ) -> Result<RefreshPricesResponse, MarketDataError> {
-        if self
-            .inner
-            .running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            crate::engine_info!(
+        self.refresh_at(pool, clock, trigger, request).await
+    }
+
+    pub async fn refresh_at(
+        &self,
+        pool: &SqlitePool,
+        clock: &crate::clock::Clock,
+        trigger: RefreshTrigger,
+        request: RefreshPricesRequest,
+    ) -> Result<RefreshPricesResponse, MarketDataError> {
+        let now = clock.now_utc();
+        let claim = market_data_runs::try_claim_run(
+            pool,
+            trigger.as_db_str(),
+            &self.inner.owner,
+            now,
+            self.inner.stale_after,
+        )
+        .await?;
+        let run = match claim {
+            market_data_runs::ClaimResult::Held(held) => {
+                crate::engine_info!(
                 "market data refresh already running; returning current status trigger={trigger:?} mode={:?}",
                 request.mode
             );
-            return self.running_response(pool).await;
-        }
-
-        let flight = RefreshFlightGuard::new(
-            Arc::clone(&self.inner.running),
-            Arc::clone(&self.inner.active),
-        );
-        let started_at = now_iso8601();
-        let run = market_data_runs::start_run(pool, trigger.as_db_str(), &started_at)
-            .await
-            .map_err(MarketDataError::from)?;
+                return Ok(self.running_response(held));
+            }
+            market_data_runs::ClaimResult::Claimed { run, reclaimed } => {
+                for abandoned in reclaimed {
+                    crate::engine_warn!("market data refresh reclaimed abandoned run abandoned_run_id={} previous_owner={} new_run_id={} new_owner={}", abandoned.id, abandoned.owner, run.id, self.inner.owner);
+                }
+                run
+            }
+        };
+        let started_at = run.started_at.clone();
         let mut summary =
             RefreshRunSummary::running(run.id, trigger, request.mode, started_at.clone());
-        flight.activate(summary.clone());
         crate::engine_info!(
-            "market data refresh started run_id={} trigger={trigger:?} mode={:?}",
+            "market data refresh started run_id={} owner={} trigger={trigger:?} mode={:?}",
             run.id,
+            self.inner.owner,
             request.mode
         );
 
-        let outcome = self.execute_refresh(pool, today, &request).await;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let heartbeat_pool = pool.clone();
+        let heartbeat_owner = self.inner.owner.clone();
+        let heartbeat_cancelled = Arc::clone(&cancelled);
+        let heartbeat_run_id = run.id;
+        let heartbeat_clock = clock.clone();
+        let stale_after = self.inner.stale_after;
+        let heartbeat_interval = self.inner.heartbeat_interval;
+        let heartbeat = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(heartbeat_interval);
+            loop {
+                interval.tick().await;
+                match market_data_runs::heartbeat(
+                    &heartbeat_pool,
+                    heartbeat_run_id,
+                    &heartbeat_owner,
+                    heartbeat_clock.now_utc(),
+                )
+                .await
+                {
+                    Ok(market_data_runs::LeaseState::Held) => {}
+                    Ok(market_data_runs::LeaseState::Lost) => {
+                        heartbeat_cancelled.store(true, Ordering::Release);
+                        let holder = market_data_runs::live_claim(
+                            &heartbeat_pool,
+                            heartbeat_clock.now_utc(),
+                            stale_after,
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|row| row.claim_owner)
+                        .unwrap_or_else(|| "none".to_owned());
+                        crate::engine_warn!(
+                            "market data refresh lease lost run_id={} owner={} current_holder={}",
+                            heartbeat_run_id,
+                            heartbeat_owner,
+                            holder
+                        );
+                        break;
+                    }
+                    Err(error) => crate::engine_warn!(
+                        "market data refresh heartbeat failed run_id={} owner={} error={}",
+                        heartbeat_run_id,
+                        heartbeat_owner,
+                        error
+                    ),
+                }
+            }
+        });
+        let mut flight = RefreshFlightGuard {
+            heartbeat: Some(heartbeat),
+            pool: pool.clone(),
+            run_id: run.id,
+            owner: self.inner.owner.clone(),
+            clock: clock.clone(),
+            armed: true,
+        };
+        let lease = RefreshLease {
+            run_id: run.id,
+            owner: self.inner.owner.clone(),
+            cancelled,
+        };
+        let outcome = self
+            .execute_refresh(pool, clock.today(), &request, &lease)
+            .await;
         let (status, message) = match &outcome {
             Ok(outcome) => (outcome.status, outcome.message.clone()),
             Err(error) => (RefreshRunStatus::Failed, Some(error.to_string())),
         };
-        let finished_at = now_iso8601();
+        let finished_at = clock.now_utc();
         let message_ref = message.as_deref();
         if let Ok(outcome) = &outcome {
             summary.prices_written = outcome.prices_written;
@@ -202,18 +361,12 @@ impl MarketDataService {
             summary.unmapped_instruments = outcome.unmapped_instruments;
             summary.failed_items = outcome.failed_items;
         }
-        {
-            let mut active = self
-                .inner
-                .active
-                .lock()
-                .expect("market-data active run mutex should not be poisoned");
-            *active = Some(summary.clone());
-        }
+        flight.stop_heartbeat().await;
         let finish_result = market_data_runs::finish_run(
             pool,
             run.id,
-            &finished_at,
+            &self.inner.owner,
+            finished_at,
             status.as_db_str(),
             message_ref,
             market_data_runs::RefreshRunCounts {
@@ -226,19 +379,35 @@ impl MarketDataService {
         .await;
 
         summary.status = status;
-        summary.finished_at = Some(finished_at);
+        summary.finished_at = Some(finished_at.to_rfc3339());
         summary.message = message;
-        finish_result?;
+        let finish_state = finish_result?;
+        flight.disarm();
+        if finish_state == market_data_runs::LeaseState::Lost {
+            summary.status = RefreshRunStatus::Failed;
+            summary.message = Some("lease_lost".to_owned());
+            crate::engine_warn!(
+                "market data refresh lease lost at finish run_id={} owner={}",
+                run.id,
+                self.inner.owner
+            );
+        }
         crate::engine_info!(
-            "market data refresh finished run_id={} trigger={trigger:?} mode={:?} status={status:?} prices_written={} fx_rates_written={} unmapped_instruments={} failed_items={}",
+            "market data refresh finished run_id={} owner={} trigger={trigger:?} mode={:?} status={:?} prices_written={} fx_rates_written={} unmapped_instruments={} failed_items={}",
             run.id,
+            self.inner.owner,
             request.mode,
+            summary.status,
             summary.prices_written,
             summary.fx_rates_written,
             summary.unmapped_instruments,
             summary.failed_items
         );
-        drop(flight);
+        crate::engine_info!(
+            "market data refresh released run_id={} owner={}",
+            run.id,
+            self.inner.owner
+        );
 
         match outcome {
             Ok(outcome) => Ok(RefreshPricesResponse {
@@ -262,51 +431,32 @@ impl MarketDataService {
     pub async fn status(
         &self,
         pool: &SqlitePool,
-        today: NaiveDate,
+        clock: &crate::clock::Clock,
     ) -> Result<PriceStatusResponse, MarketDataError> {
-        super::price_status::price_status(pool, today, self.is_refreshing(), self.active_run())
-            .await
+        let active = self.active_run(pool, clock).await?;
+        super::price_status::price_status(pool, clock.today(), active.is_some(), active).await
     }
 
     pub async fn lookup_symbol_search(&self, query: &str) -> SymbolSearchLookupResponse {
         super::symbol_search_lookup::lookup_symbol_search(&self.inner.providers, query).await
     }
 
-    async fn running_response(
-        &self,
-        _pool: &SqlitePool,
-    ) -> Result<RefreshPricesResponse, MarketDataError> {
-        if let Some(active) = self.active_run() {
-            return Ok(RefreshPricesResponse {
-                run_id: active.run_id,
-                trigger: active.trigger,
-                mode: active.mode,
-                status: RefreshRunStatus::Running,
-                started_at: active.started_at,
-                finished_at: None,
-                message: active.message,
-                prices_written: active.prices_written,
-                fx_rates_written: active.fx_rates_written,
-                unmapped_instruments: active.unmapped_instruments,
-                failed_items: active.failed_items,
-                items: Vec::new(),
-            });
-        }
-
-        Ok(RefreshPricesResponse {
-            run_id: 0,
-            trigger: RefreshTrigger::Manual,
-            mode: RefreshMode::Latest,
+    fn running_response(&self, row: market_data_runs::RefreshRunRow) -> RefreshPricesResponse {
+        let active = run_summary(row);
+        RefreshPricesResponse {
+            run_id: active.run_id,
+            trigger: active.trigger,
+            mode: active.mode,
             status: RefreshRunStatus::Running,
-            started_at: now_iso8601(),
+            started_at: active.started_at,
             finished_at: None,
-            message: Some("refresh in progress".to_owned()),
-            prices_written: 0,
-            fx_rates_written: 0,
-            unmapped_instruments: 0,
-            failed_items: 0,
+            message: active.message,
+            prices_written: active.prices_written,
+            fx_rates_written: active.fx_rates_written,
+            unmapped_instruments: active.unmapped_instruments,
+            failed_items: active.failed_items,
             items: Vec::new(),
-        })
+        }
     }
 
     async fn execute_refresh(
@@ -314,8 +464,25 @@ impl MarketDataService {
         pool: &SqlitePool,
         today: NaiveDate,
         request: &RefreshPricesRequest,
+        lease: &RefreshLease,
     ) -> Result<RefreshOutcome, MarketDataError> {
-        refresh_execution::execute_refresh(&self.inner.providers, pool, today, request).await
+        refresh_execution::execute_refresh(&self.inner.providers, pool, today, request, lease).await
+    }
+}
+
+pub(super) fn run_summary(row: market_data_runs::RefreshRunRow) -> RefreshRunSummary {
+    RefreshRunSummary {
+        run_id: row.id,
+        trigger: super::refresh_contract::refresh_trigger_from_db(&row.trigger),
+        mode: super::refresh_contract::refresh_mode_from_trigger(&row.trigger),
+        status: super::refresh_contract::refresh_status_from_db(&row.status),
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        message: row.message,
+        prices_written: row.prices_written as usize,
+        fx_rates_written: row.fx_rates_written as usize,
+        unmapped_instruments: row.unmapped_instruments as usize,
+        failed_items: row.failed_items as usize,
     }
 }
 

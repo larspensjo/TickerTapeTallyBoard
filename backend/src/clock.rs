@@ -1,17 +1,25 @@
-use chrono::{DateTime, Local, NaiveDate, Utc};
+use std::sync::{Arc, RwLock};
+
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 
 /// The single source of "today" for every surface that values a portfolio.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Clock {
     /// The machine's local calendar date.
     System,
     /// A pinned date, for tests.
     Fixed(NaiveDate),
+    /// A fully pinned instant for lease and timestamp tests.
+    FixedInstant(Arc<RwLock<DateTime<Utc>>>),
 }
 
 impl Clock {
     pub fn fixed(date: NaiveDate) -> Self {
         Clock::Fixed(date)
+    }
+
+    pub fn fixed_instant(instant: DateTime<Utc>) -> Self {
+        Clock::FixedInstant(Arc::new(RwLock::new(instant)))
     }
 
     /// Today's date in the app's timezone. Every valuation date, staleness
@@ -24,6 +32,35 @@ impl Clock {
                 Local::now().naive_local().date()
             }
             Clock::Fixed(date) => *date,
+            Clock::FixedInstant(instant) => instant
+                .read()
+                .expect("fixed clock lock should not be poisoned")
+                .with_timezone(&Local)
+                .date_naive(),
+        }
+    }
+
+    pub fn now_utc(&self) -> DateTime<Utc> {
+        match self {
+            Clock::System => now_utc(),
+            Clock::Fixed(date) => {
+                Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
+            }
+            Clock::FixedInstant(instant) => *instant
+                .read()
+                .expect("fixed clock lock should not be poisoned"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_instant(&self, instant: DateTime<Utc>) {
+        match self {
+            Clock::FixedInstant(current) => {
+                *current
+                    .write()
+                    .expect("fixed clock lock should not be poisoned") = instant;
+            }
+            _ => panic!("set_instant requires Clock::FixedInstant"),
         }
     }
 }

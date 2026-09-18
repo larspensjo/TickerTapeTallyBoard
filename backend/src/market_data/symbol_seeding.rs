@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-use super::refresh_contract::MarketDataError;
+use super::{refresh::RefreshLease, refresh_contract::MarketDataError};
 
 pub(crate) struct ResolvedPriceHistory {
     pub(crate) provider_symbol: String,
@@ -235,6 +235,7 @@ pub(crate) async fn seed_provider_symbols(
         MarketDataProvider,
         Arc<dyn SymbolSearchProvider + Send + Sync>,
     )],
+    lease: &RefreshLease,
 ) -> Result<BTreeMap<i64, String>, MarketDataError> {
     let mut ambiguous = BTreeMap::new();
 
@@ -267,20 +268,32 @@ pub(crate) async fn seed_provider_symbols(
 
         if let Some(seed) = seed {
             let now = now_iso8601();
-            provider_symbols::upsert(
+            let mapping = provider_symbols::NewProviderSymbol {
+                instrument_id: instrument.id,
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: seed.provider_symbol,
+                asset_class: None,
+                currency: Some(instrument.currency.clone()),
+                enabled: seed.enabled,
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            let write = crate::db::market_data_runs::fenced_write(
                 pool,
-                &provider_symbols::NewProviderSymbol {
-                    instrument_id: instrument.id,
-                    provider: MarketDataProvider::Yahoo,
-                    provider_symbol: seed.provider_symbol,
-                    asset_class: None,
-                    currency: Some(instrument.currency.clone()),
-                    enabled: seed.enabled,
-                    created_at: now.clone(),
-                    updated_at: now,
+                lease.run_id,
+                &lease.owner,
+                |conn| {
+                    Box::pin(async move {
+                        provider_symbols::upsert(&mut *conn, &mapping)
+                            .await
+                            .map(|_| ())
+                    })
                 },
             )
             .await?;
+            if write.is_err() {
+                return Err(MarketDataError::LeaseLost);
+            }
         }
 
         if yahoo_enabled {
@@ -288,7 +301,7 @@ pub(crate) async fn seed_provider_symbols(
         }
 
         if let Some(candidates) =
-            seed_nasdaq_symbol(pool, instrument, symbol_search_providers).await?
+            seed_nasdaq_symbol(pool, instrument, symbol_search_providers, lease).await?
         {
             ambiguous.insert(instrument.id, candidates);
         }
@@ -310,6 +323,7 @@ pub(crate) async fn seed_nasdaq_symbol(
         MarketDataProvider,
         Arc<dyn SymbolSearchProvider + Send + Sync>,
     )],
+    lease: &RefreshLease,
 ) -> Result<Option<String>, MarketDataError> {
     let existing = provider_symbols::find_by_instrument_provider(
         pool,
@@ -352,20 +366,32 @@ pub(crate) async fn seed_nasdaq_symbol(
     match symbol_matching::unique_currency_match(&instrument.currency, supported) {
         CurrencyMatch::Unique(candidate) => {
             let now = now_iso8601();
-            provider_symbols::upsert(
+            let mapping = provider_symbols::NewProviderSymbol {
+                instrument_id: instrument.id,
+                provider: MarketDataProvider::NasdaqNordic,
+                provider_symbol: candidate.provider_symbol.clone(),
+                asset_class: candidate.asset_class.clone(),
+                currency: candidate.currency.clone(),
+                enabled: true,
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            let write = crate::db::market_data_runs::fenced_write(
                 pool,
-                &provider_symbols::NewProviderSymbol {
-                    instrument_id: instrument.id,
-                    provider: MarketDataProvider::NasdaqNordic,
-                    provider_symbol: candidate.provider_symbol.clone(),
-                    asset_class: candidate.asset_class.clone(),
-                    currency: candidate.currency.clone(),
-                    enabled: true,
-                    created_at: now.clone(),
-                    updated_at: now,
+                lease.run_id,
+                &lease.owner,
+                |conn| {
+                    Box::pin(async move {
+                        provider_symbols::upsert(&mut *conn, &mapping)
+                            .await
+                            .map(|_| ())
+                    })
                 },
             )
             .await?;
+            if write.is_err() {
+                return Err(MarketDataError::LeaseLost);
+            }
             crate::engine_info!(
                 "market data connected nasdaq source instrument_id={} isin={} orderbook_id={} asset_class={:?} currency={:?}",
                 instrument.id,

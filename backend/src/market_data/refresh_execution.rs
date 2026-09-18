@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::atomic::Ordering};
 
 use chrono::NaiveDate;
 use sqlx::sqlite::SqlitePool;
@@ -13,7 +13,7 @@ use crate::{
 use super::{
     fx_refresh, price_source_refresh,
     provider_registry::{self, ProviderSet},
-    refresh,
+    refresh::{self, RefreshLease},
     refresh_contract::{
         MarketDataError, RefreshItem, RefreshItemKind, RefreshItemStatus, RefreshMode,
         RefreshPricesRequest, RefreshRunStatus,
@@ -31,6 +31,26 @@ pub(super) struct RefreshOutcome {
     pub(super) items: Vec<RefreshItem>,
 }
 
+impl RefreshOutcome {
+    fn lease_lost(
+        prices_written: usize,
+        fx_rates_written: usize,
+        unmapped_instruments: usize,
+        failed_items: usize,
+        items: Vec<RefreshItem>,
+    ) -> Self {
+        Self {
+            status: RefreshRunStatus::Failed,
+            message: Some("lease_lost".to_owned()),
+            prices_written,
+            fx_rates_written,
+            unmapped_instruments,
+            failed_items,
+            items,
+        }
+    }
+}
+
 pub(super) struct RefreshTarget {
     pub(super) instrument: crate::db::instruments::InstrumentRow,
     pub(super) currency: String,
@@ -41,17 +61,31 @@ pub(super) async fn execute_refresh(
     pool: &SqlitePool,
     today: NaiveDate,
     request: &RefreshPricesRequest,
+    lease: &RefreshLease,
 ) -> Result<RefreshOutcome, MarketDataError> {
     let target_window = refresh::refresh_window(request, pool, today).await?;
     let transactions = transactions::all_for_holdings(pool).await?;
     let grouped = group_transactions(transactions);
     let instruments = instruments::list(pool).await?;
-    let ambiguous = symbol_seeding::seed_provider_symbols(
+    let mut prices_written = 0usize;
+    let mut fx_rates_written = 0usize;
+    let mut unmapped_instruments = 0usize;
+    let mut failed_items = 0usize;
+    let mut items = Vec::new();
+    let ambiguous = match symbol_seeding::seed_provider_symbols(
         pool,
         &instruments,
         providers.symbol_search_providers(),
+        lease,
     )
-    .await?;
+    .await
+    {
+        Ok(ambiguous) => ambiguous,
+        Err(MarketDataError::LeaseLost) => {
+            return Ok(RefreshOutcome::lease_lost(0, 0, 0, 0, Vec::new()));
+        }
+        Err(error) => return Err(error),
+    };
 
     let mut targets = Vec::new();
     for instrument in instruments {
@@ -90,14 +124,18 @@ pub(super) async fn execute_refresh(
         });
     }
 
-    let mut prices_written = 0usize;
-    let mut fx_rates_written = 0usize;
-    let mut unmapped_instruments = 0usize;
-    let mut failed_items = 0usize;
-    let mut items = Vec::new();
     let mut rows_by_provider: Vec<(MarketDataProvider, usize)> = Vec::new();
 
     for target in &targets {
+        if lease.cancelled.load(Ordering::Acquire) {
+            return Ok(RefreshOutcome::lease_lost(
+                prices_written,
+                fx_rates_written,
+                unmapped_instruments,
+                failed_items,
+                items,
+            ));
+        }
         let sources = effective_prices::enabled_price_sources(pool, target.instrument.id).await?;
 
         if sources.is_empty() {
@@ -107,15 +145,38 @@ pub(super) async fn execute_refresh(
         }
 
         for source in &sources {
-            let outcome = price_source_refresh::refresh_one_source(
+            if lease.cancelled.load(Ordering::Acquire) {
+                return Ok(RefreshOutcome::lease_lost(
+                    prices_written,
+                    fx_rates_written,
+                    unmapped_instruments,
+                    failed_items,
+                    items,
+                ));
+            }
+            let outcome = match price_source_refresh::refresh_one_source(
                 providers,
                 pool,
                 target,
                 source,
                 &target_window,
                 request.mode,
+                lease,
             )
-            .await?;
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(MarketDataError::LeaseLost) => {
+                    return Ok(RefreshOutcome::lease_lost(
+                        prices_written,
+                        fx_rates_written,
+                        unmapped_instruments,
+                        failed_items,
+                        items,
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             if outcome.failed {
                 failed_items += 1;
             }
@@ -131,8 +192,36 @@ pub(super) async fn execute_refresh(
         }
     }
 
-    let fx_outcome =
-        fx_refresh::refresh_fx_rates(providers, pool, &targets, &target_window).await?;
+    if lease.cancelled.load(Ordering::Acquire) {
+        return Ok(RefreshOutcome::lease_lost(
+            prices_written,
+            fx_rates_written,
+            unmapped_instruments,
+            failed_items,
+            items,
+        ));
+    }
+    let fx_outcome = match fx_refresh::refresh_fx_rates(
+        providers,
+        pool,
+        &targets,
+        &target_window,
+        lease,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(MarketDataError::LeaseLost) => {
+            return Ok(RefreshOutcome::lease_lost(
+                prices_written,
+                fx_rates_written,
+                unmapped_instruments,
+                failed_items,
+                items,
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     fx_rates_written += fx_outcome.fx_rates_written;
     failed_items += fx_outcome.failed_items;
     items.extend(fx_outcome.items);

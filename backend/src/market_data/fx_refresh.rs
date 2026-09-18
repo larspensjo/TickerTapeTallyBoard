@@ -7,7 +7,7 @@ use crate::{db::fx_rates, import::now_iso8601, providers::BASE_FX_PROVIDER};
 use super::{
     price_source_refresh::provider_error_status,
     provider_registry::ProviderSet,
-    refresh::{RefreshTarget, RefreshWindow},
+    refresh::{RefreshLease, RefreshTarget, RefreshWindow},
     refresh_contract::{MarketDataError, RefreshItem, RefreshItemKind, RefreshItemStatus},
 };
 
@@ -24,6 +24,7 @@ pub(super) async fn refresh_fx_rates(
     pool: &SqlitePool,
     targets: &[RefreshTarget],
     window: &RefreshWindow,
+    lease: &RefreshLease,
 ) -> Result<FxRefreshOutcome, MarketDataError> {
     let mut fx_rates_written = 0usize;
     let mut failed_items = 0usize;
@@ -41,19 +42,34 @@ pub(super) async fn refresh_fx_rates(
             .await
         {
             Ok(rows) => {
-                for row in &rows {
-                    fx_rates::upsert(
-                        pool,
-                        &fx_rates::NewFxRate {
-                            base: row.base.clone(),
-                            quote: row.quote.clone(),
-                            date: row.date,
-                            rate: row.rate,
-                            provider: BASE_FX_PROVIDER,
-                            fetched_at: now_iso8601(),
-                        },
-                    )
-                    .await?;
+                let rows_to_write = rows.clone();
+                let write = crate::db::market_data_runs::fenced_write(
+                    pool,
+                    lease.run_id,
+                    &lease.owner,
+                    |conn| {
+                        Box::pin(async move {
+                            for row in &rows_to_write {
+                                fx_rates::upsert(
+                                    &mut *conn,
+                                    &fx_rates::NewFxRate {
+                                        base: row.base.clone(),
+                                        quote: row.quote.clone(),
+                                        date: row.date,
+                                        rate: row.rate,
+                                        provider: BASE_FX_PROVIDER,
+                                        fetched_at: now_iso8601(),
+                                    },
+                                )
+                                .await?;
+                            }
+                            Ok(())
+                        })
+                    },
+                )
+                .await?;
+                if write.is_err() {
+                    return Err(MarketDataError::LeaseLost);
                 }
                 fx_rates_written += rows.len();
                 items.push(RefreshItem {

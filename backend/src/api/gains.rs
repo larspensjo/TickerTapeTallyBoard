@@ -282,7 +282,9 @@ pub async fn list(
         },
         rows: gain_rows,
         portfolio_waterfall,
-        data_revision: state.revision.current(),
+        data_revision: state.revision.current().await.map_err(|error| {
+            ApiError::internal(format!("could not read data revision: {error}"))
+        })?,
     }))
 }
 

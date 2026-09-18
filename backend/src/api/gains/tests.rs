@@ -1436,14 +1436,20 @@ async fn gains_open_row_exposes_realized_gain_base() {
 #[tokio::test]
 async fn gains_response_names_the_data_revision_it_was_computed_from() {
     let state = AppState::for_tests().await;
-    let before = state.revision.current();
+    let before = state.revision.current().await.expect("revision reads");
 
     instrument(&state, "STAMP", "STO", BASE_CURRENCY).await;
 
-    assert_ne!(state.revision.current(), before);
+    assert_ne!(
+        state.revision.current().await.expect("revision reads"),
+        before
+    );
 
     let (status, body) = send(&state, "GET", "/api/gains", json!({})).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["data_revision"], state.revision.current());
+    assert_eq!(
+        body["data_revision"],
+        state.revision.current().await.expect("revision reads")
+    );
 }

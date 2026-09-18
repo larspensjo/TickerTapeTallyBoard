@@ -21,7 +21,7 @@ pub async fn refresh(
     };
     let response = state
         .market_data
-        .refresh(&state.pool, state.clock.today(), trigger, body)
+        .refresh(&state.pool, &state.clock, trigger, body)
         .await
         .map_err(api_error)?;
     Ok(Json(response))
@@ -30,7 +30,7 @@ pub async fn refresh(
 pub async fn status(State(state): State<AppState>) -> Result<Json<PriceStatusResponse>, ApiError> {
     let response = state
         .market_data
-        .status(&state.pool, state.clock.today())
+        .status(&state.pool, &state.clock)
         .await
         .map_err(api_error)?;
     Ok(Json(response))
@@ -39,6 +39,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<PriceStatusRes
 fn api_error(error: MarketDataError) -> ApiError {
     match error {
         MarketDataError::InvalidRequest { code, message } => ApiError::bad_request(code, message),
+        MarketDataError::LeaseLost => ApiError::internal("unexpected unhandled lease loss"),
         MarketDataError::Internal(message) => ApiError::internal(message),
         MarketDataError::Repo(error) => ApiError::from(error),
     }
@@ -228,5 +229,92 @@ mod tests {
         assert_eq!(body["error"]["code"], "demo_read_only");
         assert!(price_provider.calls().is_empty());
         assert!(fx_provider.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_endpoint_reports_lease_loss_as_a_failed_ok_response() {
+        let pool = db::memory_pool().await.expect("memory pool");
+        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        price_provider.block_next_call_on(std::sync::Arc::clone(&gate));
+        price_provider.push_response(Ok(vec![DailyClose {
+            provider: MarketDataProvider::Yahoo,
+            provider_symbol: "MSFT".to_owned(),
+            date: NaiveDate::from_ymd_opt(2026, 9, 18).expect("date"),
+            close: dec!(101),
+            currency: "USD".to_owned(),
+        }]));
+        let start = chrono::DateTime::parse_from_rfc3339("2026-09-18T10:00:00Z")
+            .expect("time")
+            .to_utc();
+        let clock = crate::clock::Clock::fixed_instant(start);
+        let state = AppState::with_market_data(
+            pool,
+            MarketDataService::with_providers(price_provider.clone(), fx_provider),
+        )
+        .with_clock(clock.clone());
+        let msft = instrument(&state.pool).await;
+        transactions::insert(
+            &state.pool,
+            &crate::db::transactions::NewTransaction {
+                instrument_id: msft,
+                kind: crate::domain::TransactionKind::Buy,
+                trade_date: NaiveDate::from_ymd_opt(2026, 9, 1).expect("date"),
+                quantity: 1,
+                price: Some(dec!(100)),
+                dividend_per_share: None,
+                currency: Some("USD".to_owned()),
+                fx_rate_to_base: Some(dec!(10)),
+                brokerage: None,
+                note: None,
+            },
+        )
+        .await
+        .expect("transaction");
+        let request = tokio::spawn({
+            let state = state.clone();
+            async move {
+                crate::api::router(state)
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/api/prices/refresh")
+                            .header("content-type", "application/json")
+                            .body(Body::from(r#"{"mode":"latest"}"#))
+                            .expect("request builds"),
+                    )
+                    .await
+                    .expect("request completes")
+            }
+        });
+        while price_provider.calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        clock.set_instant(start + chrono::Duration::seconds(121));
+        assert!(matches!(
+            crate::db::market_data_runs::try_claim_run(
+                &state.pool,
+                "MANUAL",
+                "owner-b",
+                clock.now_utc(),
+                crate::db::market_data_runs::REFRESH_CLAIM_STALE_AFTER,
+            )
+            .await
+            .expect("reclaim"),
+            crate::db::market_data_runs::ClaimResult::Claimed { .. }
+        ));
+        gate.notify_waiters();
+
+        let response = request.await.expect("request task joins");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json");
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["message"], "lease_lost");
     }
 }

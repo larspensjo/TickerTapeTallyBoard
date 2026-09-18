@@ -97,6 +97,12 @@ async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
         crate::demo::seed(&pool, crate::clock::Clock::System.today())
             .await
             .map_err(|source| StartupError::LedgerOpenFailed { path: None, source })?;
+        crate::data_revision::bump(&pool).await.map_err(|source| {
+            StartupError::LedgerOpenFailed {
+                path: None,
+                source: Box::new(source),
+            }
+        })?;
         sqlx::query("PRAGMA query_only = ON")
             .execute(&pool)
             .await
@@ -107,6 +113,12 @@ async fn build_state(config: &AppConfig) -> Result<AppState, StartupError> {
         (pool, crate::ledger::LaunchBackupOutcome::skipped())
     } else {
         let opened = crate::ledger::open(config).await?;
+        crate::data_revision::bump(&opened.pool)
+            .await
+            .map_err(|source| StartupError::LedgerOpenFailed {
+                path: config.ledger.path.clone(),
+                source: Box::new(source),
+            })?;
         (opened.pool, opened.launch_backup)
     };
     Ok(AppState::new(
@@ -140,7 +152,7 @@ fn spawn_launch_refresh(
             .market_data
             .refresh(
                 &state.pool,
-                state.clock.today(),
+                &state.clock,
                 crate::market_data::RefreshTrigger::Launch,
                 request,
             )
@@ -148,10 +160,16 @@ fn spawn_launch_refresh(
         {
             crate::engine_error!("launch refresh failed: {error}");
         }
-        state.revision.bump();
+        if let Err(error) = state.revision.bump().await {
+            crate::engine_error!("launch refresh could not bump data revision: {error}");
+        }
         crate::engine_info!(
             "launch refresh finished; data revision is now {}",
-            state.revision.current()
+            state
+                .revision
+                .current()
+                .await
+                .unwrap_or_else(|_| "unavailable".to_owned())
         );
     }))
 }
@@ -293,7 +311,7 @@ mod tests {
 
         let status = state
             .market_data
-            .status(&state.pool, state.clock.today())
+            .status(&state.pool, &state.clock)
             .await
             .expect("status should succeed");
         assert!(status.refreshing);
@@ -303,13 +321,16 @@ mod tests {
         );
 
         gate.notify_waiters();
-        let before = state.revision.current();
+        let before = state.revision.current().await.expect("revision reads");
         handle.await.expect("launch task should finish");
-        assert_ne!(state.revision.current(), before);
+        assert_ne!(
+            state.revision.current().await.expect("revision reads"),
+            before
+        );
 
         let status = state
             .market_data
-            .status(&state.pool, state.clock.today())
+            .status(&state.pool, &state.clock)
             .await
             .expect("status should succeed");
         assert!(!status.refreshing);
@@ -317,6 +338,69 @@ mod tests {
             status.latest_run.expect("latest run").status,
             crate::market_data::RefreshRunStatus::Succeeded
         );
+    }
+
+    #[tokio::test]
+    async fn launch_refresh_revision_is_visible_through_an_independent_pool() {
+        let root = unique_assets_dir("shared-launch-revision");
+        fs::create_dir_all(&root).expect("test root");
+        let location = resolve(
+            &format!(
+                "sqlite://{}",
+                root.join("ledger.sqlite")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            Mode::Production,
+        )
+        .expect("location");
+        let first = db::open(&location, db::CreateMissing::Yes)
+            .await
+            .expect("first pool");
+        db::migrate(&first.pool).await.expect("migrate");
+        let second = db::open(&location, db::CreateMissing::No)
+            .await
+            .expect("second pool");
+        let first_state = AppState::with_market_data(
+            first.pool,
+            MarketDataService::with_providers(
+                FakePriceProvider::with_provider(MarketDataProvider::Yahoo),
+                FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+            ),
+        );
+        let second_state = AppState::with_market_data(
+            second.pool,
+            MarketDataService::with_providers(
+                FakePriceProvider::with_provider(MarketDataProvider::Yahoo),
+                FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
+            ),
+        );
+        let before = second_state
+            .revision
+            .current()
+            .await
+            .expect("revision reads");
+
+        spawn_launch_refresh(
+            &test_config(Mode::Production, memory()),
+            first_state.clone(),
+        )
+        .expect("launch refresh scheduled")
+        .await
+        .expect("launch task joins");
+
+        assert_ne!(
+            second_state
+                .revision
+                .current()
+                .await
+                .expect("revision reads"),
+            before
+        );
+        first_state.pool.close().await;
+        second_state.pool.close().await;
+        let _ = fs::remove_file(root.join("ledger.sqlite"));
+        let _ = fs::remove_dir(root);
     }
 
     #[tokio::test]
@@ -356,6 +440,7 @@ mod tests {
             .await
             .expect("seeded instruments should list");
         assert_eq!(instruments.len(), 7);
+        let seeded_revision = state.revision.current().await.expect("revision reads");
 
         let write_result = sqlx::query(
             "INSERT INTO instruments (symbol, exchange, name, type, currency, isin) \
@@ -365,7 +450,39 @@ mod tests {
         .await;
 
         assert!(write_result.is_err());
+        assert_eq!(
+            state.revision.current().await.expect("revision reads"),
+            seeded_revision,
+            "demo revision remains fixed after seeding"
+        );
         state.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn each_startup_bumps_the_persisted_revision_once() {
+        let root = unique_assets_dir("startup-revision");
+        fs::create_dir_all(&root).expect("test root");
+        let config = file_config(Mode::Production, &root, root.join("assets"));
+
+        let first = build_state(&config).await.expect("first startup");
+        let first_counter: i64 =
+            sqlx::query_scalar("SELECT counter FROM data_revision WHERE id = 1")
+                .fetch_one(&first.pool)
+                .await
+                .expect("counter");
+        assert_eq!(first_counter, 1);
+        first.pool.close().await;
+
+        let second = build_state(&config).await.expect("second startup");
+        let second_counter: i64 =
+            sqlx::query_scalar("SELECT counter FROM data_revision WHERE id = 1")
+                .fetch_one(&second.pool)
+                .await
+                .expect("counter");
+        assert_eq!(second_counter, 2);
+        second.pool.close().await;
+        let _ = fs::remove_file(root.join("ledger.sqlite"));
+        let _ = fs::remove_dir(root);
     }
 
     #[test]

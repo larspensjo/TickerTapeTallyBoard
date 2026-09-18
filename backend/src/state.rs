@@ -46,7 +46,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(pool: SqlitePool, market_data: Arc<MarketDataService>) -> Self {
         Self {
-            pool,
+            pool: pool.clone(),
             market_data,
             mode: Mode::Production,
             ledger_path: None,
@@ -58,7 +58,7 @@ impl AppState {
                 },
             },
             clock: Clock::System,
-            revision: DataRevision::new(),
+            revision: DataRevision::new(pool.clone()),
         }
     }
 

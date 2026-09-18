@@ -12,9 +12,6 @@ use crate::{
 };
 
 use super::refresh_contract::{
-    refresh_mode_from_trigger, refresh_status_from_db, refresh_trigger_from_db,
-};
-use super::refresh_contract::{
     InstrumentMarketDataStatus, MarketDataError, PriceSnapshotState, PriceSourceStatus,
     PriceStatusResponse, RefreshRunSummary,
 };
@@ -74,19 +71,7 @@ async fn latest_run_summary(
     pool: &SqlitePool,
 ) -> Result<Option<RefreshRunSummary>, MarketDataError> {
     let row = market_data_runs::latest(pool).await?;
-    Ok(row.map(|row| RefreshRunSummary {
-        run_id: row.id,
-        trigger: refresh_trigger_from_db(&row.trigger),
-        mode: refresh_mode_from_trigger(&row.trigger),
-        status: refresh_status_from_db(&row.status),
-        started_at: row.started_at,
-        finished_at: row.finished_at,
-        message: row.message,
-        prices_written: row.prices_written as usize,
-        fx_rates_written: row.fx_rates_written as usize,
-        unmapped_instruments: row.unmapped_instruments as usize,
-        failed_items: row.failed_items as usize,
-    }))
+    Ok(row.map(super::refresh::run_summary))
 }
 
 /// Every mapping an instrument has, enabled or not, in precedence order.
@@ -203,7 +188,7 @@ mod tests {
         set_conviction(&pool, watch, "MEDIUM").await;
 
         let status = service
-            .status(&pool, crate::clock::Clock::System.today())
+            .status(&pool, &crate::clock::Clock::System)
             .await
             .expect("status should succeed");
         assert_eq!(status.instruments.len(), 1);
@@ -246,7 +231,7 @@ mod tests {
         .expect("nasdaq row should insert");
 
         let status = service
-            .status(&pool, crate::clock::Clock::System.today())
+            .status(&pool, &crate::clock::Clock::System)
             .await
             .expect("status should succeed");
         let entry = &status.instruments[0];

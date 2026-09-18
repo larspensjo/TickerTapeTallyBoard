@@ -10,7 +10,7 @@ use crate::{
 
 use super::{
     provider_registry::ProviderSet,
-    refresh::{RefreshTarget, RefreshWindow},
+    refresh::{RefreshLease, RefreshTarget, RefreshWindow},
     refresh_contract::{
         MarketDataError, RefreshItem, RefreshItemKind, RefreshItemStatus, RefreshMode,
     },
@@ -33,6 +33,7 @@ pub(super) async fn refresh_one_source(
     source: &PriceSourceMapping,
     window: &RefreshWindow,
     mode: RefreshMode,
+    lease: &RefreshLease,
 ) -> Result<SourceRefreshOutcome, MarketDataError> {
     let instrument = &target.instrument;
     let mapped_symbol = source.provider_symbol.clone();
@@ -92,6 +93,7 @@ pub(super) async fn refresh_one_source(
             &provider_symbol,
             Some(instrument.currency.clone()),
             true,
+            lease,
         )
         .await?;
         crate::engine_info!(
@@ -120,6 +122,7 @@ pub(super) async fn refresh_one_source(
                 .clone()
                 .or_else(|| Some(instrument.currency.clone())),
             false,
+            lease,
         )
         .await?;
         crate::engine_warn!(
@@ -141,20 +144,33 @@ pub(super) async fn refresh_one_source(
         }));
     }
 
-    for row in &rows {
-        prices::upsert(
-            pool,
-            &prices::NewPrice {
-                instrument_id: instrument.id,
-                provider: source.provider,
-                provider_symbol: row.provider_symbol.clone(),
-                date: row.date,
-                close: row.close,
-                currency: row.currency.clone(),
-                fetched_at: now_iso8601(),
-            },
-        )
+    let rows_to_write = rows.clone();
+    let instrument_id = instrument.id;
+    let provider = source.provider;
+    let write =
+        crate::db::market_data_runs::fenced_write(pool, lease.run_id, &lease.owner, |conn| {
+            Box::pin(async move {
+                for row in &rows_to_write {
+                    prices::upsert(
+                        &mut *conn,
+                        &prices::NewPrice {
+                            instrument_id,
+                            provider,
+                            provider_symbol: row.provider_symbol.clone(),
+                            date: row.date,
+                            close: row.close,
+                            currency: row.currency.clone(),
+                            fetched_at: now_iso8601(),
+                        },
+                    )
+                    .await?;
+                }
+                Ok(())
+            })
+        })
         .await?;
+    if write.is_err() {
+        return Err(MarketDataError::LeaseLost);
     }
 
     let reason = clamp_reason(instrument, source, &provider_symbol, &rows, window, mode);
@@ -180,22 +196,31 @@ pub(super) async fn persist_mapping(
     provider_symbol: &str,
     currency: Option<String>,
     enabled: bool,
+    lease: &RefreshLease,
 ) -> Result<(), MarketDataError> {
     let now = now_iso8601();
-    provider_symbols::upsert(
-        pool,
-        &provider_symbols::NewProviderSymbol {
-            instrument_id: instrument.id,
-            provider: source.provider,
-            provider_symbol: provider_symbol.to_owned(),
-            asset_class: source.asset_class.clone(),
-            currency,
-            enabled,
-            created_at: now.clone(),
-            updated_at: now,
-        },
-    )
-    .await?;
+    let mapping = provider_symbols::NewProviderSymbol {
+        instrument_id: instrument.id,
+        provider: source.provider,
+        provider_symbol: provider_symbol.to_owned(),
+        asset_class: source.asset_class.clone(),
+        currency,
+        enabled,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let write =
+        crate::db::market_data_runs::fenced_write(pool, lease.run_id, &lease.owner, |conn| {
+            Box::pin(async move {
+                provider_symbols::upsert(&mut *conn, &mapping)
+                    .await
+                    .map(|_| ())
+            })
+        })
+        .await?;
+    if write.is_err() {
+        return Err(MarketDataError::LeaseLost);
+    }
     Ok(())
 }
 

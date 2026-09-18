@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as queries from "./queries";
 
 const VERSION = {
-  data_revision: "r:1",
+  data_revision: "ledger-a:1",
   valuation_date: "2026-09-12",
   prices_refreshing: false,
 };
@@ -105,7 +105,7 @@ describe("every data hook names the snapshot", () => {
           .filter((key) => key[0] !== "data-version");
         expect(keys.length).toBeGreaterThan(0);
         for (const key of keys) {
-          expect(key[1]).toBe("r:1@2026-09-12");
+          expect(key[1]).toBe("ledger-a:1@2026-09-12");
         }
       });
     },
@@ -225,7 +225,7 @@ describe("a snapshot change refetches data", () => {
           text: () =>
             Promise.resolve(
               JSON.stringify(
-                isVersion ? VERSION : { data_revision: "r:2", rows: [] },
+                isVersion ? VERSION : { data_revision: "ledger-a:2", rows: [] },
               ),
             ),
         } as unknown as Response);
@@ -258,7 +258,7 @@ describe("a snapshot change refetches data", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(gainsRequests).toHaveLength(1);
 
-    version = { ...VERSION, data_revision: "r:2" };
+    version = { ...VERSION, data_revision: "ledger-a:2" };
     await queryClient.refetchQueries({ queryKey: ["data-version"] });
 
     await waitFor(() => expect(gainsRequests).toHaveLength(2));

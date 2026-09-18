@@ -127,10 +127,13 @@ pub async fn list_by_provider_symbol(
 }
 
 /// Upsert a provider-symbol mapping by `(instrument_id, provider)`.
-pub async fn upsert(
-    pool: &SqlitePool,
+pub async fn upsert<'e, E>(
+    executor: E,
     new: &NewProviderSymbol,
-) -> Result<ProviderSymbolRow, RepoError> {
+) -> Result<ProviderSymbolRow, RepoError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query_as::<_, RawProviderSymbolRow>(UPSERT_SQL)
         .bind(new.instrument_id)
         .bind(new.provider.as_str())
@@ -140,7 +143,7 @@ pub async fn upsert(
         .bind(new.enabled)
         .bind(&new.created_at)
         .bind(&new.updated_at)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
     row.try_into()
 }
