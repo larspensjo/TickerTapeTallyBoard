@@ -288,6 +288,27 @@ Checked against the dark canvas; values are approximate WCAG ratios.
 - Add drop shadows to cards, or introduce a second accent color.
 - Color a Sell/Buy/Split type chip green/red — transaction type is not P&L.
 
+## Application icon
+
+The mark is the Dashboard's gains waterfall reduced to three stacked bars on a
+rounded `--canvas` tile with a `--hairline` edge: cost basis, market value, and
+the total return in `--up`. It carries no accent — the blue stays reserved for
+fills inside the product, and the dashboard reads as green from across the room.
+
+Two deliberate departures from the tokens above, both forced by the 16px size at
+which the icon is almost always seen:
+
+- The neutral bars use `--wf-bar-total` and `--text-muted` rather than the
+  waterfall's own `--wf-bar-subtotal`/`--wf-bar-total` pair. The darker values
+  are indistinguishable from the tile at favicon size.
+- Each raster size snaps the bars to its own whole pixels instead of being
+  downscaled from a larger rendering, which would leave half-pixel edges and
+  blur the three bars into one grey smear.
+
+The geometry lives in one place, `scripts/build-app-icons.py`, which generates
+every artefact — the scalable icon, the legacy fallback, the home-screen image
+and the Windows icon. Edit the geometry and regenerate; never edit an output.
+
 ## Future
 
 Tokens are semantic, so a light theme could later be added by supplying an

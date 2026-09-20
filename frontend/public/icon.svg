@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="TickerTapeTallyBoard">
+  <title>TickerTapeTallyBoard</title>
+  <rect width="64" height="64" rx="14" fill="#0a0b0d"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="none" stroke="#20242b"/>
+  <rect x="12" y="16" width="26" height="8" rx="4" fill="#4a525d"/>
+  <rect x="21" y="28" width="30" height="8" rx="4" fill="#6b7280"/>
+  <rect x="30" y="40" width="22" height="8" rx="4" fill="#16c784"/>
+</svg>

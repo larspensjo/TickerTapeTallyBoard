@@ -3,5 +3,5 @@ resolver = "2"
 members = ["backend", "desktop"]
 
 [workspace.package]
-version = "0.18.1"
+version = "0.19.0"
 edition = "2021"
