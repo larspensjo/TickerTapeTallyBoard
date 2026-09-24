@@ -22,10 +22,11 @@ What we kept from the Coinbase system:
 
 - **One accent** ("brand voltage") — Coinbase Blue `#0052ff`, used scarcely.
 - **Mono on every number** — all tabular figures in a monospace face.
-- **Semantic up/down as color, not fills** — green/red are text colors (two
-  reserved exceptions: soft-tinted chips, below, and the Dashboard treemap,
-  whose whole point is a per-tile heatmap — its tiles use the same `--up-soft`/
-  `--down-soft` fills).
+- **Semantic up/down as color, not fills** — green/red are text colors (three
+  reserved exceptions: soft-tinted chips, below; the Dashboard treemap, whose
+  whole point is a per-tile heatmap — its tiles use the same `--up-soft`/
+  `--down-soft` fills; and the Dashboard gain chart, whose whole point is
+  above-or-below zero, so it fills green above the baseline and red below).
 - **Depth by layering, not shadows** — panels float on the canvas via a surface
   step + 1px hairline; drop shadows are reserved for overlays only.
 - **Pill/rounded geometry** — pill CTAs, rounded panels, circular glyphs.
@@ -203,7 +204,29 @@ areaSeries.topColor      = rgba(0,82,255,0.32)
 areaSeries.bottomColor   = rgba(0,82,255,0.00)
 up markers / candles     = --up (#16c784)
 down markers / candles   = --down (#ff4d4f)
+
+// Gain chart (baseline series, zero baseline always in view)
+baseline.baseValue       = 0
+baseline.topLineColor    = --up (#16c784)
+baseline.topFillColor1/2 = rgba(22,199,132,0.30) -> rgba(22,199,132,0.02)
+baseline.bottomLineColor = --down (#ff4d4f)
+baseline.bottomFill1/2   = rgba(255,77,79,0.02) -> rgba(255,77,79,0.30)
+
+// Axes
+priceScale.scaleMargins  = { top: 0.12, bottom: 0.12 }   // fitted axis, not zero-pinned
+percent axis format      = two decimals + "%", minMove 0.01
+currency axis format     = compact, 3 significant digits, minMove 1
 ```
+
+**Chart edge tag** — names a reference line that falls outside the fitted axis,
+so it reads as off-screen at a known level rather than as missing: pill chip,
+`--surface-2` on a `--hairline` border, gold `#e0b15e` text at 11px/600,
+positioned at the top or bottom edge of the chart it belongs to.
+
+**Chart caption** — the always-visible explanation under a chart legend:
+`--text-muted`, 12px, max ~78 characters wide. Not a tooltip, because the
+distinction between the chart's percentage and the money-weighted percentages
+elsewhere must be legible without hovering.
 
 ## CSS tokens (`:root`)
 
