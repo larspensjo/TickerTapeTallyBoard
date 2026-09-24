@@ -1,7 +1,5 @@
 import {
-  type AreaData,
   AreaSeries,
-  type AutoscaleInfoProvider,
   createChart,
   createSeriesMarkers,
   type IChartApi,
@@ -11,15 +9,30 @@ import {
   LineSeries,
   LineStyle,
   type SeriesMarker,
-  TickMarkType,
   type Time,
-  type WhitespaceData,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import {
+  baseChartOptions,
+  chartColors,
+  compactPriceFormat,
+  fitToDataAutoscale,
+  noAutoscale,
+} from "./chartTheme";
+import {
+  calendarSpineData,
+  isoFromTime,
+  type TimeSeriesPoint,
+  tickMarkFormatter,
+} from "./chartTimeAxis";
 
-export interface TimeSeriesPoint {
-  time: string;
-  value: number;
+export type { TimeSeriesPoint };
+
+/** A reference line outside the drawn band is announced here instead of vanishing. */
+export interface ChartEdgeTag {
+  side: "above" | "below";
+  label: string;
+  description: string;
 }
 
 interface ChartMarkerBase {
@@ -44,121 +57,10 @@ interface TradeTooltipState {
 }
 
 const markerColors = {
-  buy: "#16c784",
-  sell: "#ff4d4f",
+  buy: chartColors.gainUp,
+  sell: chartColors.gainDown,
   split: "#a8acb3",
 } as const;
-
-function isoFromTime(time: Time): string | null {
-  const date = chartDate(time);
-  return date ? date.toISOString().slice(0, 10) : null;
-}
-
-type AreaSeriesPoint = AreaData<Time> | WhitespaceData<Time>;
-const dayMs = 24 * 60 * 60 * 1000;
-const goldLineColor = "#e0b15e";
-const compactNumberFormatter = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumSignificantDigits: 3,
-});
-const compactPriceFormat = {
-  type: "custom" as const,
-  formatter: (value: number) => compactNumberFormatter.format(value),
-  minMove: 1,
-};
-
-function chartDate(time: Time): Date | null {
-  if (typeof time === "string") {
-    const parsed = new Date(`${time}T00:00:00Z`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  if (typeof time === "number") {
-    return new Date(time * 1000);
-  }
-
-  return new Date(Date.UTC(time.year, time.month - 1, time.day));
-}
-
-function tickMarkFormatter(
-  time: Time,
-  tickMarkType: TickMarkType,
-): string | null {
-  if (tickMarkType !== TickMarkType.DayOfMonth) return null;
-
-  const date = chartDate(time);
-  if (!date) return null;
-
-  return date.toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
-}
-
-function parseIsoDate(value: string): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-
-  const [, year, month, day] = match;
-  const timestamp = Date.UTC(Number(year), Number(month) - 1, Number(day));
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
-
-function formatIsoDate(timestamp: number): string {
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function calendarSpineData(
-  data: TimeSeriesPoint[],
-  rangeStart: string | undefined,
-): AreaSeriesPoint[] {
-  const end = data.at(-1)?.time;
-  const start = rangeStart ?? data[0]?.time;
-  if (!start || !end) return data;
-
-  const startTimestamp = parseIsoDate(start);
-  const endTimestamp = parseIsoDate(end);
-  if (
-    startTimestamp === null ||
-    endTimestamp === null ||
-    startTimestamp > endTimestamp
-  ) {
-    return data;
-  }
-
-  const pointsByDate = new Map(data.map((point) => [point.time, point]));
-  const points: AreaSeriesPoint[] = [];
-  for (
-    let timestamp = startTimestamp;
-    timestamp <= endTimestamp;
-    timestamp += dayMs
-  ) {
-    const time = formatIsoDate(timestamp);
-    points.push(pointsByDate.get(time) ?? { time });
-  }
-
-  return points;
-}
-
-const zeroBaselineAutoscale: AutoscaleInfoProvider = (baseImplementation) => {
-  const autoscale = baseImplementation();
-  if (autoscale === null || autoscale.priceRange === null) return autoscale;
-
-  return {
-    ...autoscale,
-    priceRange: {
-      ...autoscale.priceRange,
-      minValue: 0,
-      maxValue:
-        autoscale.priceRange.maxValue > 0 ? autoscale.priceRange.maxValue : 1,
-    },
-    margins: {
-      above: autoscale.margins?.above ?? 0,
-      below: 0,
-    },
-  };
-};
 
 export function TimeSeriesChart({
   data,
@@ -167,10 +69,11 @@ export function TimeSeriesChart({
   markers = [],
   referenceData,
   costBasisLine,
+  edgeTag,
   height = 240,
-  lineColor = "#4f9cff",
-  topColor = "rgba(79, 156, 255, 0.30)",
-  bottomColor = "rgba(79, 156, 255, 0.02)",
+  lineColor = chartColors.value,
+  topColor = chartColors.valueTop,
+  bottomColor = chartColors.valueBottom,
   compactValueAxis = false,
 }: {
   data: TimeSeriesPoint[];
@@ -179,6 +82,7 @@ export function TimeSeriesChart({
   markers?: ChartTradeMarker[];
   referenceData?: TimeSeriesPoint[];
   costBasisLine?: number;
+  edgeTag?: ChartEdgeTag;
   height?: number;
   lineColor?: string;
   topColor?: string;
@@ -191,44 +95,32 @@ export function TimeSeriesChart({
   const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const referenceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const costPriceLineRef = useRef<IPriceLine | null>(null);
+  const costBasisValueRef = useRef<number | undefined>(costBasisLine);
   const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
 
   markersRef.current = groupedMarkers(markers);
+  costBasisValueRef.current = costBasisLine;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const options = baseChartOptions(height);
     const chart = createChart(container, {
-      height,
-      layout: {
-        background: { color: "transparent" },
-        textColor: "#9aa4b2",
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: "rgba(148, 163, 184, 0.08)" },
-        horzLines: { color: "rgba(148, 163, 184, 0.08)" },
-      },
-      rightPriceScale: {
-        borderColor: "rgba(148, 163, 184, 0.2)",
-        scaleMargins: { top: 0.16, bottom: 0 },
-      },
-      timeScale: {
-        borderColor: "rgba(148, 163, 184, 0.2)",
-        tickMarkFormatter,
-      },
-      handleScale: false,
-      handleScroll: false,
+      ...options,
+      timeScale: { ...options.timeScale, tickMarkFormatter },
     });
+    // The reference line is drawn but never scales the axis, so a value line
+    // far above net invested capital still fills the band on short ranges.
     const referenceSeries = chart.addSeries(LineSeries, {
-      color: goldLineColor,
+      color: chartColors.reference,
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+      autoscaleInfoProvider: noAutoscale,
       ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
     });
 
@@ -238,7 +130,13 @@ export function TimeSeriesChart({
       bottomColor,
       lineWidth: 2,
       priceLineVisible: false,
-      autoscaleInfoProvider: zeroBaselineAutoscale,
+      // `createPriceLine` primitives do not participate in scale aggregation,
+      // so the break-even value is folded in here to stop it clipping.
+      autoscaleInfoProvider: fitToDataAutoscale(() =>
+        costBasisValueRef.current === undefined
+          ? []
+          : [costBasisValueRef.current],
+      ),
       ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
     });
 
@@ -284,6 +182,9 @@ export function TimeSeriesChart({
       visibleStart && end && visibleStart <= end ? visibleStart : undefined;
     const chartData = calendarSpineData(data, rangeStart);
 
+    // A single-observation range (the Today preset) has no line to draw, so the
+    // point is shown as a marker rather than an empty chart.
+    seriesRef.current?.applyOptions({ pointMarkersVisible: data.length < 2 });
     seriesRef.current?.setData(chartData);
 
     const referenceSeries = referenceSeriesRef.current;
@@ -317,6 +218,10 @@ export function TimeSeriesChart({
       costPriceLineRef.current = null;
     }
 
+    // Re-applying options re-runs the autoscale provider, so a changed
+    // break-even value rescales the axis instead of clipping at the edge.
+    series?.applyOptions({});
+
     if (!series || typeof price !== "number" || !Number.isFinite(price)) {
       return () => {
         costPriceLineRef.current = null;
@@ -325,7 +230,7 @@ export function TimeSeriesChart({
 
     const priceLine = series.createPriceLine({
       price,
-      color: goldLineColor,
+      color: chartColors.reference,
       lineStyle: LineStyle.Dotted,
       lineWidth: 1,
       axisLabelVisible: true,
@@ -381,6 +286,15 @@ export function TimeSeriesChart({
         role="img"
         aria-label={ariaLabel}
       />
+      {edgeTag ? (
+        <p
+          className={`chart-edge-tag ${edgeTag.side}`}
+          role="note"
+          aria-label={edgeTag.description}
+        >
+          {edgeTag.label}
+        </p>
+      ) : null}
       {tooltip ? (
         <div
           className={`chart-trade-tooltip ${tooltip.markers[0]?.side ?? "split"}`}

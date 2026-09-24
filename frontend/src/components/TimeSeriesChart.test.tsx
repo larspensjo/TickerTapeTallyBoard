@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 
@@ -18,8 +18,18 @@ const chartMocks = vi.hoisted(() => {
   const subscribeCrosshairMove = vi.fn();
   const timeScale = vi.fn(() => ({ setVisibleRange, fitContent }));
   const setReferenceData = vi.fn();
-  const areaSeries = { setData, createPriceLine, removePriceLine };
-  const lineSeries = { setData: setReferenceData };
+  const seriesApplyOptions = vi.fn();
+  const referenceApplyOptions = vi.fn();
+  const areaSeries = {
+    setData,
+    createPriceLine,
+    removePriceLine,
+    applyOptions: seriesApplyOptions,
+  };
+  const lineSeries = {
+    setData: setReferenceData,
+    applyOptions: referenceApplyOptions,
+  };
   const addAreaSeries = vi.fn((_options?: unknown) => areaSeries);
   const addLineSeries = vi.fn((_options?: unknown) => lineSeries);
   const addSeries = vi.fn((definition: unknown, options: unknown) =>
@@ -47,7 +57,9 @@ const chartMocks = vi.hoisted(() => {
     fitContent,
     remove,
     removePriceLine,
+    referenceApplyOptions,
     setData,
+    seriesApplyOptions,
     setMarkers,
     setReferenceData,
     subscribeCrosshairMove,
@@ -80,6 +92,26 @@ vi.mock("lightweight-charts", () => ({
 class TestResizeObserver {
   observe = vi.fn();
   disconnect = vi.fn();
+}
+
+type AreaSeriesOptions = {
+  autoscaleInfoProvider: (
+    baseImplementation: () => {
+      priceRange: { minValue: number; maxValue: number } | null;
+      margins?: { above: number; below: number };
+    } | null,
+  ) => {
+    priceRange: { minValue: number; maxValue: number } | null;
+  } | null;
+};
+
+function areaSeriesOptions(): AreaSeriesOptions {
+  const calls = chartMocks.addAreaSeries.mock.calls as unknown as Array<
+    [AreaSeriesOptions]
+  >;
+  const options = calls[0]?.[0];
+  if (!options) throw new Error("area series was not created");
+  return options;
 }
 
 describe("TimeSeriesChart", () => {
@@ -148,7 +180,7 @@ describe("TimeSeriesChart", () => {
     expect(options.timeScale.tickMarkFormatter("2025-05-01", 1)).toBeNull();
   });
 
-  it("pins the y-axis floor to zero even when markers request lower padding", () => {
+  it("fits the axis to the drawn window instead of pinning the floor to zero", () => {
     render(
       <TimeSeriesChart
         ariaLabel="Price history"
@@ -156,55 +188,143 @@ describe("TimeSeriesChart", () => {
           { time: "2026-06-01", value: 300 },
           { time: "2026-06-02", value: 224.43 },
         ]}
-        markers={[
-          {
-            time: "2026-06-01",
-            side: "buy",
-            price: 300,
-            title: "Buy",
-            rows: [],
-          },
-        ]}
       />,
     );
 
-    type ChartOptions = {
-      rightPriceScale: {
-        scaleMargins: {
-          top: number;
-          bottom: number;
-        };
-      };
-    };
-    type AreaSeriesOptions = {
-      autoscaleInfoProvider: (
-        baseImplementation: () => {
-          priceRange: { minValue: number; maxValue: number };
-          margins?: { above: number; below: number };
-        } | null,
-      ) => {
-        priceRange: { minValue: number; maxValue: number };
-        margins?: { above: number; below: number };
-      } | null;
-    };
-    const chartCalls = chartMocks.createChart.mock.calls as unknown as Array<
-      [unknown, ChartOptions]
-    >;
-    const seriesCalls = chartMocks.addAreaSeries.mock.calls as unknown as Array<
-      [AreaSeriesOptions]
-    >;
-
-    expect(chartCalls[0]?.[1].rightPriceScale.scaleMargins.bottom).toBe(0);
-
-    const autoscale = seriesCalls[0]?.[0].autoscaleInfoProvider(() => ({
+    const autoscale = areaSeriesOptions().autoscaleInfoProvider(() => ({
       priceRange: { minValue: 224.43, maxValue: 300 },
       margins: { above: 12, below: 24 },
     }));
 
-    expect(autoscale).toEqual({
-      priceRange: { minValue: 0, maxValue: 300 },
-      margins: { above: 12, below: 0 },
+    expect(autoscale?.priceRange).toEqual({
+      minValue: 224.43,
+      maxValue: 300,
     });
+  });
+
+  it("gives the axis symmetric margins so a fitted line is not drawn on the frame", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={[{ time: "2026-06-01", value: 300 }]}
+      />,
+    );
+
+    type ChartOptions = {
+      rightPriceScale: { scaleMargins: { top: number; bottom: number } };
+    };
+    const chartCalls = chartMocks.createChart.mock.calls as unknown as Array<
+      [unknown, ChartOptions]
+    >;
+
+    expect(chartCalls[0]?.[1].rightPriceScale.scaleMargins).toEqual({
+      top: 0.12,
+      bottom: 0.12,
+    });
+  });
+
+  it("widens the axis to keep the break-even line on screen", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        costBasisLine={120}
+        data={[
+          { time: "2026-06-01", value: 300 },
+          { time: "2026-06-02", value: 224.43 },
+        ]}
+      />,
+    );
+
+    const autoscale = areaSeriesOptions().autoscaleInfoProvider(() => ({
+      priceRange: { minValue: 224.43, maxValue: 300 },
+    }));
+
+    expect(autoscale?.priceRange).toEqual({ minValue: 120, maxValue: 300 });
+  });
+
+  it("keeps the invested reference line out of axis scaling entirely", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[{ time: "2026-06-01", value: 4_000_000 }]}
+        referenceData={[{ time: "2026-06-01", value: 760_000 }]}
+      />,
+    );
+
+    type LineSeriesOptions = {
+      autoscaleInfoProvider: (base: () => unknown) => unknown;
+    };
+    const calls = chartMocks.addLineSeries.mock.calls as unknown as Array<
+      [LineSeriesOptions]
+    >;
+    const provider = calls[0]?.[0].autoscaleInfoProvider;
+
+    expect(provider).toBeDefined();
+    expect(
+      provider?.(() => ({
+        priceRange: { minValue: 760_000, maxValue: 760_000 },
+      })),
+    ).toBeNull();
+  });
+
+  it("shows point markers when the window holds a single observation", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[{ time: "2026-06-01", value: 4_000_000 }]}
+      />,
+    );
+
+    expect(chartMocks.seriesApplyOptions).toHaveBeenCalledWith({
+      pointMarkersVisible: true,
+    });
+  });
+
+  it("leaves point markers off once there is a line to draw", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[
+          { time: "2026-06-01", value: 4_000_000 },
+          { time: "2026-06-02", value: 4_050_000 },
+        ]}
+      />,
+    );
+
+    expect(chartMocks.seriesApplyOptions).toHaveBeenCalledWith({
+      pointMarkersVisible: false,
+    });
+  });
+
+  it("announces a reference line that falls outside the drawn band", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[{ time: "2026-06-01", value: 4_000_000 }]}
+        edgeTag={{
+          side: "below",
+          label: "Invested 760K",
+          description: "Net invested capital is 760K, below the visible range",
+        }}
+      />,
+    );
+
+    const tag = screen.getByRole("note", {
+      name: "Net invested capital is 760K, below the visible range",
+    });
+
+    expect(tag).toHaveTextContent("Invested 760K");
+  });
+
+  it("renders no edge tag when the reference line is on screen", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Portfolio value"
+        data={[{ time: "2026-06-01", value: 4_000_000 }]}
+      />,
+    );
+
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("uses compact axis labels with three significant digits when requested", () => {

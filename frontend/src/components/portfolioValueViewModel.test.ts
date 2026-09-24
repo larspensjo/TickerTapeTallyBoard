@@ -3,6 +3,7 @@ import type { ValueHistoryPoint } from "../api/types";
 import {
   filterValueHistoryPoints,
   portfolioValueSeries,
+  referenceEdgeTag,
 } from "./portfolioValueViewModel";
 
 function point(
@@ -76,5 +77,62 @@ describe("filterValueHistoryPoints", () => {
         endDate: "2026-01-31",
       }).map((filteredPoint) => filteredPoint.date),
     ).toEqual(["2026-01-01"]);
+  });
+});
+
+describe("referenceEdgeTag", () => {
+  const value = [
+    { time: "2026-09-21", value: 3_950_000 },
+    { time: "2026-09-22", value: 4_100_000 },
+  ];
+
+  it("announces a reference line that sits entirely below the drawn value band", () => {
+    const tag = referenceEdgeTag(value, [
+      { time: "2026-09-21", value: 750_000 },
+      { time: "2026-09-22", value: 760_000 },
+    ]);
+
+    expect(tag).toEqual({ side: "below", value: 760_000 });
+  });
+
+  it("announces a reference line that sits entirely above the drawn value band", () => {
+    const tag = referenceEdgeTag(value, [
+      { time: "2026-09-21", value: 5_000_000 },
+      { time: "2026-09-22", value: 5_100_000 },
+    ]);
+
+    expect(tag).toEqual({ side: "above", value: 5_100_000 });
+  });
+
+  it("stays silent when the reference line crosses the visible band", () => {
+    expect(
+      referenceEdgeTag(value, [
+        { time: "2026-09-21", value: 3_000_000 },
+        { time: "2026-09-22", value: 4_500_000 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("stays silent when the two ranges overlap", () => {
+    expect(
+      referenceEdgeTag(value, [
+        { time: "2026-09-21", value: 4_000_000 },
+        { time: "2026-09-22", value: 4_050_000 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("stays silent when either series is empty", () => {
+    expect(referenceEdgeTag(value, [])).toBeNull();
+    expect(referenceEdgeTag([], [{ time: "2026-09-22", value: 1 }])).toBeNull();
+  });
+
+  it("reports the reference value at the latest drawn date, not its extreme", () => {
+    const tag = referenceEdgeTag(value, [
+      { time: "2026-09-21", value: 100_000 },
+      { time: "2026-09-22", value: 700_000 },
+    ]);
+
+    expect(tag).toEqual({ side: "below", value: 700_000 });
   });
 });

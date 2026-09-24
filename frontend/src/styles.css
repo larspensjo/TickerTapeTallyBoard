@@ -1900,6 +1900,33 @@ th.number-head .sort-button {
   width: 100%;
 }
 
+/*
+ * Names a reference line that falls outside the fitted axis, so it reads as
+ * off-screen at a known level rather than as missing.
+ */
+.chart-edge-tag {
+  position: absolute;
+  left: 12px;
+  z-index: 4;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: #e0b15e;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.chart-edge-tag.below {
+  bottom: 28px;
+}
+
+.chart-edge-tag.above {
+  top: 8px;
+}
+
 .chart-trade-tooltip {
   position: absolute;
   z-index: 5;

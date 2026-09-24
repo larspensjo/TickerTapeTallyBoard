@@ -1,5 +1,40 @@
 import type { DateRange, ValueHistoryPoint } from "../api/types";
-import type { TimeSeriesPoint } from "./TimeSeriesChart";
+import type { TimeSeriesPoint } from "./chartTimeAxis";
+
+export interface ReferenceEdgeTag {
+  side: "above" | "below";
+  value: number;
+}
+
+/**
+ * Decide whether the invested-capital reference line needs an edge tag because
+ * it falls outside the drawn value band.
+ *
+ * The test is whether the two ranges are *disjoint*, not whether any reference
+ * point lies inside the value range: a line that crosses the band is partly on
+ * screen, needs no tag, and has no single direction to name. The reported value
+ * is the reference level at the latest drawn date, which is what the tag reads.
+ */
+export function referenceEdgeTag(
+  value: TimeSeriesPoint[],
+  reference: TimeSeriesPoint[],
+): ReferenceEdgeTag | null {
+  const latest = reference.at(-1)?.value;
+  if (value.length === 0 || reference.length === 0 || latest === undefined) {
+    return null;
+  }
+
+  const valueAmounts = value.map((point) => point.value);
+  const referenceAmounts = reference.map((point) => point.value);
+  const valueMin = Math.min(...valueAmounts);
+  const valueMax = Math.max(...valueAmounts);
+  const referenceMin = Math.min(...referenceAmounts);
+  const referenceMax = Math.max(...referenceAmounts);
+
+  if (referenceMax < valueMin) return { side: "below", value: latest };
+  if (referenceMin > valueMax) return { side: "above", value: latest };
+  return null;
+}
 
 export interface PortfolioValueSeries {
   value: TimeSeriesPoint[];

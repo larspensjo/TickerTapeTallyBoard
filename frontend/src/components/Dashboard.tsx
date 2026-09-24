@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useGains, usePortfolioValueHistory } from "../api/queries";
 import type { DateRange, GainsRow } from "../api/types";
+import { compactPriceFormat } from "./chartTheme";
 import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import { type MoverRow, topMovers } from "./dashboardSelectors";
 import { GainsWaterfall } from "./GainsWaterfall";
@@ -10,6 +11,7 @@ import { isOneOf, usePersistentSetting } from "./persistence";
 import {
   filterValueHistoryPoints,
   portfolioValueSeries,
+  referenceEdgeTag,
 } from "./portfolioValueViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { formatGroupedNumber } from "./valuationDisplay";
@@ -105,6 +107,19 @@ function DashboardChartPanel({
   );
 
   const isGain = view === "gain";
+  const investedEdgeTag = useMemo(() => {
+    if (isGain) return undefined;
+
+    const tag = referenceEdgeTag(series.value, series.invested);
+    if (!tag) return undefined;
+
+    const amount = compactPriceFormat.formatter(tag.value);
+    return {
+      side: tag.side,
+      label: `Invested ${amount}`,
+      description: `Net invested capital is ${amount} SEK, ${tag.side} the visible range`,
+    };
+  }, [isGain, series]);
   const chartControls = (
     <div className="chart-controls">
       <DateRangeSelector
@@ -254,6 +269,7 @@ function DashboardChartPanel({
         visibleStart={
           reportPeriod?.start_date ?? query.data?.start_date ?? undefined
         }
+        edgeTag={investedEdgeTag}
         height={280}
         compactValueAxis
         lineColor={isGain ? "#16c784" : undefined}
