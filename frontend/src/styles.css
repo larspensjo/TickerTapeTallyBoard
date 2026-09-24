@@ -2031,6 +2031,19 @@ th.number-head .sort-button {
   justify-content: flex-end;
 }
 
+/*
+ * Always-visible explanation under the gain chart. Not a tooltip: the
+ * distinction between this chart's percentage and the money-weighted ones
+ * elsewhere must be legible without hovering.
+ */
+.chart-caption {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 78ch;
+}
+
 .chart-legend {
   display: flex;
   flex-wrap: wrap;

@@ -8,6 +8,7 @@ import type { GainsRow, Instrument } from "../api/types";
 const useGains = vi.fn();
 const usePortfolioValueHistory = vi.fn();
 const renderTimeSeriesChart = vi.fn();
+const renderGainChart = vi.fn();
 
 vi.mock("../api/queries", () => ({
   useGains: (...args: unknown[]) => useGains(...args),
@@ -18,6 +19,13 @@ vi.mock("../api/queries", () => ({
 vi.mock("./TimeSeriesChart", () => ({
   TimeSeriesChart: (props: unknown) => {
     renderTimeSeriesChart(props);
+    return null;
+  },
+}));
+
+vi.mock("./PortfolioGainChart", () => ({
+  PortfolioGainChart: (props: unknown) => {
+    renderGainChart(props);
     return null;
   },
 }));
@@ -217,6 +225,7 @@ describe("Dashboard chart panel", () => {
       data: {
         rows: [openRow("MSFT", "5000.00")],
         portfolio_waterfall: portfolioWaterfall(),
+        report_period: { start_date: null, end_date: "2026-09-12" },
       },
       isPending: false,
       isError: false,
@@ -291,5 +300,411 @@ describe("Dashboard chart panel", () => {
       screen.getByText("No valued holdings in this interval."),
     ).toBeTruthy();
     expect(screen.queryByText("Realized gain")).toBeNull();
+  });
+});
+
+type ChartProps = {
+  data: { time: string; value: number }[];
+  visibleStart?: string;
+};
+
+function lastGainChartProps(): ChartProps {
+  const calls = renderGainChart.mock.calls as unknown as Array<[ChartProps]>;
+  const props = calls.at(-1)?.[0];
+  if (!props) throw new Error("gain chart was not rendered");
+  return props;
+}
+
+function lastValueChartProps(): ChartProps {
+  const calls = renderTimeSeriesChart.mock.calls as unknown as Array<
+    [ChartProps]
+  >;
+  const props = calls.at(-1)?.[0];
+  if (!props) throw new Error("value chart was not rendered");
+  return props;
+}
+
+function historyPoint(
+  date: string,
+  value: string,
+  invested: string | null,
+  incomplete = false,
+) {
+  return {
+    date,
+    value_base: value,
+    invested_base: invested,
+    incomplete,
+    included_count: incomplete ? 1 : 2,
+    excluded_count: incomplete ? 1 : 0,
+  };
+}
+
+function mockHistory(
+  points: ReturnType<typeof historyPoint>[],
+  startDate: string,
+) {
+  usePortfolioValueHistory.mockReturnValue({
+    data: { start_date: startDate, points },
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+}
+
+function mockGains(
+  reportPeriod: { start_date: string | null; end_date: string } | undefined,
+  extra: Record<string, unknown> = {},
+) {
+  useGains.mockReturnValue({
+    data: reportPeriod
+      ? {
+          rows: [openRow("MSFT", "5000.00")],
+          portfolio_waterfall: portfolioWaterfall(),
+          report_period: reportPeriod,
+        }
+      : undefined,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    ...extra,
+  });
+}
+
+function showGain() {
+  fireEvent.click(screen.getByRole("button", { name: "Gain" }));
+}
+
+describe("Dashboard gain view", () => {
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("plots only in-range measured points on the value view", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+        historyPoint("2026-06-02", "55.00", "80.00", true),
+        historyPoint("2026-06-03", "120.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-03" });
+
+    renderDashboard();
+
+    expect(lastValueChartProps().data).toEqual([
+      { time: "2026-06-01", value: 110 },
+      { time: "2026-06-03", value: 120 },
+    ]);
+  });
+
+  it("opens the gain line at a zero origin the day before the period", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    renderDashboard();
+    showGain();
+
+    const props = lastGainChartProps();
+    expect(props.data[0]).toEqual({ time: "2026-05-31", value: 0 });
+    expect(props.data.at(-1)).toEqual({ time: "2026-06-01", value: 10 });
+    expect(props.visibleStart).toBe("2026-05-31");
+  });
+
+  it("offers the unit toggle only on the gain view and switches the series", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    renderDashboard();
+    expect(screen.queryByRole("button", { name: "Percent" })).toBeNull();
+
+    showGain();
+    expect(
+      screen.getByRole("heading", { name: "Portfolio gain, all time (SEK)" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Portfolio gain, all time (%)" }),
+    ).toBeTruthy();
+    expect(lastGainChartProps().data.at(-1)?.value).toBeCloseTo(10, 6);
+  });
+
+  it("remembers the unit choice across a remount", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    const first = renderDashboard();
+    showGain();
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+    first.unmount();
+
+    renderDashboard();
+
+    expect(
+      screen.getByRole("heading", { name: "Portfolio gain, all time (%)" }),
+    ).toBeTruthy();
+  });
+
+  it("drops the period name while a previous selection's response is displayed", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains(
+      { start_date: "2026-06-01", end_date: "2026-06-01" },
+      { isPlaceholderData: true },
+    );
+
+    renderDashboard();
+
+    expect(
+      screen.getByRole("heading", { name: "Portfolio value (SEK)" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Updating")).toBeTruthy();
+  });
+
+  it("names the period once the matching response arrives", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains(
+      { start_date: "2026-06-01", end_date: "2026-06-01" },
+      { isPlaceholderData: false },
+    );
+
+    renderDashboard();
+
+    expect(
+      screen.getByRole("heading", { name: "Portfolio value, all time (SEK)" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Updating")).toBeNull();
+  });
+
+  it("refuses to plot lifetime history when no period could be resolved", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains(undefined);
+
+    renderDashboard();
+
+    expect(
+      screen.getByText("Could not work out the selected period."),
+    ).toBeTruthy();
+    expect(renderTimeSeriesChart).not.toHaveBeenCalled();
+
+    // The treemap remains reachable from that state.
+    fireEvent.click(screen.getByRole("button", { name: "Treemap" }));
+    expect(screen.getByRole("heading", { name: "Portfolio map" })).toBeTruthy();
+  });
+
+  it("explains an unknown opening rather than showing inception gains", () => {
+    mockHistory(
+      [
+        historyPoint("2026-06-01", "500.00", "200.00"),
+        historyPoint("2026-06-02", "520.00", "200.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-02" });
+
+    renderDashboard();
+    showGain();
+
+    expect(
+      screen.getByText(/value at the start of this period is not known/),
+    ).toBeTruthy();
+    expect(renderGainChart).not.toHaveBeenCalled();
+  });
+
+  it("explains a period whose every day is missing prices", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "50.00", "80.00", true),
+        historyPoint("2026-06-02", "60.00", "80.00", true),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-02" });
+
+    renderDashboard();
+    showGain();
+
+    expect(
+      screen.getByText(/missing prices for at least one holding/),
+    ).toBeTruthy();
+    expect(renderGainChart).not.toHaveBeenCalled();
+  });
+
+  it("names the historical date a trade lost its exchange rate", () => {
+    mockHistory(
+      [
+        historyPoint("2025-12-20", "90.00", null),
+        historyPoint("2026-06-01", "100.00", null),
+        historyPoint("2026-06-02", "110.00", null),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-02" });
+
+    renderDashboard();
+    showGain();
+
+    expect(screen.getByText(/from 2025-12-20 onwards/)).toBeTruthy();
+    expect(renderGainChart).not.toHaveBeenCalled();
+  });
+
+  it("marks the percentage approximate only when money moved around a gap", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "100.00"),
+        historyPoint("2026-06-01", "200.00", "200.00", true),
+        historyPoint("2026-06-02", "220.00", "200.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-02" });
+
+    renderDashboard();
+    showGain();
+
+    // Never in SEK mode: the money line is exact endpoint arithmetic.
+    expect(screen.queryByText("Approximate")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+
+    expect(screen.getByText("Approximate")).toBeTruthy();
+    expect(screen.getByText(/close estimate/)).toBeTruthy();
+  });
+
+  it("leaves the percentage unmarked when nothing moved around a gap", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "100.00"),
+        historyPoint("2026-06-01", "60.00", "100.00", true),
+        historyPoint("2026-06-02", "121.00", "100.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-02" });
+
+    renderDashboard();
+    showGain();
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+
+    expect(screen.queryByText("Approximate")).toBeNull();
+  });
+
+  it("distinguishes the two percentages without needing a hover", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    renderDashboard();
+    showGain();
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+
+    expect(
+      screen.getByText(/answer a different question: how your money performed/),
+    ).toBeTruthy();
+  });
+
+  it("says when the chart ends before the period does", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-30" });
+
+    renderDashboard();
+    showGain();
+
+    expect(
+      screen.getByText(/Chart ends 2026-06-01 — no valued holdings/),
+    ).toBeTruthy();
+  });
+
+  it("shows the dividend caveat only when the period received dividends", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    renderDashboard();
+    showGain();
+    expect(screen.queryByText(/Dividends are not included here/)).toBeNull();
+
+    cleanup();
+    useGains.mockReturnValue({
+      data: {
+        rows: [openRow("MSFT", "5000.00")],
+        portfolio_waterfall: {
+          ...portfolioWaterfall(),
+          income_not_tracked: false,
+          income_base: { status: "available", value: "1200.00" },
+        },
+        report_period: { start_date: "2026-06-01", end_date: "2026-06-01" },
+      },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    renderDashboard();
+    expect(screen.getByText(/Dividends are not included here/)).toBeTruthy();
   });
 });
