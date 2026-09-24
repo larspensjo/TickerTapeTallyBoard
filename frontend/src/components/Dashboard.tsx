@@ -287,7 +287,11 @@ function DashboardChartPanel({
 
   // Without a resolved period there is no range to plot. Falling back to
   // unbounded lifetime history under a period-named heading would be a lie.
-  if (!reportPeriod) {
+  //
+  // A failed request still counts even when a previous selection's response is
+  // being held: without this the panel would keep plotting the old range under
+  // an Updating chip indefinitely, with no way to retry.
+  if (gainsQuery.isError || !reportPeriod) {
     return panel(
       <div className="chart-band error">
         <p className="down">Could not work out the selected period.</p>

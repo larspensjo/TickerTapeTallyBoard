@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GainsRow, Instrument } from "../api/types";
@@ -537,6 +543,68 @@ describe("Dashboard gain view", () => {
     // The treemap remains reachable from that state.
     fireEvent.click(screen.getByRole("button", { name: "Treemap" }));
     expect(screen.getByRole("heading", { name: "Portfolio map" })).toBeTruthy();
+  });
+
+  it("surfaces a failed period request instead of holding a stale Updating chip", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100.00", "80.00"),
+        historyPoint("2026-06-01", "110.00", "80.00"),
+      ],
+      "2025-01-01",
+    );
+    // A preset change whose gains request failed: the previous response is
+    // still held as placeholder data, so a period-name guard alone would leave
+    // the panel updating forever with no way out.
+    mockGains(
+      { start_date: "2026-06-01", end_date: "2026-06-01" },
+      { isPlaceholderData: true, isError: true },
+    );
+
+    renderDashboard();
+
+    const panel = screen.getByRole("region", { name: "Portfolio value" });
+    expect(
+      within(panel).getByText("Could not work out the selected period."),
+    ).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(renderTimeSeriesChart).not.toHaveBeenCalled();
+  });
+
+  it("announces invested capital when it falls outside the drawn band", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "3950000.00", "760000.00"),
+        historyPoint("2026-06-01", "4100000.00", "760000.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-06-01", end_date: "2026-06-01" });
+
+    renderDashboard();
+
+    const props = lastValueChartProps() as unknown as {
+      edgeTag?: { side: string; label: string; description: string };
+    };
+    expect(props.edgeTag?.side).toBe("below");
+    expect(props.edgeTag?.label).toBe("Invested 760K");
+    expect(props.edgeTag?.description).toContain("below the visible range");
+  });
+
+  it("leaves the invested line untagged when it crosses the drawn band", () => {
+    mockHistory(
+      [
+        historyPoint("2026-05-31", "100000.00", "80000.00"),
+        historyPoint("2026-06-01", "110000.00", "150000.00"),
+      ],
+      "2025-01-01",
+    );
+    mockGains({ start_date: "2026-05-31", end_date: "2026-06-01" });
+
+    renderDashboard();
+
+    const props = lastValueChartProps() as unknown as { edgeTag?: unknown };
+    expect(props.edgeTag).toBeUndefined();
   });
 
   it("explains an unknown opening rather than showing inception gains", () => {

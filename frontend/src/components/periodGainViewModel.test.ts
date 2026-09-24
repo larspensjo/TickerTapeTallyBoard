@@ -512,6 +512,34 @@ describe("periodGainSeries — availability states", () => {
     expect(gain.sek.at(-1)?.time).toBe("2026-01-02");
   });
 
+  it("stays silent when the period merely ends on a weekend", () => {
+    // report_period.end_date is always today, while the stored spine only has
+    // trading days. A Friday-to-Sunday gap is absence, not missing data.
+    const gain = gainOf(
+      [
+        pt("2026-09-23", 100, 100),
+        pt("2026-09-24", 110, 100),
+        pt("2026-09-25", 120, 100),
+      ],
+      "2026-09-21",
+      "2026-09-27",
+      "2026-09-23",
+    );
+
+    expect(gain.endsEarlyAt).toBeNull();
+  });
+
+  it("stays silent when the day's prices have not been refreshed yet", () => {
+    const gain = gainOf(
+      [pt("2026-09-24", 100, 100), pt("2026-09-25", 110, 100)],
+      "2026-09-24",
+      "2026-09-26",
+      "2026-09-24",
+    );
+
+    expect(gain.endsEarlyAt).toBeNull();
+  });
+
   it("reports when the chart ends before the period does", () => {
     const gain = gainOf(
       [pt("2026-01-01", 100, 100), pt("2026-01-02", 110, 100)],

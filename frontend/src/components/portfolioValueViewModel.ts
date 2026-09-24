@@ -46,6 +46,7 @@ export function referenceEdgeTag(
 // ---------------------------------------------------------------------------
 
 const dayMs = 24 * 60 * 60 * 1000;
+const MINIMUM_ORDINARY_GAP_DAYS = 4;
 
 export interface ValueHistoryWindow {
   range: DateRange;
@@ -70,6 +71,38 @@ function amount(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function daysBetween(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.round((end - start) / dayMs);
+}
+
+/**
+ * The widest gap between consecutive observations anywhere in the stored
+ * history, floored at a long weekend.
+ *
+ * The period's end date is always today, while the stored series only contains
+ * days the market produced prices for — so the distance from the last drawn
+ * point to the period end is normally a weekend, a holiday, or simply today
+ * before the price refresh. Calendar absence is never missing data, so the
+ * ends-early note may only fire on a gap wider than this history's own rhythm.
+ */
+function ordinaryGapDays(points: ValueHistoryPoint[]): number {
+  let widest = MINIMUM_ORDINARY_GAP_DAYS;
+  let previous: string | null = null;
+
+  for (const point of points) {
+    if (point.incomplete) continue;
+    if (previous !== null) {
+      widest = Math.max(widest, daysBetween(previous, point.date));
+    }
+    previous = point.date;
+  }
+
+  return widest;
 }
 
 function shiftDate(date: string, days: number): string {
@@ -293,7 +326,9 @@ export function periodGainSeries(window: ValueHistoryWindow): PeriodGainSeries {
     approximate,
     originDate,
     endsEarlyAt:
-      endDate !== null && lastMeasured !== null && lastMeasured < endDate
+      endDate !== null &&
+      lastMeasured !== null &&
+      daysBetween(lastMeasured, endDate) > ordinaryGapDays(window.points)
         ? lastMeasured
         : null,
     investedUnavailableAfter:
