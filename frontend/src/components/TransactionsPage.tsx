@@ -8,6 +8,7 @@ import {
 } from "../api/queries";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { AsyncBoundary } from "./AsyncBoundary";
+import { LedgerEntryInvitation } from "./LedgerEntryInvitation";
 import { TransactionsTable } from "./TransactionsTable";
 import { useAppMode } from "./useAppMode";
 
@@ -80,9 +81,13 @@ export function TransactionsPage() {
           isEmpty={(transactionsQuery.data?.length ?? 0) === 0}
           onRetry={() => void transactionsQuery.refetch()}
           emptyMessage={
-            appMode.canMutate
-              ? "No transactions yet. Use Add transaction above."
-              : "No transactions yet."
+            <p className="ledger-empty-state">
+              No transactions yet.{" "}
+              <LedgerEntryInvitation
+                variant="transactions"
+                canMutate={appMode.canMutate}
+              />
+            </p>
           }
         >
           <TransactionsTable

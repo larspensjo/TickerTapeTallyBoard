@@ -153,9 +153,11 @@ describe("TransactionsPage", () => {
   it("shows the add transaction invitation in the mutable empty state", () => {
     renderTransactionsPage(true);
 
+    expect(screen.getByText(/Use Add transaction above/)).toBeTruthy();
+    expect(screen.getByText(/No transactions yet\./)).toBeTruthy();
     expect(
-      screen.getByText("No transactions yet. Use Add transaction above."),
-    ).toBeTruthy();
+      screen.getByRole("link", { name: "import from Avanza or Sharesight" }),
+    ).toHaveAttribute("href", "/import");
   });
 
   it("omits the add action and invitation in demo mode", () => {
@@ -166,5 +168,8 @@ describe("TransactionsPage", () => {
     ).toBeNull();
     expect(screen.getByText("No transactions yet.")).toBeTruthy();
     expect(screen.queryByText(/Use Add transaction above/)).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "import from Avanza or Sharesight" }),
+    ).toBeNull();
   });
 });

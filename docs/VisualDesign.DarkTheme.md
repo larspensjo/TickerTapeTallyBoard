@@ -188,7 +188,9 @@ an `--accent` filled progress segment, an `--accent` thumb with a canvas
 border and hairline outline, and the shared `--focus-ring` when focused.
 
 **States**:
-- Empty: centered `--text-muted` message + a primary CTA.
+- Empty: centered `--text-muted` message; when the action lives on another page,
+  inline `--accent-link` links to it instead of a CTA button. Omit the invitation
+  where data cannot be changed (demo).
 - Loading: skeleton bars in `--surface-2` (shimmer optional).
 - Error: `--down` (or `--warning`) message + outline "Retry".
 - Stale price: `--warning-soft` chip on the affected row/value.

@@ -121,6 +121,42 @@ afterEach(() => {
 });
 
 describe("HoldingsPage", () => {
+  it.each([true, false])(
+    "offers ledger entry for empty holdings only when mutable (%s)",
+    (canMutate) => {
+      setupQueryMock();
+      useAppMode.mockReturnValue({ canMutate });
+      useHoldings.mockReturnValue({
+        data: { holdings: [], hidden_watchlist_pool_count: 0 },
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      });
+
+      render(
+        <MemoryRouter>
+          <HoldingsPage />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByText(/No holdings yet\./)).toBeTruthy();
+      if (canMutate) {
+        expect(
+          screen.getByRole("link", { name: "Transactions page" }),
+        ).toHaveAttribute("href", "/transactions");
+        expect(
+          screen.getByRole("link", {
+            name: "import from Avanza or Sharesight",
+          }),
+        ).toHaveAttribute("href", "/import");
+      } else {
+        expect(screen.getByText("No holdings yet.")).toBeTruthy();
+        expect(screen.queryByRole("link")).toBeNull();
+        expect(screen.queryByText(/Add one/)).toBeNull();
+      }
+    },
+  );
+
   it("shows and hides watchlist rows from the include-watchlist toggle", () => {
     setupQueryMock();
 

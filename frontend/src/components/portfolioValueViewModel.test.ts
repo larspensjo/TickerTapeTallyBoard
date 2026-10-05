@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { ValueHistoryPoint } from "../api/types";
-import { referenceEdgeTag } from "./portfolioValueViewModel";
+import {
+  ledgerHasNoTransactions,
+  referenceEdgeTag,
+} from "./portfolioValueViewModel";
+
+describe("ledgerHasNoTransactions", () => {
+  it("recognizes an empty ledger only from an explicit null start date", () => {
+    expect(ledgerHasNoTransactions({ start_date: null })).toBe(true);
+    expect(ledgerHasNoTransactions({ start_date: "2026-09-21" })).toBe(false);
+  });
+
+  it("does not invite ledger entry while data is missing", () => {
+    expect(ledgerHasNoTransactions(undefined)).toBe(false);
+  });
+});
 
 function point(
   date: string,

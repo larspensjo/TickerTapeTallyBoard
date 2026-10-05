@@ -6,12 +6,14 @@ import { compactPriceFormat } from "./chartTheme";
 import { type DatePreset, DateRangeSelector } from "./DateRangeSelector";
 import { type MoverRow, topMovers } from "./dashboardSelectors";
 import { GainsWaterfall } from "./GainsWaterfall";
+import { LedgerEntryInvitation } from "./LedgerEntryInvitation";
 import { type GainUnit, PortfolioGainChart } from "./PortfolioGainChart";
 import { PortfolioTreemap } from "./PortfolioTreemap";
 import { isOneOf, usePersistentSetting } from "./persistence";
 import {
   chartPanelHeading,
   dividendCaveatApplies,
+  ledgerHasNoTransactions,
   type PeriodGainSeries,
   type PeriodGainStatus,
   periodGainSeries,
@@ -20,6 +22,7 @@ import {
   valueHistoryWindow,
 } from "./portfolioValueViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
+import { useAppMode } from "./useAppMode";
 import { formatGroupedNumber } from "./valuationDisplay";
 import { portfolioWaterfallView } from "./waterfallViewModel";
 
@@ -97,6 +100,7 @@ function DashboardChartPanel({
     isChartView,
     "value",
   );
+  const { canMutate } = useAppMode();
   const [unit, setUnit] = usePersistentSetting<GainUnit>(
     GAIN_UNIT_KEY,
     isGainUnit,
@@ -318,6 +322,18 @@ function DashboardChartPanel({
           Retry
         </button>
       </div>,
+    );
+  }
+
+  if (ledgerHasNoTransactions(query.data)) {
+    return panel(
+      <div className="chart-band muted ledger-empty-state">
+        <span className="chart-band-label">
+          No transactions yet.{" "}
+          <LedgerEntryInvitation variant="elsewhere" canMutate={canMutate} />
+        </span>
+      </div>,
+      metaChips,
     );
   }
 

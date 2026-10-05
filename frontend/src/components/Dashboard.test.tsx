@@ -13,6 +13,7 @@ import type { GainsRow, Instrument } from "../api/types";
 
 const useGains = vi.fn();
 const usePortfolioValueHistory = vi.fn();
+const useAppMode = vi.fn();
 const renderTimeSeriesChart = vi.fn();
 const renderGainChart = vi.fn();
 
@@ -27,6 +28,10 @@ vi.mock("./TimeSeriesChart", () => ({
     renderTimeSeriesChart(props);
     return null;
   },
+}));
+
+vi.mock("./useAppMode", () => ({
+  useAppMode: (...args: unknown[]) => useAppMode(...args),
 }));
 
 vi.mock("./PortfolioGainChart", () => ({
@@ -150,12 +155,121 @@ function renderDashboard() {
 describe("Dashboard chart panel", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    useAppMode.mockReturnValue({ canMutate: true });
+    localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it.each(["Value", "Gain"])(
+    "invites first ledger entry in the %s view",
+    (view) => {
+      usePortfolioValueHistory.mockReturnValue({
+        data: { start_date: null, points: [] },
+        isPending: false,
+        isError: false,
+      });
+      useGains.mockReturnValue({
+        data: {
+          rows: [],
+          portfolio_waterfall: unavailablePortfolioWaterfall(),
+          report_period: { start_date: null, end_date: "2026-09-12" },
+        },
+        isPending: false,
+        isError: false,
+      });
+
+      renderDashboard();
+      fireEvent.click(screen.getByRole("button", { name: view }));
+
+      expect(screen.getByText(/No transactions yet\./)).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: "Transactions page" }),
+      ).toHaveAttribute("href", "/transactions");
+      expect(
+        screen.getByRole("link", { name: "import from Avanza or Sharesight" }),
+      ).toHaveAttribute("href", "/import");
+      expect(
+        screen.queryByText("No portfolio history in this interval"),
+      ).toBeNull();
+      expect(
+        screen.getByText("No valued holdings in this interval."),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each(["Value", "Gain"])(
+    "keeps the interval empty state for an existing ledger in the %s view",
+    (view) => {
+      usePortfolioValueHistory.mockReturnValue({
+        data: { start_date: "2026-01-01", points: [] },
+        isPending: false,
+        isError: false,
+      });
+      useGains.mockReturnValue({
+        data: {
+          rows: [],
+          portfolio_waterfall: unavailablePortfolioWaterfall(),
+          report_period: { start_date: null, end_date: "2026-09-12" },
+        },
+        isPending: false,
+        isError: false,
+      });
+
+      renderDashboard();
+      fireEvent.click(screen.getByRole("button", { name: view }));
+
+      expect(
+        screen.getByText("No portfolio history in this interval"),
+      ).toBeTruthy();
+      expect(
+        screen.queryByRole("link", { name: "Transactions page" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("link", {
+          name: "import from Avanza or Sharesight",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("omits invitations for an empty demo ledger", () => {
+    useAppMode.mockReturnValue({ canMutate: false });
+    usePortfolioValueHistory.mockReturnValue({
+      data: { start_date: null, points: [] },
+      isPending: false,
+      isError: false,
+    });
+    useGains.mockReturnValue({
+      data: {
+        rows: [],
+        portfolio_waterfall: unavailablePortfolioWaterfall(),
+        report_period: { start_date: null, end_date: "2026-09-12" },
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    renderDashboard();
+
+    expect(screen.getByText("No transactions yet.")).toBeTruthy();
+    const chartPanel = within(
+      screen.getByRole("region", { name: "Portfolio value" }),
+    );
+    expect(
+      chartPanel.queryByRole("link", { name: "Transactions page" }),
+    ).toBeNull();
+    expect(
+      chartPanel.queryByRole("link", {
+        name: "import from Avanza or Sharesight",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText(/Add one/)).toBeNull();
   });
 
   it("uses the gains report period for chart filtering and its visible start", () => {
@@ -385,6 +499,7 @@ describe("Dashboard gain view", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
     localStorage.clear();
+    useAppMode.mockReturnValue({ canMutate: true });
   });
 
   afterEach(() => {

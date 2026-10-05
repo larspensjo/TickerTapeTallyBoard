@@ -1,5 +1,15 @@
-import type { DateRange, ValueHistoryPoint } from "../api/types";
+import type {
+  DateRange,
+  ValueHistoryPoint,
+  ValueHistoryResponse,
+} from "../api/types";
 import type { TimeSeriesPoint } from "./chartTimeAxis";
+
+export function ledgerHasNoTransactions(
+  data: Pick<ValueHistoryResponse, "start_date"> | undefined,
+): boolean {
+  return data?.start_date === null;
+}
 
 export interface ReferenceEdgeTag {
   side: "above" | "below";

@@ -1386,6 +1386,18 @@ th.number-head .sort-button {
   min-height: 220px;
 }
 
+.ledger-empty-state {
+  text-align: center;
+}
+
+.ledger-entry-invitation a {
+  color: var(--accent-link);
+}
+
+.ledger-entry-invitation a:hover {
+  text-decoration: underline;
+}
+
 .board-state.import-summary {
   min-height: 0;
   padding: var(--space-5) var(--space-4);

@@ -9,6 +9,7 @@ import {
 } from "./AddInstrumentDialog";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { HoldingsTable } from "./HoldingsTable";
+import { LedgerEntryInvitation } from "./LedgerEntryInvitation";
 import { useAppMode } from "./useAppMode";
 
 export interface HoldingsPageState {
@@ -123,7 +124,15 @@ export function HoldingsPage() {
           isError={holdingsQuery.isError}
           isEmpty={holdings.length === 0 && hiddenWatchlistPoolCount === 0}
           onRetry={() => void holdingsQuery.refetch()}
-          emptyMessage="No holdings yet. Add a Buy to get started."
+          emptyMessage={
+            <p className="ledger-empty-state">
+              No holdings yet.{" "}
+              <LedgerEntryInvitation
+                variant="elsewhere"
+                canMutate={canMutate}
+              />
+            </p>
+          }
         >
           <HoldingsTable
             holdings={holdings}

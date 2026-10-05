@@ -4,7 +4,9 @@ import type { DateRange } from "../api/types";
 import { AsyncBoundary } from "./AsyncBoundary";
 import type { DatePreset } from "./DateRangeSelector";
 import { GainsTable, loadReturnMethod } from "./GainsTable";
+import { LedgerEntryInvitation } from "./LedgerEntryInvitation";
 import { isBoolean, loadSetting, saveSetting } from "./persistence";
+import { useAppMode } from "./useAppMode";
 
 const INCLUDE_CLOSED_POSITIONS_KEY = "gains.includeClosedPositions";
 
@@ -47,6 +49,7 @@ export function GainsPage({
   onDatePresetChange,
   onDateRangeChange,
 }: GainsPageProps) {
+  const { canMutate } = useAppMode();
   const [filter, setFilter] = useState("");
   const [state, dispatch] = useReducer(gainsPageReducer, {
     includeClosedPositions: loadSetting(
@@ -74,7 +77,16 @@ export function GainsPage({
           isError={gainsQuery.isError}
           isEmpty={(gainsQuery.data?.rows.length ?? 0) === 0}
           onRetry={() => void gainsQuery.refetch()}
-          emptyMessage="No valued holdings yet. Add a Buy and refresh prices."
+          emptyMessage={
+            <p className="ledger-empty-state">
+              No valued holdings yet.{" "}
+              <LedgerEntryInvitation
+                variant="elsewhere"
+                canMutate={canMutate}
+              />
+              {canMutate ? " Then refresh prices." : null}
+            </p>
+          }
         >
           <GainsTable
             rows={gainsQuery.data?.rows ?? []}
