@@ -17,6 +17,7 @@ import type {
   ImportRowNote,
   ImportSource,
 } from "../api/types";
+import { backfillOutcome } from "./priceRefreshViewModel";
 import { formatGroupedNumber } from "./valuationDisplay";
 
 /** Per-instrument decision when an import would close a convicted position. */
@@ -344,7 +345,11 @@ export function convictionCommitParams(
   return { keep, toOther };
 }
 
-export function ImportView() {
+export function ImportView({
+  priceRefreshRunning,
+}: {
+  priceRefreshRunning: boolean;
+}) {
   const navigate = useNavigate();
   const [state, dispatch] = useReducer(importReducer, INITIAL_STATE);
   const [fileBytes, setFileBytes] = useState<ArrayBuffer | null>(null);
@@ -993,15 +998,21 @@ export function ImportView() {
         </div>
       </section>
 
-      <BackfillPanel />
+      <BackfillPanel priceRefreshRunning={priceRefreshRunning} />
     </>
   );
 }
 
-function BackfillPanel() {
+function BackfillPanel({
+  priceRefreshRunning,
+}: {
+  priceRefreshRunning: boolean;
+}) {
   const refreshPrices = useRefreshPrices();
   const isBackfilling = refreshPrices.isPending;
-  const result = refreshPrices.data;
+  const outcome = refreshPrices.data
+    ? backfillOutcome(refreshPrices.data)
+    : null;
 
   return (
     <section className="panel">
@@ -1020,9 +1031,9 @@ function BackfillPanel() {
           <button
             type="button"
             className="button secondary"
-            disabled={isBackfilling}
+            disabled={priceRefreshRunning || isBackfilling}
             onClick={() => {
-              void refreshPrices.mutateAsync({ mode: "backfill" });
+              refreshPrices.mutate({ mode: "backfill" });
             }}
           >
             <RefreshCw
@@ -1040,17 +1051,18 @@ function BackfillPanel() {
               : "Backfill failed. Please try again."}
           </p>
         ) : null}
-        {result ? (
+        {priceRefreshRunning && !isBackfilling ? (
           <p className="muted">
-            Backfill {result.status}: wrote{" "}
-            <strong className="number">
-              {formatGroupedNumber(result.prices_written)}
-            </strong>{" "}
-            price rows and{" "}
-            <strong className="number">
-              {formatGroupedNumber(result.fx_rates_written)}
-            </strong>{" "}
-            FX rates.
+            A price refresh is running. Backfill is available when it finishes.
+          </p>
+        ) : null}
+        {outcome ? (
+          <p
+            className={
+              outcome.tone === "warning" ? "backfill-warning" : "muted"
+            }
+          >
+            {outcome.message}
           </p>
         ) : null}
       </div>

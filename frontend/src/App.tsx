@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useReducer } from "react";
-import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { useDataVersion } from "./api/queries";
+import { AppBar } from "./components/AppBar";
 import { AppFooter } from "./components/AppFooter";
 import { AsyncBoundary } from "./components/AsyncBoundary";
 import {
@@ -9,6 +10,7 @@ import {
   saveDateRangeSelection,
 } from "./components/DateRangeSelector";
 import { useAppMode } from "./components/useAppMode";
+import { usePriceRefresh } from "./components/usePriceRefresh";
 
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((module) => ({
@@ -51,10 +53,6 @@ const AssetView = lazy(() =>
   })),
 );
 
-function navClass({ isActive }: { isActive: boolean }) {
-  return isActive ? "active" : undefined;
-}
-
 export function App() {
   const [dateRangeSelection, dispatchDateRangeSelection] = useReducer(
     dateRangeSelectionReducer,
@@ -67,6 +65,7 @@ export function App() {
   }, [dateRangeSelection]);
 
   const appMode = useAppMode();
+  const priceRefresh = usePriceRefresh();
   const dataVersion = useDataVersion();
 
   const dateRangeProps = {
@@ -81,33 +80,14 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-bar">
-        <Link className="brand" to="/" aria-label="TickerTapeTallyBoard home">
-          <span className="brand-mark" aria-hidden="true" />
-          <span>TickerTapeTallyBoard</span>
-        </Link>
-        {appMode.showDemoBadge ? (
-          <span className="demo-badge">DEMO</span>
-        ) : null}
-
-        <nav className="app-nav" aria-label="Primary">
-          {appMode.navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={navClass}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </header>
+      <AppBar appMode={appMode} priceRefresh={priceRefresh} />
 
       <main className="workspace">
         <Suspense fallback={<RouteFallback />}>
           <Routes>
-            <Route element={<PortfolioLayout />}>
+            <Route
+              element={<PortfolioLayout refreshStatus={priceRefresh.status} />}
+            >
               <Route path="/" element={<Dashboard {...dateRangeProps} />} />
               <Route path="/holdings" element={<HoldingsPage />} />
               <Route path="/rebalance" element={<RebalancePage />} />
@@ -124,7 +104,13 @@ export function App() {
             <Route
               path="/import"
               element={
-                appMode.canMutate ? <ImportView /> : <Navigate to="/" replace />
+                appMode.canMutate ? (
+                  <ImportView
+                    priceRefreshRunning={priceRefresh.status.running}
+                  />
+                ) : (
+                  <Navigate to="/" replace />
+                )
               }
             />
             <Route path="/asset/:id" element={<AssetView />} />

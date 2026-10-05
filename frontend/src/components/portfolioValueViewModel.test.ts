@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { ValueHistoryPoint } from "../api/types";
 import {
   ledgerHasNoTransactions,
   referenceEdgeTag,
@@ -15,21 +14,6 @@ describe("ledgerHasNoTransactions", () => {
     expect(ledgerHasNoTransactions(undefined)).toBe(false);
   });
 });
-
-function point(
-  date: string,
-  value: string,
-  invested: string | null,
-): ValueHistoryPoint {
-  return {
-    date,
-    value_base: value,
-    invested_base: invested,
-    incomplete: false,
-    included_count: 1,
-    excluded_count: 0,
-  };
-}
 
 describe("referenceEdgeTag", () => {
   const value = [

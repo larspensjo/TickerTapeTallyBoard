@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import type { GainsRow, GainsSummary } from "../api/types";
+import type { PriceRefreshStatus } from "./priceRefreshViewModel";
 import {
   freshnessLabel,
   freshnessTone,
@@ -20,14 +21,12 @@ export function PortfolioSummary({
   summary,
   rows,
   isCheckingPrices,
-  isRefreshingPrices,
-  refreshError,
+  refreshStatus,
 }: {
   summary: GainsSummary | undefined;
   rows: GainsRow[] | undefined;
   isCheckingPrices: boolean;
-  isRefreshingPrices: boolean;
-  refreshError?: Error | null;
+  refreshStatus: PriceRefreshStatus;
 }) {
   const priceFreshness = portfolioPriceFreshness(rows);
 
@@ -79,29 +78,37 @@ export function PortfolioSummary({
       <div className="metric-tile freshness-tile">
         <span className="metric-tile-label">Prices</span>
         <span className="metric-tile-value freshness-value">
-          {isRefreshingPrices ? (
+          {refreshStatus.running ? (
             <span className="status-chip warning">
               <RefreshCw aria-hidden="true" className="spin" size={12} />
               Refreshing
             </span>
-          ) : refreshError ? (
-            <span className="status-chip warning" title={refreshError.message}>
-              Refresh failed
-            </span>
-          ) : priceFreshness ? (
-            <span
-              className={
-                freshnessTone(priceFreshness) === "warning"
-                  ? "status-chip warning"
-                  : "status-chip"
-              }
-            >
-              {freshnessLabel(priceFreshness)}
-            </span>
-          ) : isCheckingPrices ? (
-            <span className="status-chip">Checking</span>
           ) : (
-            <span className="status-chip">No data</span>
+            <>
+              {refreshStatus.warning ? (
+                <span
+                  className="status-chip warning"
+                  title={refreshStatus.warning.detail}
+                >
+                  {refreshStatus.warning.label}
+                </span>
+              ) : null}
+              {priceFreshness ? (
+                <span
+                  className={
+                    freshnessTone(priceFreshness) === "warning"
+                      ? "status-chip warning"
+                      : "status-chip"
+                  }
+                >
+                  {freshnessLabel(priceFreshness)}
+                </span>
+              ) : isCheckingPrices ? (
+                <span className="status-chip">Checking</span>
+              ) : (
+                <span className="status-chip">No data</span>
+              )}
+            </>
           )}
         </span>
       </div>

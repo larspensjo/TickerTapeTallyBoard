@@ -348,13 +348,16 @@ export function useDeleteTransaction() {
   });
 }
 
+export const PRICE_REFRESH_MUTATION_KEY = ["price-refresh"] as const;
+
 export function useRefreshPrices() {
   const queryClient = useQueryClient();
 
   return useMutation({
+    mutationKey: PRICE_REFRESH_MUTATION_KEY,
     mutationFn: (input: RefreshPricesInput = { mode: "latest" }) =>
       apiSend<RefreshPricesResult>("POST", "/api/prices/refresh", input),
-    onSuccess: () => {
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
   });

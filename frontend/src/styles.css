@@ -106,12 +106,38 @@ button {
 
 .app-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "identity nav actions";
+  row-gap: var(--space-4);
   align-items: center;
   min-height: 56px;
   padding: 0 var(--space-6);
   border-bottom: 1px solid var(--hairline);
+}
+
+.app-bar-identity {
+  grid-area: identity;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.app-bar-actions {
+  grid-area: actions;
+  margin-inline-start: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.price-refresh-warning {
+  display: inline-flex;
+  color: var(--warning);
+}
+
+.backfill-warning {
+  color: var(--warning);
 }
 
 .brand,
@@ -140,6 +166,7 @@ button {
 .brand-mark {
   width: 9px;
   height: 9px;
+  flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--accent);
 }
@@ -172,6 +199,8 @@ button {
 }
 
 .app-nav {
+  grid-area: nav;
+  margin-inline-start: var(--space-4);
   align-self: stretch;
   flex-wrap: wrap;
   gap: var(--space-5);
@@ -205,6 +234,11 @@ button {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.button.compact {
+  min-height: 32px;
+  padding: 0 var(--space-3);
 }
 
 .button:focus-visible,
@@ -271,18 +305,17 @@ button {
   font-weight: 600;
 }
 
+.freshness-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .portfolio-layout {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.portfolio-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-4) 0 0;
 }
 
 .eyebrow {
@@ -1705,12 +1738,14 @@ th.number-head .sort-button {
 
 @media (max-width: 900px) {
   .app-bar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "identity identity" "nav actions";
     align-items: stretch;
     padding: var(--space-3) var(--space-4);
   }
 
   .app-nav {
+    margin-inline-start: 0;
     gap: var(--space-4);
     min-height: 40px;
   }

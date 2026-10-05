@@ -6,37 +6,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PortfolioLayout } from "./PortfolioLayout";
 
 const useGains = vi.fn();
-const usePriceStatus = vi.fn();
-const useRefreshPrices = vi.fn();
-const useAppMode = vi.fn();
 
 vi.mock("../api/queries", () => ({
   useGains: (...args: unknown[]) => useGains(...args),
-  usePriceStatus: (...args: unknown[]) => usePriceStatus(...args),
-  useRefreshPrices: (...args: unknown[]) => useRefreshPrices(...args),
 }));
 
-vi.mock("./PortfolioSummary", () => ({
-  PortfolioSummary: () => null,
-}));
-
-vi.mock("./useAppMode", () => ({
-  useAppMode: (...args: unknown[]) => useAppMode(...args),
-}));
-
-function renderPortfolioLayout() {
-  useGains.mockReturnValue({ data: undefined, isFetching: false });
-  usePriceStatus.mockReturnValue({ data: undefined, isPending: false });
-  useRefreshPrices.mockReturnValue({
-    isPending: false,
-    error: null,
-  });
-  useAppMode.mockReturnValue({ canMutate: true });
+function renderPortfolioLayout(isFetching = false) {
+  useGains.mockReturnValue({ data: undefined, isFetching });
 
   render(
     <MemoryRouter initialEntries={["/"]}>
       <Routes>
-        <Route element={<PortfolioLayout />} path="/">
+        <Route
+          element={
+            <PortfolioLayout
+              refreshStatus={{ running: false, warning: null }}
+            />
+          }
+          path="/"
+        >
           <Route element={<div>Dashboard content</div>} index />
         </Route>
       </Routes>
@@ -50,6 +38,19 @@ afterEach(() => {
 });
 
 describe("PortfolioLayout", () => {
+  it.each([
+    [true, "Checking", "No data"],
+    [false, "No data", "Checking"],
+  ] as const)(
+    "shows %s/%s based only on gains fetching",
+    (isFetching, label, absentLabel) => {
+      renderPortfolioLayout(isFetching);
+
+      expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.queryByText(absentLabel)).toBeNull();
+    },
+  );
+
   it("does not render the add transaction action", () => {
     renderPortfolioLayout();
 

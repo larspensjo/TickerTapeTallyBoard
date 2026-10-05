@@ -156,9 +156,12 @@ The board's defining surface. Holdings and transactions share one table system.
 
 **App bar** — ~56px, `--canvas` floor, bottom `--hairline`. Brand wordmark with a
 9px accent dot left; nav items (13/500) with active item marked by a 2px
-`--accent` bottom indicator; right side: outline "Refresh" + primary "Add
-transaction". Directly below, a totals band: portfolio value in Number-lg + a
-today-change figure in `--up`/`--down`.
+`--accent` bottom indicator; right side: an app-wide actions cluster with a compact outline
+"Refresh" button and icon, plus a warning indicator beside it. The cluster is
+reserved for future Undo/History controls and stays on the navigation row at
+≤900px. The summary band beneath belongs to the portfolio tabs only, showing
+portfolio value in Number-lg and today-change in `--up`/`--down`. "Add
+transaction" is a secondary button in the Transactions panel header.
 
 **Holdings / transactions tables** — the density spec above. Transactions adds a
 filter input (`--surface-2`) and neutral type chips (Buy/Sell/Split use neutral
@@ -172,6 +175,7 @@ ring. Primary submit is the accent pill.
 - Primary: `--accent` fill, `--text-on-accent`; hover `--accent-hover`, active `--accent-active`.
 - Secondary: `--surface-2` fill + `--hairline`; hover lightens.
 - Outline: transparent + `--hairline`.
+- Compact: ~32px tall, with 12px horizontal padding, for app-bar controls.
 - Text: `--accent-link`, no fill.
 
 **Badges / chips** (`--radius-pill`, 11/600):

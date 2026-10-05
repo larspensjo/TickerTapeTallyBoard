@@ -81,9 +81,9 @@ describe("every data hook names the snapshot", () => {
           {children}
         </QueryClientProvider>
       );
-      const hook = (queries as Record<string, (...args: unknown[]) => unknown>)[
-        name
-      ];
+      const hook = (queries as Record<string, unknown>)[name] as (
+        ...args: unknown[]
+      ) => unknown;
 
       const { result } = renderHook(() => hook(...(HOOK_ARGS[name] ?? [])), {
         wrapper,
