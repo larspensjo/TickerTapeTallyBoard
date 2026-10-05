@@ -798,13 +798,20 @@ Verify: targeted tests, `npm run check`, `npm run fmt` (from `frontend/`).
 
 | Shell / mode | Viewport | Page | appBar before | appBar after | summaryTop before | summaryTop after |
 |---|---|---|---|---|---|---|
-| Browser, non-demo | 1440×900 | Dashboard | | | | |
-| Browser, non-demo | 1440×900 | Holdings | | | | |
-| Browser, non-demo | 800×600 | Dashboard | | | | |
-| Browser, non-demo | 800×600 | Holdings | | | | |
-| Browser, demo | 1440×900 | Dashboard | | | | |
-| Browser, demo | 800×600 | Dashboard | | | | |
-| Desktop window, non-demo | default | Dashboard | | | | |
+| Browser, non-demo | 1440×900 | Dashboard | 56 | | 144 | |
+| Browser, non-demo | 1440×900 | Holdings | 56 | | 144 | |
+| Browser, non-demo | 800×600 | Dashboard | 102 | | 190 | |
+| Browser, non-demo | 800×600 | Holdings | 102 | | 190 | |
+| Browser, demo | 1440×900 | Dashboard | 56 | | 76 | |
+| Browser, demo | 800×600 | Dashboard | 140.5 | | 160.5 | |
+| Desktop window, non-demo | default (1258×1138 CSS px at 150% scaling) | Dashboard | 56 | | 144 | |
+
+Before values taken 2026-10-05 at commit `c08de50` (the Transactions-page entry
+and empty-state links change neither measured element), on an empty dev ledger,
+in headless Chrome (`Emulation.setDeviceMetricsOverride`, scale 1) and, for the
+desktop row, inside the debug desktop window over the WebView2 debugging port.
+The desktop window's default viewport is not ~800px wide as assumed above; its
+800px behaviour is covered by the browser 800×600 rows.
 
 Expected: non-demo `summaryTop` falls by ~68px at both widths; `appBar` does not
 grow anywhere; demo `summaryTop` unchanged at full width (the row was already
