@@ -431,6 +431,14 @@ h2 {
   padding-bottom: var(--space-3);
 }
 
+.transaction-entry-section {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.transaction-entry-section > h2 {
+  margin: var(--space-4) var(--space-4) 0;
+}
+
 .segmented-control {
   gap: var(--space-1);
   padding: var(--space-1);

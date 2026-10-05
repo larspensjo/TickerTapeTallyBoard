@@ -1,23 +1,12 @@
-import { Plus, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { Outlet } from "react-router-dom";
-import {
-  useDataVersion,
-  useGains,
-  useInstruments,
-  usePriceStatus,
-  useRefreshPrices,
-} from "../api/queries";
-import { AddTransactionForm } from "./AddTransactionForm";
+import { useGains, usePriceStatus, useRefreshPrices } from "../api/queries";
 import { PortfolioSummary } from "./PortfolioSummary";
 import { useAppMode } from "./useAppMode";
 
 export function PortfolioLayout() {
-  const [formOpen, setFormOpen] = useState(false);
   const gainsQuery = useGains();
-  const dataVersionQuery = useDataVersion();
   const appMode = useAppMode();
-  const instrumentsQuery = useInstruments();
   const priceStatusQuery = usePriceStatus();
   const refreshPrices = useRefreshPrices();
   const pricesRefreshing =
@@ -40,14 +29,6 @@ export function PortfolioLayout() {
             />
             <span>Refresh prices</span>
           </button>
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => setFormOpen((open) => !open)}
-          >
-            <Plus aria-hidden="true" size={16} />
-            <span>Add transaction</span>
-          </button>
         </div>
       ) : null}
 
@@ -58,22 +39,6 @@ export function PortfolioLayout() {
         isRefreshingPrices={pricesRefreshing}
         refreshError={refreshPrices.error}
       />
-
-      {formOpen && appMode.canMutate ? (
-        <section className="panel form-panel" aria-label="Add transaction">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Manual entry</p>
-              <h2>Add transaction</h2>
-            </div>
-          </div>
-          <AddTransactionForm
-            instruments={instrumentsQuery.data ?? []}
-            tradeDate={dataVersionQuery.data?.valuation_date ?? ""}
-            onClose={() => setFormOpen(false)}
-          />
-        </section>
-      ) : null}
 
       <Outlet />
     </div>
