@@ -98,7 +98,7 @@ Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date,
 TODO: Avanza import rows already parse and count dividends, but dividend rows are not written into the ledger yet. When dividend support lands, route them into the income/gains model instead of leaving them as import-only metadata.
 
 ### API surface (v1 sketch)
-REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices`, `POST /api/import/sharesight`, `POST /api/prices/refresh`.
+REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/opportunities?window=7d|14d|30d` (held assets' recent share-price change over a backend-resolved window), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices`, `POST /api/import/sharesight`, `POST /api/prices/refresh`.
 
 ## 3. Implementation phases
 

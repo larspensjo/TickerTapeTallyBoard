@@ -649,6 +649,51 @@ ledger copied from a backup snapshot:
 
 ### Phase 5 — Versions, documents, and final verification
 
+**Status: done (2026-10-15); plan stays open until Lars has run the checklist
+below.** Frontend 0.26.0 → 0.27.0 (lockfile synced), workspace 0.19.0 → 0.20.0
+(the in-flight app-bar plan had not taken either, so its own bumps now move to
+the next minor). `GET /api/opportunities` added to the Design.HighLevel API
+list. No durable code or document refers to this plan or its phases. Gates:
+backend build, 650 tests, `cargo clippy --workspace --all-targets -D warnings`,
+`cargo fmt`; frontend `npm run check` (544 tests), `npm run fmt` — all clean.
+Implemented by Claude (Codex unavailable), reviewed by an independent Opus pass;
+its checklist wording fixes are applied.
+
+#### Lars's checklist (about 10 minutes)
+
+Items 1, 2 and 6 work in `.\scripts\start.ps1 -Demo`. Items 3, 4, 5 and 7
+need your own data (the new build on your ledger): the demo has fresh prices for
+everything, so it has no stale, missing or unavailable rows to show. Open
+**Opportunities** in the top bar.
+
+1. **Window switch:** as the first switch after opening the page, click
+   1 week → 30 days. While the new rows load you may see "Price change" with an
+   "Updating…" chip; locally it may only flash. The failure to watch for is a
+   "30-day" header above 1-week numbers. Leave the page, come back, reload:
+   30 days is still selected.
+2. **Order:** click Biggest risers — the list reverses. If you have rows with a
+   grey reason chip instead of a percentage (your data only), they stay at the
+   bottom in both orders.
+3. **Spot-check:** for two holdings, compare the 1-week change with your broker
+   or Yahoo (close to close), and confirm a holding priced below what you paid
+   shows "Below your average".
+4. **Stale signals (if you have such a holding; otherwise skip):** an old price
+   shows the stale chip/icon by the latest price and also beside "Your gain
+   incl. fees & currency" (both places is correct); a foreign holding with a
+   current price but an old exchange rate shows it only beside the gain.
+5. **Looks different from Holdings (by design — say if you dislike it; only if
+   you have such a holding):** when a SEK gain can't be computed, this page
+   shows a grey chip with the reason (e.g. "No price source"), where Holdings
+   shows an amber "Missing" or "Valuation missing" warning chip. Rises also
+   carry a "+" sign here and not on Holdings.
+6. **Fit:** desktop window at its default size, and a browser window about
+   800 px wide — the six columns and the two switches fit, and the top bar does
+   not grow.
+7. **Optional, refresh timing (the refresh now fetches 37 days, not 14):** note
+   `latest_run` from `GET /api/prices/status` in your current release app, then
+   again after the first launch of the new build: same status, roughly 2–3×
+   `prices_written`, a similar `started_at` → `finished_at` duration.
+
 - Bump `frontend/package.json` to the next minor above its value when this phase
   lands (0.26.0 → 0.27.0 unless the in-flight app-bar refresh-feedback work has
   already taken it) for the new page.
