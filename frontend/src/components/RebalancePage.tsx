@@ -1,4 +1,3 @@
-import { Clock3 } from "lucide-react";
 import { type CSSProperties, useEffect, useReducer } from "react";
 import { useRebalancePlan } from "../api/queries";
 import { normalizeRebalanceAmount } from "../api/rebalanceAmount";
@@ -10,6 +9,7 @@ import {
   type RebalanceBalanceBarViewModel,
   rankByOptions,
 } from "./rebalanceViewModel";
+import { type FreshnessKind, StaleSignal } from "./valuationDisplay";
 
 export interface RebalancePageState {
   amountInput: string;
@@ -509,15 +509,10 @@ function tradeFreshnessCell({
 }: {
   freshnessLabel: string;
   freshnessTone: "warning" | "flat";
-  freshnessKind: "fresh" | "minor_stale" | "warning_stale";
+  freshnessKind: FreshnessKind;
 }) {
-  if (freshnessKind === "minor_stale") {
-    return (
-      <span className="rebalance-freshness-icon" title={freshnessLabel}>
-        <Clock3 aria-hidden="true" size={12} />
-        <span className="sr-only">{freshnessLabel}</span>
-      </span>
-    );
+  if (freshnessKind !== "fresh") {
+    return <StaleSignal kind={freshnessKind} label={freshnessLabel} />;
   }
 
   return (

@@ -333,6 +333,53 @@ export interface RebalanceBalanceEntry {
   is_new: boolean;
 }
 
+export const OPPORTUNITY_WINDOWS = ["7d", "14d", "30d"] as const;
+export type OpportunityWindow = (typeof OPPORTUNITY_WINDOWS)[number];
+
+export const OPPORTUNITY_ORDERS = ["fallers_first", "risers_first"] as const;
+export type OpportunityOrder = (typeof OPPORTUNITY_ORDERS)[number];
+
+/** The period the backend resolved for the requested window. */
+export interface OpportunityPeriod {
+  window: OpportunityWindow;
+  start_date: string;
+  end_date: string;
+}
+
+/**
+ * Close-to-close share-price change in the instrument's own currency. The
+ * closes are the actual dated closes used, at full stored precision.
+ */
+export type PriceChange =
+  | {
+      status: "available";
+      start_date: string;
+      start_close: string;
+      end_date: string;
+      end_close: string;
+      change_percent: string;
+    }
+  | { status: "unavailable"; reasons: string[] };
+
+export interface OpportunityRow {
+  instrument: Instrument;
+  quantity: number;
+  latest_close: PriceSnapshot | null;
+  price_change: PriceChange;
+  average_cost_native: string;
+  price_vs_average_percent: PercentValue;
+  below_average: boolean | null;
+  unrealized_gain_percent: PercentValue;
+  unrealized_gain_freshness: string | null;
+  conviction_target: ConvictionTarget;
+}
+
+export interface OpportunitiesResponse {
+  data_revision: string;
+  period: OpportunityPeriod;
+  rows: OpportunityRow[];
+}
+
 export interface RefreshRunSummary {
   run_id: number;
   trigger: RefreshTrigger;

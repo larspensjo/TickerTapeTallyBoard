@@ -490,6 +490,22 @@ to investigate before continuing.
 
 ### Phase 3 — Frontend: the page with ordering and the window switch
 
+**Status: implemented and verified (2026-10-15); app-bar height measurement
+pending (Lars).** Implemented by a Claude agent (Codex was unavailable on this
+machine) and reviewed by an independent Opus pass; review follow-ups applied (a
+failed fetch for a newly requested window shows the error with Retry instead of
+the previous window's rows; one shared stale-signal component for Opportunities
+and Rebalance). Targeted tests 94 passed; `npm run check` clean (tsc, Biome,
+49 files / 538 tests); `npm run fmt` applied. Still to do: the app-bar height
+measurement below (56 / 102 px at 1440×900 and 800×600, `-Demo`, headless
+Chrome over CDP); the review's CSS estimate says the extra nav item fits, but it
+is unproven. Routine choices made: `freshnessKind` moved to `valuationDisplay`
+and the clock icon class renamed `.freshness-icon` (shared with Rebalance); the
+view-model takes no `isFetching` (the "Updating…" chip follows the window
+mismatch only); a fresh latest price shows no badge; positive changes carry a
+`+`; prices use the adaptive unit-price formatter as is (a stored `377.8` shows
+as `377.8`); dates show as "7 Oct".
+
 Changes:
 
 - `api/types.ts`: `OpportunityWindow = "7d" | "14d" | "30d"`,

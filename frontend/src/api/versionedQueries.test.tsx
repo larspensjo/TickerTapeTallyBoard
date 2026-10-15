@@ -5,6 +5,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as queries from "./queries";
+import type { OpportunityWindow } from "./types";
 
 const VERSION = {
   data_revision: "ledger-a:1",
@@ -20,6 +21,7 @@ const UNVERSIONED = new Set(["useDataVersion", "useHealth"]);
 const HOOK_ARGS: Record<string, unknown[]> = {
   useInstrumentPrices: [7],
   useRebalancePlan: ["1000", "sek"],
+  useOpportunities: ["7d"],
 };
 
 function isMutationResult(value: unknown): value is { mutate: unknown } {
@@ -65,6 +67,7 @@ describe("every data hook names the snapshot", () => {
         "useTransactions",
         "usePriceStatus",
         "usePortfolioValueHistory",
+        "useOpportunities",
       ]),
     );
   });
@@ -165,6 +168,37 @@ describe("gains period request parameters", () => {
     expect(request.searchParams.get("period")).toBe("custom");
     expect(request.searchParams.get("start_date")).toBe("2026-01-01");
     expect(request.searchParams.get("end_date")).toBe("2026-09-12");
+  });
+});
+
+describe("opportunities window request parameters", () => {
+  it("sends the requested window and switches it on rerender", async () => {
+    const requests: string[] = [];
+    stubFetch(requests);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { rerender } = renderHook(
+      ({ recentWindow }: { recentWindow: OpportunityWindow }) =>
+        queries.useOpportunities(recentWindow),
+      { wrapper, initialProps: { recentWindow: "7d" } },
+    );
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const first = new URL(requests[0], "http://localhost");
+    expect(first.pathname).toBe("/api/opportunities");
+    expect(first.searchParams.getAll("window")).toEqual(["7d"]);
+
+    rerender({ recentWindow: "30d" });
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    const second = new URL(requests[1], "http://localhost");
+    expect(second.pathname).toBe("/api/opportunities");
+    expect(second.searchParams.getAll("window")).toEqual(["30d"]);
   });
 });
 

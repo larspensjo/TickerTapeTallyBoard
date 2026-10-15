@@ -16,6 +16,7 @@ export function appModeViewModel(
       { to: "/", label: "Dashboard", end: true },
       { to: "/holdings", label: "Holdings" },
       { to: "/rebalance", label: "Rebalance" },
+      { to: "/opportunities", label: "Opportunities" },
       { to: "/gains", label: "Gains" },
       { to: "/transactions", label: "Transactions" },
       ...(canMutate ? [{ to: "/import", label: "Import" }] : []),

@@ -1,4 +1,5 @@
 import type { Row, RowData, TableFeatures } from "@tanstack/react-table";
+import { Clock3 } from "lucide-react";
 import type { AvailabilityValue } from "../api/types";
 
 type ValueTone = "plain" | "signed";
@@ -299,6 +300,52 @@ export function freshnessLabel(freshness: string): string {
   }
 
   return freshness.replaceAll("_", " ");
+}
+
+export type FreshnessKind = "fresh" | "minor_stale" | "warning_stale";
+
+/** Which stale signal a freshness value earns: none, the minor icon, or the warning chip. */
+export function freshnessKind(freshness: string): FreshnessKind {
+  if (freshness.startsWith("warning_stale_")) {
+    return "warning_stale";
+  }
+
+  if (freshness.startsWith("minor_stale_")) {
+    return "minor_stale";
+  }
+
+  return "fresh";
+}
+
+/**
+ * The stale signal beside a value: nothing when fresh, a muted clock icon when
+ * minor stale, and the warning chip when warning stale.
+ */
+export function StaleSignal({
+  kind,
+  label,
+}: {
+  kind: FreshnessKind;
+  label: string;
+}) {
+  if (kind === "minor_stale") {
+    return (
+      <span className="freshness-icon" title={label}>
+        <Clock3 aria-hidden="true" size={12} />
+        <span className="sr-only">{label}</span>
+      </span>
+    );
+  }
+
+  if (kind === "warning_stale") {
+    return (
+      <span className="status-chip warning compact" title={label}>
+        {label}
+      </span>
+    );
+  }
+
+  return null;
 }
 
 export function freshnessRank(freshness: string): number {

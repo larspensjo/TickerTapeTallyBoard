@@ -11,6 +11,7 @@ describe("appModeViewModel", () => {
       "Dashboard",
       "Holdings",
       "Rebalance",
+      "Opportunities",
       "Gains",
       "Transactions",
       "Import",
@@ -26,6 +27,7 @@ describe("appModeViewModel", () => {
       "Dashboard",
       "Holdings",
       "Rebalance",
+      "Opportunities",
       "Gains",
       "Transactions",
     ]);
@@ -40,6 +42,7 @@ describe("appModeViewModel", () => {
       "Dashboard",
       "Holdings",
       "Rebalance",
+      "Opportunities",
       "Gains",
       "Transactions",
     ]);

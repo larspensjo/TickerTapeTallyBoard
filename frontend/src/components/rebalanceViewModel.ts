@@ -11,7 +11,9 @@ import type {
 } from "../api/types";
 import { type GapBarGeometry, gapBarGeometry } from "./holdingsConviction";
 import {
+  type FreshnessKind,
   formatGroupedNumber,
+  freshnessKind,
   freshnessLabel,
   freshnessTone,
   parseFiniteNumber,
@@ -33,8 +35,6 @@ const REBALANCE_UNTRADED_REASON_LABELS: Record<string, string> = {
   on_target: "On target",
 };
 
-export type RebalanceFreshnessKind = "fresh" | "minor_stale" | "warning_stale";
-
 export interface RebalanceTradeRowViewModel {
   instrument: Instrument;
   side: "buy" | "sell";
@@ -46,7 +46,7 @@ export interface RebalanceTradeRowViewModel {
   freshness: string;
   freshnessLabel: string;
   freshnessTone: "warning" | "flat";
-  freshnessKind: RebalanceFreshnessKind;
+  freshnessKind: FreshnessKind;
   is_new: boolean;
 }
 
@@ -129,18 +129,6 @@ export function clampInteger(value: number, min: number, max: number): number {
 
 export function formatRebalanceMoney(value: string): string {
   return `SEK ${formatGroupedNumber(value)}`;
-}
-
-function freshnessKind(freshness: string): RebalanceFreshnessKind {
-  if (freshness.startsWith("warning_stale_")) {
-    return "warning_stale";
-  }
-
-  if (freshness.startsWith("minor_stale_")) {
-    return "minor_stale";
-  }
-
-  return "fresh";
 }
 
 export function rebalanceUnavailableMessage(

@@ -32,6 +32,11 @@ const RebalancePage = lazy(() =>
     default: module.RebalancePage,
   })),
 );
+const OpportunitiesPage = lazy(() =>
+  import("./components/OpportunitiesPage").then((module) => ({
+    default: module.OpportunitiesPage,
+  })),
+);
 const GainsPage = lazy(() =>
   import("./components/GainsPage").then((module) => ({
     default: module.GainsPage,
@@ -91,6 +96,7 @@ export function App() {
               <Route path="/" element={<Dashboard {...dateRangeProps} />} />
               <Route path="/holdings" element={<HoldingsPage />} />
               <Route path="/rebalance" element={<RebalancePage />} />
+              <Route path="/opportunities" element={<OpportunitiesPage />} />
               <Route
                 path="/gains"
                 element={<GainsPage {...dateRangeProps} />}

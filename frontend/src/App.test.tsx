@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -32,6 +38,9 @@ vi.mock("./components/HoldingsPage", () => ({
 }));
 vi.mock("./components/RebalancePage", () => ({
   RebalancePage: () => <h1>Rebalance content</h1>,
+}));
+vi.mock("./components/OpportunitiesPage", () => ({
+  OpportunitiesPage: () => <h1>Opportunities content</h1>,
 }));
 vi.mock("./components/GainsPage", () => ({
   GainsPage: () => <h1>Gains content</h1>,
@@ -75,11 +84,25 @@ const routes = [
   ["/", "Dashboard content"],
   ["/holdings", "Holdings content"],
   ["/rebalance", "Rebalance content"],
+  ["/opportunities", "Opportunities content"],
   ["/gains", "Gains content"],
   ["/transactions", "Transactions"],
   ["/import", "Import content"],
   ["/asset/7", "Asset content"],
 ];
+
+describe("App navigation", () => {
+  it("links to Opportunities and renders it inside the portfolio layout", async () => {
+    await openRoute("/opportunities", "Opportunities content");
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(
+      within(nav).getByRole("link", { name: "Opportunities" }),
+    ).toHaveAttribute("href", "/opportunities");
+    expect(
+      screen.getByRole("region", { name: "Portfolio summary" }),
+    ).toBeTruthy();
+  });
+});
 
 describe("App refresh actions", () => {
   it.each(routes)(

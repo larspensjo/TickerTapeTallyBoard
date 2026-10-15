@@ -21,6 +21,8 @@ import type {
   ImportSource,
   Instrument,
   InstrumentLookupResponse,
+  OpportunitiesResponse,
+  OpportunityWindow,
   PriceHistoryResponse,
   PriceStatusResponse,
   RebalanceRankBy,
@@ -224,6 +226,18 @@ export function useRebalancePlan(
       normalizedAmount ?? "",
     )}&rank_by=${rankBy}`,
     { enabled: normalizedAmount !== null },
+  );
+}
+
+/**
+ * Held assets with their share-price change over a page-local window. Previous
+ * data is kept while another window loads; the page relies on the response's
+ * own period to avoid naming a window it is not showing.
+ */
+export function useOpportunities(recentWindow: OpportunityWindow) {
+  return useVersionedQuery<OpportunitiesResponse>(
+    ["opportunities", recentWindow],
+    `/api/opportunities?window=${recentWindow}`,
   );
 }
 
