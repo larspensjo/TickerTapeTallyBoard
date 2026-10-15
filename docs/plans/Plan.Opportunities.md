@@ -490,16 +490,18 @@ to investigate before continuing.
 
 ### Phase 3 — Frontend: the page with ordering and the window switch
 
-**Status: implemented and verified (2026-10-15); app-bar height measurement
-pending (Lars).** Implemented by a Claude agent (Codex was unavailable on this
+**Status: done (2026-10-15).** Implemented by a Claude agent (Codex was unavailable on this
 machine) and reviewed by an independent Opus pass; review follow-ups applied (a
 failed fetch for a newly requested window shows the error with Retry instead of
 the previous window's rows; one shared stale-signal component for Opportunities
 and Rebalance). Targeted tests 94 passed; `npm run check` clean (tsc, Biome,
-49 files / 538 tests); `npm run fmt` applied. Still to do: the app-bar height
-measurement below (56 / 102 px at 1440×900 and 800×600, `-Demo`, headless
-Chrome over CDP); the review's CSS estimate says the extra nav item fits, but it
-is unproven. Routine choices made: `freshnessKind` moved to `valuationDisplay`
+49 files / 538 tests); `npm run fmt` applied. App-bar measurement (`-Demo`, headless
+Chrome over CDP, Dashboard and Opportunities): 1440×900 → 56 px (unchanged);
+800×600 → 103.5 px, with the nav on one 40 px row. Hiding the Opportunities
+link in the live page leaves it at 103.5 px, so the extra item adds nothing; the
+1.5 px over the recorded 102 px is most likely the demo-mode identity row (DEMO
+badge, 22.5 px tall), since that baseline was taken outside demo (not
+re-measured there). Routine choices made: `freshnessKind` moved to `valuationDisplay`
 and the clock icon class renamed `.freshness-icon` (shared with Rebalance); the
 view-model takes no `isFetching` (the "Updating…" chip follows the window
 mismatch only); a fresh latest price shows no badge; positive changes carry a
