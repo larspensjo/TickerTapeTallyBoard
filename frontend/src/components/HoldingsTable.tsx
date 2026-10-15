@@ -38,6 +38,7 @@ import {
 } from "./holdingsConviction";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
+import { TargetGapBarView } from "./TargetGapBarView";
 import { DATA_TABLE_FEATURES } from "./tableFeatures";
 import {
   AvailabilityValueCell,
@@ -468,22 +469,7 @@ function targetCell(target: ConvictionTarget) {
     return null;
   }
 
-  return (
-    <div
-      className="target-gap-track"
-      role="img"
-      aria-label={bar.tooltip}
-      title={bar.tooltip}
-    >
-      <span className="target-gap-axis" />
-      {bar.side !== "on_target" ? (
-        <span
-          className={`target-gap-fill ${bar.side}`}
-          style={{ width: `${bar.widthPercent}%` }}
-        />
-      ) : null}
-    </div>
-  );
+  return <TargetGapBarView bar={bar} />;
 }
 
 function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {

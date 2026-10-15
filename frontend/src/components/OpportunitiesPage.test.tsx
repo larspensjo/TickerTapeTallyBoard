@@ -288,4 +288,70 @@ describe("OpportunitiesPage", () => {
       }
     },
   );
+
+  it("shows the context columns, markers, stale signals and footnote", () => {
+    useAppMode.mockReturnValue({ canMutate: true });
+    const below: OpportunityRow = {
+      ...opportunityRow(5, "Below Ltd", "-3.00"),
+      price_vs_average_percent: { status: "available", value: "-5.12" },
+      below_average: true,
+      unrealized_gain_percent: { status: "available", value: "20.00" },
+      unrealized_gain_freshness: "warning_stale_8_days",
+      conviction_target: {
+        conviction: "High",
+        status: "above",
+        target_value_base: { status: "available", value: "900.00" },
+        target_gap_base: { status: "available", value: "300.00" },
+        target_gap_percent: { status: "available", value: "33.33" },
+      },
+    };
+    const above: OpportunityRow = {
+      ...opportunityRow(6, "Above Plc", "2.00"),
+      price_vs_average_percent: { status: "available", value: "4.00" },
+      below_average: false,
+    };
+    useOpportunities.mockReturnValue(
+      queryResult(response("7d", [below, above])),
+    );
+
+    renderPage();
+
+    const table = screen.getByRole("table", { name: "Opportunities" });
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((header) => header.textContent);
+    const column = (name: string) => headers.indexOf(name);
+    expect(column("Vs your average price")).toBeGreaterThan(-1);
+    expect(column("Your gain incl. fees & currency")).toBeGreaterThan(-1);
+    expect(column("Vs target")).toBeGreaterThan(-1);
+
+    const [belowRow, aboveRow] = dataRows();
+    const cell = (row: HTMLElement, name: string) =>
+      within(row).getAllByRole("cell")[column(name)];
+
+    expect(within(belowRow).getByText("Below your average")).toBeTruthy();
+    expect(within(aboveRow).queryByText("Below your average")).toBeNull();
+
+    // A fresh share price with an old exchange rate: the SEK gain carries the
+    // stale chip, the latest price does not.
+    const gainCell = cell(belowRow, "Your gain incl. fees & currency");
+    expect(within(gainCell).getByText("+20.00%")).toBeTruthy();
+    expect(within(gainCell).getByText("Stale 8 days")).toBeTruthy();
+    expect(
+      within(cell(belowRow, "Latest price")).queryByText(/Stale/),
+    ).toBeNull();
+
+    expect(
+      within(cell(belowRow, "Vs target")).getByRole("img", {
+        name: /Gap SEK 300\.00 \(33\.33%\)/,
+      }),
+    ).toBeTruthy();
+    expect(cell(aboveRow, "Vs target")).toBeEmptyDOMElement();
+
+    expect(
+      screen.getByText(
+        "Price change compares closing share prices in each asset's own currency. Dividends are not added back, so a share can look like it fell on the day it starts trading without its dividend.",
+      ),
+    ).toBeTruthy();
+  });
 });

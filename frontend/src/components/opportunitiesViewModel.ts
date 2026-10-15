@@ -4,7 +4,9 @@ import type {
   OpportunityOrder,
   OpportunityRow,
   OpportunityWindow,
+  PercentValue,
 } from "../api/types";
+import { type TargetGapBar, targetGapBar } from "./holdingsConviction";
 import {
   type FreshnessKind,
   formatGroupedNumber,
@@ -12,6 +14,7 @@ import {
   freshnessKind,
   freshnessLabel,
   parseFiniteNumber,
+  reasonLabel,
   signedTone,
 } from "./valuationDisplay";
 
@@ -148,6 +151,19 @@ export interface OpportunityLatestPriceViewModel {
   freshnessLabel: string;
 }
 
+/** A signed percent cell, or the plain-language reason it is unavailable. */
+export interface OpportunityPercentViewModel {
+  available: boolean;
+  label: string;
+  tone: "up" | "down" | "flat";
+  tooltip: string | null;
+}
+
+export interface OpportunityStaleSignalViewModel {
+  kind: FreshnessKind;
+  label: string;
+}
+
 export interface OpportunityRowViewModel {
   instrument: Instrument;
   changeAvailable: boolean;
@@ -155,6 +171,13 @@ export interface OpportunityRowViewModel {
   changeTone: "up" | "down" | "flat";
   changeTooltip: string;
   latestPrice: OpportunityLatestPriceViewModel | null;
+  vsAverage: OpportunityPercentViewModel;
+  /** From the backend's exact comparison, never from the rounded percent. */
+  belowAverage: boolean;
+  gain: OpportunityPercentViewModel;
+  /** Staler of the price and exchange-rate freshness behind the SEK gain. */
+  gainFreshness: OpportunityStaleSignalViewModel | null;
+  targetBar: TargetGapBar | null;
 }
 
 export type OpportunitiesPageStatus =
@@ -185,6 +208,78 @@ function formatChangePercent(value: string): string {
   return signedTone(value) === "up" ? `+${formatted}` : formatted;
 }
 
+export function priceVersusAverageReasonLabel(code: string): string {
+  switch (code) {
+    case "missing_latest_close":
+      return "No price yet";
+    case "price_currency_mismatch":
+      return "Price in another currency";
+    case "zero_average_cost":
+      return "Average price is zero";
+    default:
+      return code.replaceAll("_", " ");
+  }
+}
+
+function percentViewModel(
+  value: PercentValue,
+  unavailableLabel: (reasons: string[]) => string,
+): OpportunityPercentViewModel {
+  if (value.status === "available") {
+    return {
+      available: true,
+      label: formatChangePercent(value.value),
+      tone: signedTone(value.value),
+      tooltip: null,
+    };
+  }
+
+  const label = unavailableLabel(value.reasons);
+  return { available: false, label, tone: "flat", tooltip: label };
+}
+
+function joinedReasons(
+  reasons: string[],
+  label: (code: string) => string,
+): string {
+  return reasons.length > 0 ? reasons.map(label).join(", ") : "Unavailable";
+}
+
+function hasNoPriceSource(row: OpportunityRow): boolean {
+  return (
+    row.price_change.status === "unavailable" &&
+    row.price_change.reasons.includes("no_price_source")
+  );
+}
+
+function contextViewModel(row: OpportunityRow) {
+  // A holding without a price source reports its other values as missing a
+  // price; naming the cause once reads better than a generic reason.
+  const noPriceSource = hasNoPriceSource(row);
+  const reasonText = (label: (code: string) => string) => (reasons: string[]) =>
+    noPriceSource ? "No price source" : joinedReasons(reasons, label);
+
+  return {
+    vsAverage: percentViewModel(
+      row.price_vs_average_percent,
+      reasonText(priceVersusAverageReasonLabel),
+    ),
+    belowAverage: row.below_average === true,
+    gain: percentViewModel(
+      row.unrealized_gain_percent,
+      reasonText(reasonLabel),
+    ),
+    gainFreshness:
+      row.unrealized_gain_freshness === null
+        ? null
+        : {
+            kind: freshnessKind(row.unrealized_gain_freshness),
+            label: freshnessLabel(row.unrealized_gain_freshness),
+          },
+    targetBar: targetGapBar(row.conviction_target),
+  };
+}
+
 function rowViewModel(
   row: OpportunityRow,
   periodStart: string,
@@ -210,6 +305,7 @@ function rowViewModel(
         change.end_close,
       )}`,
       latestPrice,
+      ...contextViewModel(row),
     };
   }
 
@@ -224,6 +320,7 @@ function rowViewModel(
     changeTone: "flat",
     changeTooltip: label,
     latestPrice,
+    ...contextViewModel(row),
   };
 }
 

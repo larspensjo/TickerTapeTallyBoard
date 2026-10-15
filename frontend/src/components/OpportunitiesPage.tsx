@@ -11,10 +11,12 @@ import { LedgerEntryInvitation } from "./LedgerEntryInvitation";
 import {
   buildOpportunitiesViewModel,
   type OpportunityLatestPriceViewModel,
+  type OpportunityPercentViewModel,
   opportunityOrderOptions,
   opportunityWindowOptions,
 } from "./opportunitiesViewModel";
 import { isOneOf, loadSetting, saveSetting } from "./persistence";
+import { TargetGapBarView } from "./TargetGapBarView";
 import { useAppMode } from "./useAppMode";
 import { StaleSignal } from "./valuationDisplay";
 
@@ -186,55 +188,109 @@ export function OpportunitiesPage() {
         ) : null}
 
         {viewModel.status === "available" ? (
-          <div className="table-wrap">
-            <table aria-label="Opportunities">
-              <thead>
-                <tr>
-                  <th>Instrument</th>
-                  <th className="number-head">{viewModel.changeColumnLabel}</th>
-                  <th className="number-head">Latest price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {viewModel.rows.map((row) => (
-                  <tr key={row.instrument.id}>
-                    <td>
-                      <InstrumentCell
-                        instrumentId={row.instrument.id}
-                        name={row.instrument.name}
-                        symbol={row.instrument.symbol}
-                        exchange={row.instrument.exchange}
-                      />
-                    </td>
-                    <td className="number">
-                      {row.changeAvailable ? (
-                        <span
-                          className={`number ${row.changeTone}`}
-                          title={row.changeTooltip}
-                        >
-                          {row.changeLabel}
-                        </span>
-                      ) : (
-                        <span
-                          className="status-chip compact"
-                          title={row.changeTooltip}
-                        >
-                          {row.changeLabel}
-                        </span>
-                      )}
-                    </td>
-                    <td className="number">
-                      {row.latestPrice ? latestPriceCell(row.latestPrice) : "—"}
-                    </td>
+          <>
+            <div className="table-wrap">
+              <table aria-label="Opportunities">
+                <thead>
+                  <tr>
+                    <th>Instrument</th>
+                    <th className="number-head">
+                      {viewModel.changeColumnLabel}
+                    </th>
+                    <th className="number-head">Latest price</th>
+                    <th className="number-head">Vs your average price</th>
+                    <th className="number-head">
+                      Your gain incl. fees &amp; currency
+                    </th>
+                    <th className="number-head">Vs target</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {viewModel.rows.map((row) => (
+                    <tr key={row.instrument.id}>
+                      <td>
+                        <InstrumentCell
+                          instrumentId={row.instrument.id}
+                          name={row.instrument.name}
+                          symbol={row.instrument.symbol}
+                          exchange={row.instrument.exchange}
+                        />
+                      </td>
+                      <td className="number">
+                        {row.changeAvailable ? (
+                          <span
+                            className={`number ${row.changeTone}`}
+                            title={row.changeTooltip}
+                          >
+                            {row.changeLabel}
+                          </span>
+                        ) : (
+                          <span
+                            className="status-chip compact"
+                            title={row.changeTooltip}
+                          >
+                            {row.changeLabel}
+                          </span>
+                        )}
+                      </td>
+                      <td className="number">
+                        {row.latestPrice
+                          ? latestPriceCell(row.latestPrice)
+                          : "—"}
+                      </td>
+                      <td className="number">
+                        <span className="opportunities-context">
+                          {percentCell(row.vsAverage)}
+                          {row.belowAverage ? (
+                            <span className="status-chip compact">
+                              Below your average
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td className="number">
+                        <span className="opportunities-context">
+                          {percentCell(row.gain)}
+                          {row.gainFreshness ? (
+                            <StaleSignal
+                              kind={row.gainFreshness.kind}
+                              label={row.gainFreshness.label}
+                            />
+                          ) : null}
+                        </span>
+                      </td>
+                      <td className="number">
+                        {row.targetBar ? (
+                          <TargetGapBarView bar={row.targetBar} />
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="opportunities-note">
+              Price change compares closing share prices in each asset's own
+              currency. Dividends are not added back, so a share can look like
+              it fell on the day it starts trading without its dividend.
+            </p>
+          </>
         ) : null}
       </article>
     </section>
   );
+}
+
+function percentCell(value: OpportunityPercentViewModel) {
+  if (!value.available) {
+    return (
+      <span className="status-chip compact" title={value.tooltip ?? undefined}>
+        {value.label}
+      </span>
+    );
+  }
+
+  return <span className={`number ${value.tone}`}>{value.label}</span>;
 }
 
 function latestPriceCell(price: OpportunityLatestPriceViewModel) {

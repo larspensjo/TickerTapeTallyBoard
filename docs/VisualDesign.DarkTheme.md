@@ -167,6 +167,21 @@ transaction" is a secondary button in the Transactions panel header.
 filter input (`--surface-2`) and neutral type chips (Buy/Sell/Split use neutral
 chips, **not** semantic colors — a Sell is not "bad").
 
+**Opportunities table** — the density spec above, read-only, no column-header
+sorting. The panel header carries two segmented controls: the window ("1 week",
+"2 weeks", "30 days") and the order ("Biggest fallers", "Biggest risers"); the
+period subtitle under the title is `--text-muted`, replaced by a neutral
+"Updating…" chip while the rows shown belong to another window. Percent columns
+use plain-sign colouring; an unavailable value is a neutral chip with its
+plain-language reason. "Below your average" is a neutral status chip beside the
+vs-average percent, not a semantic soft chip (the number already carries the
+sign colour). Stale signals use the minor clock icon or the `--warning-soft`
+chip: on the latest price from its own freshness, and separately beside the SEK
+gain when its price or exchange rate is stale. "Vs target" reuses the Holdings
+diverging target-gap bar and tooltip, blank without a target. A muted 12px
+footnote under the table explains that changes are native-currency closes
+without dividends added back.
+
 **Transaction form** — inputs on `--surface-2`, `--radius-md`, 1px `--hairline`;
 labels in Label-strong/`--text-muted`; focus = 1.5px `--accent` border + soft
 ring. Primary submit is the accent pill.

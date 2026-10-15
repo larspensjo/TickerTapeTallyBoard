@@ -584,6 +584,18 @@ measurement). Growth is a defect to fix in this phase.
 
 ### Phase 4 — Frontend: average-price, gain and target context
 
+**Status: implemented and verified (2026-10-15); human testing below still
+recommended (Lars).** Implemented by a Claude agent (Codex was unavailable on
+this machine). Targeted Opportunities tests 34 passed; `npm run check` clean
+(tsc, Biome, 49 files / 544 tests); `npm run fmt` applied. Routine choices made:
+when a row has `no_price_source`, both the vs-average and the SEK gain cells read
+"No price source" rather than their generic missing-price reasons; vs-average
+reasons read "No price yet" / "Price in another currency" / "Average price is
+zero"; SEK gain reasons reuse the Holdings reason labels; unavailable values are
+neutral chips with the reason, as for the change column; the SEK gain keeps the
+backend's `-0.00` with flat colour; the footnote sits under the table, outside
+the scroll area.
+
 Changes:
 
 - View-model rows gain: vs-average label/tone and `belowAverage` (from the

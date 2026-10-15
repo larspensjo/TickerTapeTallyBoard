@@ -324,3 +324,214 @@ describe("buildOpportunitiesViewModel", () => {
     ).toMatchObject({ status: "loading", rows: [] });
   });
 });
+
+describe("opportunity context columns", () => {
+  function contextRow(
+    symbol: string,
+    overrides: Partial<OpportunityRow>,
+  ): OpportunityRow {
+    return { ...opportunityRow(symbol, "-1.00"), ...overrides };
+  }
+
+  function rowsFor(rows: OpportunityRow[]) {
+    const model = buildOpportunitiesViewModel({
+      response: response(rows),
+      requestedWindow: "7d",
+      order: "fallers_first",
+      isError: false,
+      errorMessage: null,
+    });
+    return new Map(model.rows.map((row) => [row.instrument.symbol, row]));
+  }
+
+  it("takes the below-average marker from the backend flag, not the rounded percent", () => {
+    const rows = rowsFor([
+      contextRow("HAIR", {
+        price_vs_average_percent: { status: "available", value: "0.00" },
+        below_average: true,
+      }),
+      contextRow("EQUAL", {
+        price_vs_average_percent: { status: "available", value: "0.00" },
+        below_average: false,
+      }),
+      contextRow("NONE", {
+        price_vs_average_percent: {
+          status: "unavailable",
+          reasons: ["price_currency_mismatch"],
+        },
+        below_average: null,
+      }),
+    ]);
+
+    expect(rows.get("HAIR")).toMatchObject({
+      belowAverage: true,
+      vsAverage: { available: true, label: "0.00%", tone: "flat" },
+    });
+    expect(rows.get("EQUAL")?.belowAverage).toBe(false);
+    expect(rows.get("NONE")?.belowAverage).toBe(false);
+  });
+
+  it("colours vs-average and gain by plain sign", () => {
+    const rows = rowsFor([
+      contextRow("BELOW", {
+        price_vs_average_percent: { status: "available", value: "-5.12" },
+        unrealized_gain_percent: { status: "available", value: "-6.03" },
+      }),
+      contextRow("ABOVE", {
+        price_vs_average_percent: { status: "available", value: "10.00" },
+        unrealized_gain_percent: { status: "available", value: "79.95" },
+      }),
+      contextRow("TINY", {
+        unrealized_gain_percent: { status: "available", value: "-0.00" },
+      }),
+    ]);
+
+    expect(rows.get("BELOW")?.vsAverage).toMatchObject({
+      label: "-5.12%",
+      tone: "down",
+    });
+    expect(rows.get("BELOW")?.gain).toMatchObject({
+      label: "-6.03%",
+      tone: "down",
+    });
+    expect(rows.get("ABOVE")?.vsAverage).toMatchObject({
+      label: "+10.00%",
+      tone: "up",
+    });
+    expect(rows.get("ABOVE")?.gain).toMatchObject({
+      label: "+79.95%",
+      tone: "up",
+    });
+    expect(rows.get("TINY")?.gain).toMatchObject({
+      label: "-0.00%",
+      tone: "flat",
+    });
+  });
+
+  it("explains unavailable vs-average and gain values in plain language", () => {
+    const rows = rowsFor([
+      contextRow("CURRENCY", {
+        price_vs_average_percent: {
+          status: "unavailable",
+          reasons: ["price_currency_mismatch"],
+        },
+        unrealized_gain_percent: {
+          status: "unavailable",
+          reasons: ["missing_fx"],
+        },
+      }),
+      contextRow("ZERO", {
+        price_vs_average_percent: {
+          status: "unavailable",
+          reasons: ["zero_average_cost"],
+        },
+      }),
+      contextRow("UNMAPPED", {
+        price_change: { status: "unavailable", reasons: ["no_price_source"] },
+        latest_close: null,
+        price_vs_average_percent: {
+          status: "unavailable",
+          reasons: ["missing_latest_close"],
+        },
+        below_average: null,
+        unrealized_gain_percent: {
+          status: "unavailable",
+          reasons: ["missing_price"],
+        },
+        unrealized_gain_freshness: null,
+      }),
+    ]);
+
+    expect(rows.get("CURRENCY")?.vsAverage).toMatchObject({
+      available: false,
+      label: "Price in another currency",
+    });
+    expect(rows.get("CURRENCY")?.gain).toMatchObject({
+      available: false,
+      label: "Missing FX",
+    });
+    expect(rows.get("ZERO")?.vsAverage.label).toBe("Average price is zero");
+    expect(rows.get("UNMAPPED")?.vsAverage.label).toBe("No price source");
+    expect(rows.get("UNMAPPED")?.gain).toMatchObject({
+      available: false,
+      label: "No price source",
+    });
+  });
+
+  it("signals the gain's own freshness separately from the latest price", () => {
+    const rows = rowsFor([
+      contextRow("STALEFX", {
+        unrealized_gain_freshness: "warning_stale_8_days",
+      }),
+      contextRow("MINORFX", {
+        unrealized_gain_freshness: "minor_stale_1_days",
+      }),
+      contextRow("FRESH", { unrealized_gain_freshness: "fresh" }),
+      contextRow("NOPAIR", { unrealized_gain_freshness: null }),
+    ]);
+
+    expect(rows.get("STALEFX")?.gainFreshness).toEqual({
+      kind: "warning_stale",
+      label: "Stale 8 days",
+    });
+    expect(rows.get("STALEFX")?.latestPrice?.freshnessKind).toBe("fresh");
+    expect(rows.get("MINORFX")?.gainFreshness?.kind).toBe("minor_stale");
+    expect(rows.get("FRESH")?.gainFreshness?.kind).toBe("fresh");
+    expect(rows.get("NOPAIR")?.gainFreshness).toBeNull();
+  });
+
+  it("draws the target bar only when a gap can be computed", () => {
+    const unavailable = {
+      status: "unavailable" as const,
+      reasons: ["no_target"],
+    };
+    const rows = rowsFor([
+      contextRow("ONTARGET", {}),
+      contextRow("ABOVE", {
+        conviction_target: {
+          conviction: "High",
+          status: "above",
+          target_value_base: { status: "available", value: "900.00" },
+          target_gap_base: { status: "available", value: "300.00" },
+          target_gap_percent: { status: "available", value: "33.33" },
+        },
+      }),
+      contextRow("NOTARGET", {
+        conviction_target: {
+          conviction: "Other",
+          status: "no_target",
+          target_value_base: unavailable,
+          target_gap_base: unavailable,
+          target_gap_percent: unavailable,
+        },
+      }),
+      contextRow("EXCLUDED", {
+        conviction_target: {
+          conviction: "High",
+          status: "excluded_unavailable",
+          target_value_base: unavailable,
+          target_gap_base: unavailable,
+          target_gap_percent: unavailable,
+        },
+      }),
+      contextRow("UNAVAILABLE", {
+        conviction_target: {
+          conviction: "High",
+          status: "unavailable",
+          target_value_base: unavailable,
+          target_gap_base: unavailable,
+          target_gap_percent: unavailable,
+        },
+      }),
+    ]);
+
+    expect(rows.get("ONTARGET")?.targetBar?.side).toBe("on_target");
+    expect(rows.get("ABOVE")?.targetBar).toMatchObject({ side: "above" });
+    expect(rows.get("ABOVE")?.targetBar?.tooltip).toContain(
+      "Gap SEK 300.00 (33.33%)",
+    );
+    expect(rows.get("NOTARGET")?.targetBar).toBeNull();
+    expect(rows.get("EXCLUDED")?.targetBar).toBeNull();
+    expect(rows.get("UNAVAILABLE")?.targetBar).toBeNull();
+  });
+});
