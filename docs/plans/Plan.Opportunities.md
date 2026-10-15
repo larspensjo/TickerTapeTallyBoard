@@ -329,6 +329,14 @@ Verification commands (from `Agents.md`):
 
 ### Phase 1 — Backend: recent price change domain and the Opportunities endpoint
 
+**Status: done (2026-10-15).** Implemented, reviewed and verified (backend build,
+647 tests, clippy `-D warnings`, `cargo fmt`). Notes for later phases: the SEK
+gain percent reuses the Holdings formatter, so it keeps Holdings' `-0.00` for
+tiny negative gains; `unrealized_gain_freshness` is `null` whenever the gain has
+no price+FX pair (not only for unmapped holdings); unmapped holdings report the
+gain as unavailable `missing_price`, so Phase 4 labels that cell from the row's
+`no_price_source` instead.
+
 Changes:
 
 - New pure module `backend/src/domain/recent_price_change.rs` (no I/O, no axum/sqlx):

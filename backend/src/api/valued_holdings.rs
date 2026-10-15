@@ -9,13 +9,15 @@ use crate::api::valuation::load_valuation_inputs;
 use crate::db::{instruments, transactions};
 use crate::domain::{
     derive_position, value_position, Availability, ConvictionLevel, ConvictionTargetInput,
-    FxSnapshot, MarketValueState, Position, PriceSnapshot, ValuationReason, ValuedHolding,
+    FxSnapshot, LedgerTransaction, MarketValueState, Position, PriceSnapshot, ValuationReason,
+    ValuedHolding,
 };
 
 #[derive(Debug)]
 pub(crate) struct ValuedOpenHolding {
     pub(crate) instrument: instruments::InstrumentRow,
     pub(crate) position: Position,
+    pub(crate) ledger: Vec<LedgerTransaction>,
     pub(crate) conviction: ConvictionLevel,
     pub(crate) valuation: Option<ValuedHolding>,
 }
@@ -112,6 +114,7 @@ pub async fn load_valued_holdings(
         holdings.push(ValuedOpenHolding {
             instrument: instrument.clone(),
             position,
+            ledger,
             conviction,
             valuation,
         });

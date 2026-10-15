@@ -17,6 +17,7 @@ mod position;
 mod price_history;
 mod price_resolution;
 mod rebalance;
+mod recent_price_change;
 mod transaction;
 mod valuation;
 mod valuation_summary;
@@ -47,6 +48,11 @@ pub use price_resolution::{
 pub use rebalance::{
     build_ladder, CandidateBalance, PlannedTrade, RankBy, RebalanceCandidate, RebalanceLadder,
     RebalanceRung, RebalanceUnavailable, TradeSide, UntradedCandidate, UntradedReason,
+};
+#[allow(unused_imports)]
+pub use recent_price_change::{
+    price_versus_average, recent_price_change, PriceVersusAverage, PriceVersusAverageReason,
+    RecentChangeReason, RecentPriceChange, RecentWindow, START_CLOSE_MAX_AGE_TRADING_DAYS,
 };
 #[allow(unused_imports)]
 pub use transaction::{

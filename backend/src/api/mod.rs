@@ -1,4 +1,5 @@
 pub mod body_limits;
+mod conviction_target;
 mod cors;
 mod data_version;
 mod error;
@@ -10,6 +11,7 @@ mod import;
 mod instrument_lookup;
 mod instrument_prices;
 mod instruments;
+mod opportunities;
 mod portfolio;
 mod prices;
 mod provider_symbols;
@@ -108,6 +110,7 @@ fn api_router() -> Router<AppState> {
         .route("/data-version", get(data_version::handler))
         .route("/portfolio/value-history", get(portfolio::value_history))
         .route("/rebalance", get(rebalance::handler))
+        .route("/opportunities", get(opportunities::handler))
         .route("/holdings", get(holdings::list))
         .route("/gains", get(gains::list))
         .route(

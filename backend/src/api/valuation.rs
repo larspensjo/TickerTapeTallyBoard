@@ -242,6 +242,11 @@ pub(super) fn fx_snapshot_response(snapshot: &crate::domain::FxSnapshot) -> FxSn
     }
 }
 
+// Preserve Holdings' gain-percent display, including a rounded negative zero.
+pub(super) fn gain_percent_string(value: &Decimal) -> String {
+    format!("{value:.2}")
+}
+
 pub(super) fn money_string(value: Decimal) -> String {
     let rounded = value.round_dp(2);
     if rounded.is_zero() {
