@@ -6,6 +6,11 @@ use super::{PriceCandidate, PriceSnapshot};
 
 pub const START_CLOSE_MAX_AGE_TRADING_DAYS: i64 = 3;
 
+/// Calendar days of closes ending today that every window's start close can
+/// come from: the longest window plus a margin wider than the start-close
+/// tolerance's calendar span (5 days for the current 3-weekday tolerance).
+pub const RECENT_CHANGE_HISTORY_DAYS: i64 = RecentWindow::ThirtyDays.days() + 7;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecentWindow {
     OneWeek,
@@ -14,7 +19,7 @@ pub enum RecentWindow {
 }
 
 impl RecentWindow {
-    pub fn days(self) -> i64 {
+    pub const fn days(self) -> i64 {
         match self {
             Self::OneWeek => 7,
             Self::TwoWeeks => 14,
@@ -249,6 +254,32 @@ mod tests {
                 );
             } else {
                 assert_reason(change, RecentChangeReason::StartCloseTooOld);
+            }
+        }
+    }
+
+    #[test]
+    fn history_covers_the_oldest_acceptable_start_close_of_every_window() {
+        // A Monday-to-Sunday cycle of `today` covers every weekday alignment.
+        let monday = date("2026-10-12");
+        for offset in 0..7 {
+            let today = monday + Duration::days(offset);
+            for window in [
+                RecentWindow::OneWeek,
+                RecentWindow::TwoWeeks,
+                RecentWindow::ThirtyDays,
+            ] {
+                let period_start = window.start_date(today);
+                let mut oldest = period_start;
+                while trading_days_stale(period_start, oldest - Duration::days(1))
+                    <= START_CLOSE_MAX_AGE_TRADING_DAYS
+                {
+                    oldest -= Duration::days(1);
+                }
+                assert!(
+                    (today - oldest).num_days() <= RECENT_CHANGE_HISTORY_DAYS,
+                    "{window:?} from {today} accepts a start close on {oldest}"
+                );
             }
         }
     }

@@ -30,7 +30,11 @@ pub use super::refresh_contract::{
     SymbolSearchLookupStatus,
 };
 
-const LATEST_REFRESH_WINDOW_DAYS: i64 = 14;
+/// A latest refresh re-fetches every close a recent-price-change window can
+/// read, so those closes are revisited (including split-adjusted replacements
+/// of pre-split closes). Providers are still asked once per mapping or
+/// currency; a longer window only means larger responses and more upserts.
+const LATEST_REFRESH_WINDOW_DAYS: i64 = crate::domain::RECENT_CHANGE_HISTORY_DAYS;
 const REFRESH_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Clone)]
 pub struct MarketDataService {

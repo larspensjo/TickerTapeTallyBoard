@@ -52,7 +52,8 @@ pub use rebalance::{
 #[allow(unused_imports)]
 pub use recent_price_change::{
     price_versus_average, recent_price_change, PriceVersusAverage, PriceVersusAverageReason,
-    RecentChangeReason, RecentPriceChange, RecentWindow, START_CLOSE_MAX_AGE_TRADING_DAYS,
+    RecentChangeReason, RecentPriceChange, RecentWindow, RECENT_CHANGE_HISTORY_DAYS,
+    START_CLOSE_MAX_AGE_TRADING_DAYS,
 };
 #[allow(unused_imports)]
 pub use transaction::{

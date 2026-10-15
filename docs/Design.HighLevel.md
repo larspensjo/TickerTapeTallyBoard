@@ -89,7 +89,7 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
   curl.exe -X POST "http://localhost:8480/api/prices/refresh" -H "Content-Type: application/json" -d '{"mode":"backfill"}'
   ```
 
-  The app-bar **Refresh** button (accessible name "Refresh prices") sends `mode: "latest"` and fills only the 14-calendar-day window ending today.
+  The app-bar **Refresh** button (accessible name "Refresh prices") sends `mode: "latest"` and fills only the 37-calendar-day window ending today, which covers the Opportunities page's longest period (30 days) plus its start-close tolerance; the length is that period plus a fixed margin kept wider than the tolerance.
 - Fetched data is cached in SQLite and valuation reads the stored rows; refreshes fetch each enabled provider mapping and upsert its returned rows. Refresh runs as a background job at application launch and on demand from the manual refresh action; there is no scheduled fetch.
 
 ### Sharesight import

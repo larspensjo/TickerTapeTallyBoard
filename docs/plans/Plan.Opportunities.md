@@ -440,6 +440,16 @@ Verify (repository root): `cargo build -p ticker-tape-tally-board-backend`,
 
 ### Phase 2 — Backend: the latest refresh covers the longest window
 
+**Status: implemented and verified (2026-10-15); refresh-duration measurement
+pending (Lars).** Implemented by Claude (the Codex sandbox could not start on
+this machine) and reviewed by an independent Opus pass; backend build, 650
+tests, clippy `-D warnings`, `cargo fmt` all clean. Review follow-ups applied:
+Entry B and the Design sentence now say the 37 days are the longest period plus
+a fixed margin that a test keeps wider than the tolerance (only the 30 is
+derived in code), and the default backfill window has a request test. The
+measurement below is still to do: compare one launch refresh on `d4d0db8` with
+one on this commit.
+
 Changes:
 
 - `domain/recent_price_change.rs`: `RECENT_CHANGE_HISTORY_DAYS` = the longest

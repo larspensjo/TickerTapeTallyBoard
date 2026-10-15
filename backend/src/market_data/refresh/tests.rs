@@ -347,6 +347,92 @@ async fn backfill_refresh_uses_earliest_transaction_date() {
     assert_eq!(response.fx_rates_written, 1);
 }
 
+async fn requested_windows(
+    mode: RefreshMode,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> (Vec<(NaiveDate, NaiveDate)>, Vec<(NaiveDate, NaiveDate)>) {
+    let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
+    price_provider.push_response(Ok(Vec::new()));
+    let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+    fx_provider.push_response(Ok(Vec::new()));
+    let (pool, service) = test_state(price_provider.clone(), fx_provider.clone()).await;
+    let msft = instrument(&pool, "MSFT", "NASDAQ", "USD").await;
+    buy(&pool, msft, "2026-08-03", 10, "100", "USD", Some("10")).await;
+    map_yahoo_symbol(&pool, msft, "MSFT", true).await;
+
+    let trigger = match mode {
+        RefreshMode::Latest => RefreshTrigger::Manual,
+        RefreshMode::Backfill => RefreshTrigger::Backfill,
+    };
+    service
+        .refresh(
+            &pool,
+            &Clock::fixed(NaiveDate::from_ymd_opt(2026, 10, 15).expect("date")),
+            trigger,
+            RefreshPricesRequest {
+                mode,
+                start_date: start_date.map(str::to_owned),
+                end_date: end_date.map(str::to_owned),
+            },
+        )
+        .await
+        .expect("refresh should complete");
+
+    let prices = price_provider
+        .calls()
+        .into_iter()
+        .map(|call| (call.start, call.end))
+        .collect();
+    let fx = fx_provider
+        .calls()
+        .into_iter()
+        .map(|call| (call.start, call.end))
+        .collect();
+    (prices, fx)
+}
+
+#[tokio::test]
+async fn latest_refresh_requests_the_recent_change_history_window() {
+    let today = NaiveDate::from_ymd_opt(2026, 10, 15).expect("date");
+    let expected = (NaiveDate::from_ymd_opt(2026, 9, 8).expect("date"), today);
+    assert_eq!(
+        (today - expected.0).num_days(),
+        domain::RECENT_CHANGE_HISTORY_DAYS
+    );
+
+    let (prices, fx) = requested_windows(RefreshMode::Latest, None, None).await;
+
+    assert_eq!(prices, vec![expected]);
+    assert_eq!(fx, vec![expected]);
+}
+
+#[tokio::test]
+async fn backfill_refresh_window_is_unaffected_by_the_latest_window() {
+    let (prices, fx) = requested_windows(
+        RefreshMode::Backfill,
+        Some("2026-08-03"),
+        Some("2026-08-10"),
+    )
+    .await;
+
+    let expected = (
+        NaiveDate::from_ymd_opt(2026, 8, 3).expect("date"),
+        NaiveDate::from_ymd_opt(2026, 8, 10).expect("date"),
+    );
+    assert_eq!(prices, vec![expected]);
+    assert_eq!(fx, vec![expected]);
+
+    let (prices, fx) = requested_windows(RefreshMode::Backfill, None, None).await;
+
+    let default_window = (
+        NaiveDate::from_ymd_opt(2026, 8, 3).expect("date"),
+        NaiveDate::from_ymd_opt(2026, 10, 15).expect("date"),
+    );
+    assert_eq!(prices, vec![default_window]);
+    assert_eq!(fx, vec![default_window]);
+}
+
 #[tokio::test]
 async fn unmapped_instruments_are_reported() {
     let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
