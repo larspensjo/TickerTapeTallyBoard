@@ -634,3 +634,11 @@ to reconfirm them.
    line segment (its markers still show), and a buy on a day that ends flat
    gets no "Avg after" row. This is consistent with the accepted same-day
    close-and-reopen limitation; Phase 1 counts occurrences.
+
+## Outcome (2026-10-16)
+
+All phases landed on main. Lars tested the running average cost step line on
+the real ledger and accepted it: "works just the way I wanted". After the
+rendered check, one display refinement was made: the last "Avg after" row shows
+the Holdings average text (DecisionLog 2026-10-16 refinement of 2026-07-15).
+The plan is closed.
