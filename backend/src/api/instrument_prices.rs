@@ -8,8 +8,11 @@ use crate::api::error::ApiError;
 use crate::api::valuation::{
     money_string, serialize_availability, AvailabilityResponse, BASE_CURRENCY,
 };
-use crate::db::{fx_rates, instruments};
-use crate::domain::{build_price_history, FxApplied, FxCandidate, PricePoint};
+use crate::db::{fx_rates, instruments, transactions};
+use crate::domain::{
+    build_price_history, running_average_cost, AverageCostSegment, FxApplied, FxCandidate,
+    PricePoint, RunningAverageCost,
+};
 use crate::market_data::effective_prices;
 use crate::providers::BASE_FX_PROVIDER;
 use crate::state::AppState;
@@ -26,6 +29,28 @@ pub struct PriceHistoryResponse {
     currency: String,
     base_currency: String,
     points: Vec<PricePointResponse>,
+    running_average_cost: RunningAverageCostResponse,
+}
+
+/// The instrument's running average native cost over its whole ledger,
+/// independent of the requested price window.
+#[derive(Debug, Serialize)]
+pub struct RunningAverageCostResponse {
+    segments: Vec<AverageCostSegmentResponse>,
+    /// The open position's native average as Holdings formats it; null when flat.
+    current_average: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AverageCostSegmentResponse {
+    steps: Vec<AverageCostStepResponse>,
+    closed_on: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AverageCostStepResponse {
+    date: String,
+    average: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,9 +74,36 @@ fn parse_date(s: &str, field: &str) -> Result<NaiveDate, ApiError> {
         .map_err(|_| ApiError::bad_request("invalid_date", format!("invalid {field}: {s}")))
 }
 
-/// Full stored precision for native price and FX rate (never money_string).
+/// Full stored precision for native values: prices, FX rates and plotted
+/// averages (never money_string).
 fn precise_string(value: Decimal) -> String {
     value.normalize().to_string()
+}
+
+/// Decimal places kept for plotted averages, bounding repeating quotients.
+const AVERAGE_DECIMAL_PLACES: u32 = 10;
+
+fn running_average_cost_response(running: &RunningAverageCost) -> RunningAverageCostResponse {
+    RunningAverageCostResponse {
+        segments: running.segments.iter().map(segment_response).collect(),
+        current_average: running.current_average_native.map(money_string),
+    }
+}
+
+fn segment_response(segment: &AverageCostSegment) -> AverageCostSegmentResponse {
+    AverageCostSegmentResponse {
+        steps: segment
+            .steps
+            .iter()
+            .map(|step| AverageCostStepResponse {
+                date: step.date.format("%Y-%m-%d").to_string(),
+                average: precise_string(step.average_native.round_dp(AVERAGE_DECIMAL_PLACES)),
+            })
+            .collect(),
+        closed_on: segment
+            .closed_on
+            .map(|date| date.format("%Y-%m-%d").to_string()),
+    }
 }
 
 fn point_response(point: &PricePoint) -> PricePointResponse {
@@ -119,11 +171,21 @@ pub async fn list(
 
     let points = build_price_history(&instrument.currency, &price_candidates, &fx_candidates);
 
+    let ledger = transactions::ledger_for_instrument(&state.pool, id).await?;
+    let running = running_average_cost(&ledger).map_err(|err| {
+        ApiError::internal(format!(
+            "price-history: running average cost derivation failed for instrument {id}: {} at transaction {}",
+            err.code(),
+            err.transaction_id()
+        ))
+    })?;
+
     Ok(Json(PriceHistoryResponse {
         instrument_id: id,
         currency: instrument.currency.clone(),
         base_currency: BASE_CURRENCY.to_string(),
         points: points.iter().map(point_response).collect(),
+        running_average_cost: running_average_cost_response(&running),
     }))
 }
 
@@ -152,7 +214,8 @@ fn fx_candidate(row: fx_rates::FxRateRow) -> Result<FxCandidate, ApiError> {
 mod tests {
     use crate::api::router;
     use crate::api::valuation::BASE_CURRENCY;
-    use crate::db::{fx_rates, instruments, prices, provider_symbols};
+    use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
+    use crate::domain::TransactionKind;
     use crate::import::now_iso8601;
     use crate::providers::{BASE_FX_PROVIDER, PRICE_PROVIDER_PRECEDENCE};
     use crate::state::AppState;
@@ -261,6 +324,66 @@ mod tests {
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).expect("valid date")
+    }
+
+    /// Insert a ledger row directly through the repository, bypassing write
+    /// validation. `quantity` is the signed position effect.
+    async fn seed_transaction(
+        state: &AppState,
+        instrument_id: i64,
+        kind: TransactionKind,
+        trade_date: NaiveDate,
+        quantity: i64,
+        price: Option<rust_decimal::Decimal>,
+    ) -> i64 {
+        transactions::insert(
+            &state.pool,
+            &transactions::NewTransaction {
+                instrument_id,
+                kind,
+                trade_date,
+                quantity,
+                price,
+                dividend_per_share: None,
+                currency: Some("USD".to_owned()),
+                fx_rate_to_base: Some(dec!(10)),
+                brokerage: None,
+                note: None,
+            },
+        )
+        .await
+        .expect("transaction insert should succeed")
+        .id
+    }
+
+    async fn buy(
+        state: &AppState,
+        id: i64,
+        date: NaiveDate,
+        qty: i64,
+        price: rust_decimal::Decimal,
+    ) {
+        seed_transaction(state, id, TransactionKind::Buy, date, qty, Some(price)).await;
+    }
+
+    async fn sell(
+        state: &AppState,
+        id: i64,
+        date: NaiveDate,
+        qty: i64,
+        price: rust_decimal::Decimal,
+    ) -> i64 {
+        seed_transaction(state, id, TransactionKind::Sell, date, -qty, Some(price)).await
+    }
+
+    async fn running_average(state: &AppState, id: i64) -> serde_json::Value {
+        let (status, body) = send(state, &format!("/api/instruments/{id}/prices")).await;
+        assert_eq!(status, StatusCode::OK);
+        body["running_average_cost"].clone()
+    }
+
+    fn segments(block: &serde_json::Value) -> &Vec<serde_json::Value> {
+        block["segments"].as_array().expect("segments array")
     }
 
     #[tokio::test]
@@ -379,5 +502,170 @@ mod tests {
         assert_eq!(point["date"], "2026-06-20");
         assert_eq!(point["close_base"]["value"], "1000.00");
         assert_eq!(point["fx"]["date"], "2026-06-01"); // prior rate's date proves carry-forward
+    }
+
+    #[tokio::test]
+    async fn open_position_with_two_buys_has_one_open_segment() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+        buy(&state, id, d(2025, 3, 2), 10, dec!(125)).await;
+
+        let block = running_average(&state, id).await;
+        assert_eq!(
+            block,
+            serde_json::json!({
+                "segments": [{
+                    "steps": [
+                        { "date": "2025-01-10", "average": "100" },
+                        { "date": "2025-03-02", "average": "112.5" }
+                    ],
+                    "closed_on": null
+                }],
+                "current_average": "112.50"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn midpoint_average_keeps_full_precision_and_matches_holdings_text() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 1, dec!(112.00)).await;
+        buy(&state, id, d(2025, 1, 11), 1, dec!(112.25)).await;
+
+        let block = running_average(&state, id).await;
+        let steps = segments(&block)[0]["steps"].as_array().expect("steps");
+        assert_eq!(steps.last().expect("last step")["average"], "112.125");
+        // Midpoint to even, as Holdings formats it; half-up would give 112.13.
+        assert_eq!(block["current_average"], "112.12");
+
+        let (status, holdings) = send(&state, "/api/holdings").await;
+        assert_eq!(status, StatusCode::OK);
+        let holding = &holdings["holdings"].as_array().expect("holdings")[0];
+        assert_eq!(holding["instrument"]["id"], id);
+        assert_eq!(block["current_average"], holding["average_cost_native"]);
+    }
+
+    #[tokio::test]
+    async fn close_and_reopen_starts_a_fresh_segment() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+        buy(&state, id, d(2025, 2, 10), 10, dec!(120)).await;
+        sell(&state, id, d(2025, 6, 20), 20, dec!(130)).await;
+        buy(&state, id, d(2025, 9, 1), 5, dec!(95.1)).await;
+
+        let block = running_average(&state, id).await;
+        let segs = segments(&block);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0]["closed_on"], "2025-06-20");
+        assert_eq!(segs[0]["steps"][1]["average"], "110");
+        assert!(segs[1]["closed_on"].is_null());
+        assert_eq!(
+            segs[1]["steps"],
+            serde_json::json!([{ "date": "2025-09-01", "average": "95.1" }])
+        );
+        // From the reopened position only, not blended with the first period.
+        assert_eq!(block["current_average"], "95.10");
+    }
+
+    #[tokio::test]
+    async fn sold_out_instrument_has_only_closed_segments_and_no_current_average() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+        sell(&state, id, d(2025, 3, 1), 4, dec!(110)).await;
+        sell(&state, id, d(2025, 4, 1), 6, dec!(120)).await;
+
+        let block = running_average(&state, id).await;
+        let segs = segments(&block);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0]["closed_on"], "2025-04-01");
+        assert!(block["current_average"].is_null());
+    }
+
+    #[tokio::test]
+    async fn split_adjusts_earlier_steps() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(300)).await;
+        // 4:1 split: 10 shares become 40.
+        seed_transaction(&state, id, TransactionKind::Split, d(2025, 2, 1), 30, None).await;
+        buy(&state, id, d(2025, 3, 1), 40, dec!(85)).await;
+
+        let block = running_average(&state, id).await;
+        let steps = segments(&block)[0]["steps"].as_array().expect("steps");
+        assert_eq!(steps[0]["average"], "75"); // 300 / 4
+        assert_eq!(steps[1]["average"], "80"); // (3000 + 3400) / 80
+        assert_eq!(block["current_average"], "80.00");
+    }
+
+    #[tokio::test]
+    async fn from_to_window_does_not_trim_segments() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+        sell(&state, id, d(2025, 2, 10), 10, dec!(110)).await;
+        buy(&state, id, d(2025, 9, 1), 10, dec!(90)).await;
+
+        let full = running_average(&state, id).await;
+        let (status, body) = send(
+            &state,
+            &format!("/api/instruments/{id}/prices?from=2025-08-01&to=2025-08-31"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["running_average_cost"], full);
+        assert_eq!(segments(&full).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn instrument_without_transactions_has_no_segments() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+
+        let block = running_average(&state, id).await;
+        assert_eq!(
+            block,
+            serde_json::json!({ "segments": [], "current_average": null })
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_or_disabled_mapping_still_serves_segments() {
+        let state = AppState::for_tests().await;
+        let unmapped = instrument(&state, "MSFT", "USD").await;
+        let disabled = instrument(&state, "AAPL", "USD").await;
+        enable_mapping(&state, disabled, false).await;
+        for id in [unmapped, disabled] {
+            seed_price(&state, id, d(2025, 1, 10), dec!(100), "USD").await;
+            buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+
+            let (status, body) = send(&state, &format!("/api/instruments/{id}/prices")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["points"].as_array().expect("points").len(), 0);
+            assert_eq!(segments(&body["running_average_cost"]).len(), 1);
+            assert_eq!(body["running_average_cost"]["current_average"], "100.00");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_stored_ledger_is_internal_error_naming_instrument_and_transaction() {
+        let state = AppState::for_tests().await;
+        let id = instrument(&state, "MSFT", "USD").await;
+        buy(&state, id, d(2025, 1, 10), 10, dec!(100)).await;
+        let bad = sell(&state, id, d(2025, 2, 10), 11, dec!(110)).await;
+
+        let (status, body) = send(&state, &format!("/api/instruments/{id}/prices")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"]["code"], "internal_error");
+        assert_eq!(
+            body["error"]["message"],
+            format!(
+                "price-history: running average cost derivation failed for instrument {id}: \
+                 sell_exceeds_position at transaction {bad}"
+            )
+        );
     }
 }
