@@ -147,6 +147,26 @@ export interface PriceHistoryResponse {
   currency: string;
   base_currency: string;
   points: PriceHistoryPoint[];
+  running_average_cost: RunningAverageCost;
+}
+
+/** End-of-day running weighted-average native cost per share after a buy day. */
+export interface RunningAverageCostStep {
+  date: string;
+  /** Native currency, split-adjusted, fees excluded. */
+  average: string;
+}
+
+/** One held period; `closed_on` is null while the position is still open. */
+export interface RunningAverageCostSegment {
+  steps: RunningAverageCostStep[];
+  closed_on: string | null;
+}
+
+export interface RunningAverageCost {
+  segments: RunningAverageCostSegment[];
+  /** Display text for the open position's native average (as Holdings shows it), or null when flat. */
+  current_average: string | null;
 }
 
 export interface ValueHistoryPoint {

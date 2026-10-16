@@ -42,20 +42,22 @@ import {
   targetStatusLabel,
 } from "./holdingsConviction";
 import {
+  averageAfterByDate,
   instrumentPriceSeries,
-  tradeMarkers,
+  priceChartMarkers,
 } from "./instrumentChartViewModel";
 import {
   effectivePriceSourceRow,
   type PriceSourceRow,
   priceSourceRows,
 } from "./priceSourceViewModel";
-import { type ChartTradeMarker, TimeSeriesChart } from "./TimeSeriesChart";
+import { TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
 import { useAppMode } from "./useAppMode";
 import {
   formatExchangeRate,
   formatGroupedNumber,
+  formatSignedQuantity,
   formatUnitPrice,
   freshnessLabel,
   freshnessTone,
@@ -532,16 +534,16 @@ function AssetPriceChart({
     () => firstTransactionDate(transactions),
     [transactions],
   );
-  const currency = query.data?.currency;
   const markers = useMemo(
     () =>
-      currency
-        ? [
-            ...tradeChartMarkers(transactions, currency),
-            ...splitChartMarkers(splitEvents(transactions)),
-          ]
+      query.data
+        ? priceChartMarkers(
+            transactions,
+            query.data.currency,
+            averageAfterByDate(query.data),
+          )
         : [],
-    [transactions, currency],
+    [transactions, query.data],
   );
 
   if (query.isPending) {
@@ -591,63 +593,6 @@ function AssetPriceChart({
       />
     </section>
   );
-}
-
-function tradeChartMarkers(
-  transactions: Transaction[],
-  currency: string,
-): ChartTradeMarker[] {
-  return tradeMarkers(transactions, currency).map((marker) => {
-    const rows = [
-      { label: "Date", value: marker.time },
-      {
-        label: "Quantity",
-        value: formatGroupedNumber(String(marker.quantity)),
-      },
-      {
-        label: "Avg price",
-        value: `${formatUnitPrice(marker.avgPrice)} ${marker.currency}`,
-      },
-    ];
-    if (marker.fee !== null && marker.feeCurrency !== null) {
-      rows.push({
-        label: "Fee",
-        value: `${formatGroupedNumber(marker.fee.toFixed(2))} ${marker.feeCurrency}`,
-      });
-    }
-
-    return {
-      time: marker.time,
-      side: marker.side,
-      price: marker.avgPrice,
-      title: marker.side === "buy" ? "Buy" : "Sell",
-      rows,
-    };
-  });
-}
-
-function splitChartMarkers(events: SplitEvent[]): ChartTradeMarker[] {
-  return events.map((event) => ({
-    time: event.tradeDate,
-    side: "split",
-    title: "Split",
-    rows: [
-      { label: "Date", value: event.tradeDate },
-      { label: "Ratio", value: event.ratioLabel },
-      {
-        label: "Before",
-        value: formatGroupedNumber(event.beforeQuantity),
-      },
-      {
-        label: "After",
-        value: formatGroupedNumber(event.afterQuantity),
-      },
-      {
-        label: "Delta",
-        value: formatSignedQuantity(event.quantityDelta),
-      },
-    ],
-  }));
 }
 
 function firstTransactionDate(transactions: Transaction[]): string | undefined {
@@ -748,13 +693,6 @@ function AssetDataMapping({
       </div>
     </section>
   );
-}
-
-function formatSignedQuantity(value: number): string {
-  const formatted = formatGroupedNumber(Math.abs(value));
-  if (value > 0) return `+${formatted}`;
-  if (value < 0) return `-${formatted}`;
-  return formatted;
 }
 
 function DataRow({ label, children }: { label: string; children: ReactNode }) {

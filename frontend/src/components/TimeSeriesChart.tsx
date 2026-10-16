@@ -21,6 +21,7 @@ import {
 } from "./chartTheme";
 import {
   calendarSpineData,
+  chartWindow,
   isoFromTime,
   type TimeSeriesPoint,
   tickMarkFormatter,
@@ -49,6 +50,18 @@ export type ChartTradeMarker =
   | (ChartMarkerBase & {
       side: "split";
     });
+
+/**
+ * A step-shaped line drawn as its own series, so separate lines never join
+ * across a gap. Only a line flagged `showLastValue` gets a right-axis tag;
+ * `lastValueLabel` is that tag's text when it must not be re-formatted.
+ */
+export interface ChartStepLine {
+  key: string;
+  points: TimeSeriesPoint[];
+  showLastValue: boolean;
+  lastValueLabel?: string;
+}
 
 interface TradeTooltipState {
   x: number;
@@ -177,9 +190,10 @@ export function TimeSeriesChart({
   }, [height, lineColor, topColor, bottomColor, compactValueAxis]);
 
   useEffect(() => {
-    const end = data.at(-1)?.time;
-    const rangeStart =
-      visibleStart && end && visibleStart <= end ? visibleStart : undefined;
+    const plotted = chartWindow(data, visibleStart);
+    const rangeStart = plotted?.startsAtVisibleStart
+      ? plotted.start
+      : undefined;
     const chartData = calendarSpineData(data, rangeStart);
 
     // A single-observation range (the Today preset) has no line to draw, so the
@@ -196,10 +210,10 @@ export function TimeSeriesChart({
       );
     }
 
-    if (rangeStart && end) {
+    if (plotted?.startsAtVisibleStart) {
       chartRef.current?.timeScale().setVisibleRange({
-        from: rangeStart,
-        to: end,
+        from: plotted.start,
+        to: plotted.end,
       });
     } else {
       chartRef.current?.timeScale().fitContent();

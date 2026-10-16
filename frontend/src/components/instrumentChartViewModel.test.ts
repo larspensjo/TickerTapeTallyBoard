@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { PriceHistoryResponse, Transaction } from "../api/types";
+import type {
+  PriceHistoryResponse,
+  RunningAverageCostSegment,
+  Transaction,
+} from "../api/types";
+import type { ChartWindow } from "./chartTimeAxis";
 import {
+  averageAfterByDate,
   instrumentPriceSeries,
+  priceChartMarkers,
+  runningAverageCostLine,
   tradeMarkers,
 } from "./instrumentChartViewModel";
 
@@ -11,7 +19,32 @@ function resp(points: PriceHistoryResponse["points"]): PriceHistoryResponse {
     currency: "USD",
     base_currency: "SEK",
     points,
+    running_average_cost: { segments: [], current_average: null },
   };
+}
+
+function withRunningAverage(
+  segments: RunningAverageCostSegment[],
+  currentAverage: string | null,
+): PriceHistoryResponse {
+  return {
+    ...resp([]),
+    running_average_cost: { segments, current_average: currentAverage },
+  };
+}
+
+function segment(
+  steps: [string, string][],
+  closedOn: string | null,
+): RunningAverageCostSegment {
+  return {
+    steps: steps.map(([date, average]) => ({ date, average })),
+    closed_on: closedOn,
+  };
+}
+
+function plotted(start: string, end: string): ChartWindow {
+  return { start, end, startsAtVisibleStart: true };
 }
 
 function tx(overrides: Partial<Transaction>): Transaction {
@@ -315,5 +348,475 @@ describe("tradeMarkers", () => {
     );
 
     expect(markers.map((m) => m.time)).toEqual(["2025-05-11", "2025-06-20"]);
+  });
+});
+
+describe("runningAverageCostLine", () => {
+  const window = plotted("2025-01-01", "2025-12-31");
+
+  it("extends an open segment to the window end and tags it with the backend's text", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-02-01", "112"],
+              ["2025-03-01", "112.125"],
+            ],
+            null,
+          ),
+        ],
+        "112.12",
+      ),
+      window,
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].points).toEqual([
+      { time: "2025-02-01", value: 112 },
+      { time: "2025-03-01", value: 112.125 },
+      { time: "2025-12-31", value: 112.125 },
+    ]);
+    expect(lines[0].showLastValue).toBe(true);
+    expect(lines[0].lastValueLabel).toBe("112.12");
+  });
+
+  it("ends a closed segment on its closing date without a tag", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [segment([["2025-02-01", "100"]], "2025-06-20")],
+        null,
+      ),
+      window,
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].points).toEqual([
+      { time: "2025-02-01", value: 100 },
+      { time: "2025-06-20", value: 100 },
+    ]);
+    expect(lines[0].showLastValue).toBe(false);
+    expect(lines[0].lastValueLabel).toBeUndefined();
+  });
+
+  it("draws a reopened position as two lines with the tag only on the open one", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment([["2025-02-01", "100"]], "2025-06-20"),
+          segment([["2025-09-01", "95.1"]], null),
+        ],
+        "95.10",
+      ),
+      window,
+    );
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0].key).not.toBe(lines[1].key);
+    expect(lines[0].points.at(-1)).toEqual({ time: "2025-06-20", value: 100 });
+    expect(lines[1].points).toEqual([
+      { time: "2025-09-01", value: 95.1 },
+      { time: "2025-12-31", value: 95.1 },
+    ]);
+    expect(lines.map((line) => line.showLastValue)).toEqual([false, true]);
+    expect(lines.map((line) => line.lastValueLabel)).toEqual([
+      undefined,
+      "95.10",
+    ]);
+  });
+
+  it("flags no line for a last value on a sold-out instrument", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment([["2025-02-01", "100"]], "2025-03-01"),
+          segment([["2025-05-01", "90"]], "2025-07-01"),
+        ],
+        null,
+      ),
+      window,
+    );
+
+    expect(lines).toHaveLength(2);
+    expect(lines.some((line) => line.showLastValue)).toBe(false);
+    expect(lines.some((line) => line.lastValueLabel !== undefined)).toBe(false);
+  });
+
+  it("carries the prevailing average to the window start when clipped on the left", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2024-11-01", "100"],
+              ["2024-12-01", "110"],
+              ["2025-02-01", "120"],
+            ],
+            null,
+          ),
+        ],
+        "120.00",
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-01-01", value: 110 },
+      { time: "2025-02-01", value: 120 },
+      { time: "2025-12-31", value: 120 },
+    ]);
+  });
+
+  it("does not add a carried point when a step falls on the window start", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2024-12-01", "110"],
+              ["2025-01-01", "120"],
+            ],
+            "2025-03-01",
+          ),
+        ],
+        null,
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-01-01", value: 120 },
+      { time: "2025-03-01", value: 120 },
+    ]);
+  });
+
+  it("stops a segment at the window end when clipped on the right", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-11-01", "100"],
+              ["2026-01-15", "105"],
+            ],
+            "2026-02-01",
+          ),
+        ],
+        null,
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-11-01", value: 100 },
+      { time: "2025-12-31", value: 100 },
+    ]);
+  });
+
+  it("drops segments wholly outside the window", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment([["2024-02-01", "80"]], "2024-06-01"),
+          segment([["2025-03-01", "90"]], "2025-04-01"),
+          segment([["2026-03-01", "100"]], null),
+        ],
+        "100.00",
+      ),
+      window,
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].points[0]).toEqual({ time: "2025-03-01", value: 90 });
+  });
+
+  it("does not duplicate the terminal point on the last step date", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-06-01", "100"],
+              ["2025-12-31", "104"],
+            ],
+            null,
+          ),
+        ],
+        "104.00",
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-06-01", value: 100 },
+      { time: "2025-12-31", value: 104 },
+    ]);
+  });
+
+  it("leaves a right-clipped open segment untagged", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-11-01", "100"],
+              ["2026-01-15", "105"],
+            ],
+            null,
+          ),
+        ],
+        "105.00",
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-11-01", value: 100 },
+      { time: "2025-12-31", value: 100 },
+    ]);
+    expect(lines[0].showLastValue).toBe(false);
+    expect(lines[0].lastValueLabel).toBeUndefined();
+  });
+
+  it("leaves an open segment untagged when its last step is unparsable", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-02-01", "100"],
+              ["2025-03-01", "not-a-number"],
+            ],
+            null,
+          ),
+        ],
+        "104.00",
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-02-01", value: 100 },
+      { time: "2025-12-31", value: 100 },
+    ]);
+    expect(lines[0].showLastValue).toBe(false);
+    expect(lines[0].lastValueLabel).toBeUndefined();
+  });
+
+  it("skips unparsable steps", () => {
+    const lines = runningAverageCostLine(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-02-01", "100"],
+              ["2025-03-01", "not-a-number"],
+            ],
+            "2025-04-01",
+          ),
+        ],
+        null,
+      ),
+      window,
+    );
+
+    expect(lines[0].points).toEqual([
+      { time: "2025-02-01", value: 100 },
+      { time: "2025-04-01", value: 100 },
+    ]);
+  });
+
+  it("returns no lines without segments, a response, or a window", () => {
+    expect(
+      runningAverageCostLine(withRunningAverage([], null), window),
+    ).toEqual([]);
+    expect(runningAverageCostLine(undefined, window)).toEqual([]);
+    expect(
+      runningAverageCostLine(
+        withRunningAverage([segment([["2025-02-01", "100"]], null)], "100.00"),
+        null,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("averageAfterByDate", () => {
+  it("maps every parsable step date to its average across segments", () => {
+    const averages = averageAfterByDate(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-02-01", "100"],
+              ["2025-03-01", "bad"],
+            ],
+            "2025-04-01",
+          ),
+          segment([["2025-09-01", "95.1"]], null),
+        ],
+        "95.10",
+      ),
+    );
+
+    expect([...averages]).toEqual([
+      ["2025-02-01", 100],
+      ["2025-09-01", 95.1],
+    ]);
+  });
+
+  it("is empty without a response", () => {
+    expect(averageAfterByDate(undefined).size).toBe(0);
+  });
+});
+
+describe("priceChartMarkers", () => {
+  function rows(marker: { rows: { label: string; value: string }[] }) {
+    return marker.rows.map((row) => [row.label, row.value]);
+  }
+
+  it("keeps the Buy and Sell tooltip rows, with the fee last", () => {
+    const markers = priceChartMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          quantity: 1200,
+          price: "140.5",
+          brokerage: "9.6",
+          brokerage_currency: "SEK",
+        }),
+        tx({
+          id: 2,
+          type: "Sell",
+          trade_date: "2025-06-20",
+          quantity: -200,
+          price: "150",
+        }),
+      ],
+      "USD",
+      new Map(),
+    );
+
+    expect(markers.map((marker) => [marker.title, marker.side])).toEqual([
+      ["Buy", "buy"],
+      ["Sell", "sell"],
+    ]);
+    expect(rows(markers[0])).toEqual([
+      ["Date", "2025-05-11"],
+      ["Quantity", "1,200"],
+      ["Avg price", "140.5 USD"],
+      ["Fee", "9.60 SEK"],
+    ]);
+    expect(rows(markers[1])).toEqual([
+      ["Date", "2025-06-20"],
+      ["Quantity", "200"],
+      ["Avg price", "150 USD"],
+    ]);
+  });
+
+  it("keeps the Split tooltip rows", () => {
+    const markers = priceChartMarkers(
+      [
+        tx({ id: 1, type: "Buy", trade_date: "2025-05-11", quantity: 10 }),
+        tx({
+          id: 2,
+          type: "Split",
+          trade_date: "2025-07-01",
+          quantity: 30,
+          price: null,
+        }),
+      ],
+      "USD",
+      new Map([["2025-07-01", 25]]),
+    );
+
+    const split = markers.find((marker) => marker.side === "split");
+    expect(split?.title).toBe("Split");
+    expect(split ? rows(split) : []).toEqual([
+      ["Date", "2025-07-01"],
+      ["Ratio", "4:1"],
+      ["Before", "10"],
+      ["After", "40"],
+      ["Delta", "+30"],
+    ]);
+  });
+
+  it("adds Avg after to a buy day with a running-average step, after Avg price", () => {
+    const markers = priceChartMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          quantity: 1,
+          price: "112.25",
+          brokerage: "9.6",
+          brokerage_currency: "SEK",
+        }),
+      ],
+      "USD",
+      new Map([["2025-05-11", 112.125]]),
+    );
+
+    expect(rows(markers[0])).toEqual([
+      ["Date", "2025-05-11"],
+      ["Quantity", "1"],
+      ["Avg price", "112.25 USD"],
+      ["Avg after", "112.13 USD"],
+      ["Fee", "9.60 SEK"],
+    ]);
+  });
+
+  it("shows the split-adjusted average after a pre-split buy", () => {
+    const response = withRunningAverage(
+      [segment([["2025-05-11", "75"]], null)],
+      "75.00",
+    );
+    const markers = priceChartMarkers(
+      [
+        tx({
+          id: 1,
+          type: "Buy",
+          trade_date: "2025-05-11",
+          quantity: 10,
+          price: "300",
+        }),
+        tx({
+          id: 2,
+          type: "Split",
+          trade_date: "2025-07-01",
+          quantity: 30,
+          price: null,
+        }),
+      ],
+      "USD",
+      averageAfterByDate(response),
+    );
+
+    const buy = markers.find((marker) => marker.side === "buy");
+    expect(buy ? rows(buy) : []).toContainEqual(["Avg price", "300 USD"]);
+    expect(buy ? rows(buy) : []).toContainEqual(["Avg after", "75 USD"]);
+  });
+
+  it("does not add Avg after to sells or to a buy day that ends flat", () => {
+    const markers = priceChartMarkers(
+      [
+        tx({ id: 1, type: "Buy", trade_date: "2025-05-11", quantity: 10 }),
+        tx({ id: 2, type: "Sell", trade_date: "2025-05-11", quantity: -2 }),
+        tx({ id: 3, type: "Buy", trade_date: "2025-06-01", quantity: 4 }),
+        tx({ id: 4, type: "Sell", trade_date: "2025-06-01", quantity: -12 }),
+      ],
+      "USD",
+      // The flat-ending 2025-06-01 has no step.
+      new Map([["2025-05-11", 140.68]]),
+    );
+
+    const labelled = markers.filter((marker) =>
+      marker.rows.some((row) => row.label === "Avg after"),
+    );
+    expect(labelled.map((marker) => [marker.time, marker.side])).toEqual([
+      ["2025-05-11", "buy"],
+    ]);
   });
 });

@@ -5,7 +5,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as queries from "./queries";
-import type { OpportunityWindow } from "./types";
+import type { OpportunityWindow, PriceHistoryResponse } from "./types";
 
 const VERSION = {
   data_revision: "ledger-a:1",
@@ -168,6 +168,62 @@ describe("gains period request parameters", () => {
     expect(request.searchParams.get("period")).toBe("custom");
     expect(request.searchParams.get("start_date")).toBe("2026-01-01");
     expect(request.searchParams.get("end_date")).toBe("2026-09-12");
+  });
+});
+
+describe("instrument price history", () => {
+  it("surfaces the running average cost block unchanged", async () => {
+    const body: PriceHistoryResponse = {
+      instrument_id: 7,
+      currency: "USD",
+      base_currency: "SEK",
+      points: [],
+      running_average_cost: {
+        segments: [
+          {
+            steps: [
+              { date: "2025-01-10", average: "100" },
+              { date: "2025-03-02", average: "112.5" },
+            ],
+            closed_on: "2025-06-20",
+          },
+          {
+            steps: [{ date: "2025-09-01", average: "95.1" }],
+            closed_on: null,
+          },
+        ],
+        current_average: "95.10",
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const responseBody = url.startsWith("/api/data-version")
+          ? VERSION
+          : body;
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(responseBody)),
+        } as unknown as Response);
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => queries.useInstrumentPrices(7), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.running_average_cost).toEqual(
+      body.running_average_cost,
+    );
   });
 });
 

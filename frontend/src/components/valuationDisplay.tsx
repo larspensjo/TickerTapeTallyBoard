@@ -73,6 +73,14 @@ export function formatGroupedNumber(value: string | number): string {
   return `${sign}${groupedInteger}${fractionalPart}`;
 }
 
+/** A quantity change with an explicit sign, e.g. `+1,000` or `-5`. */
+export function formatSignedQuantity(value: number): string {
+  const formatted = formatGroupedNumber(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
 function roundDecimal(value: string | number, maximumFractionDigits: number) {
   const rawValue = String(value).trim();
   const match = rawValue.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);

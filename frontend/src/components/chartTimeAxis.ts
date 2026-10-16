@@ -67,6 +67,38 @@ export function formatIsoDate(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
+/** The calendar range a time-series chart plots. */
+export interface ChartWindow {
+  start: string;
+  end: string;
+  /**
+   * True when `start` is the caller's requested visible start rather than the
+   * first data date; the chart then pins its visible range instead of fitting
+   * the content.
+   */
+  startsAtVisibleStart: boolean;
+}
+
+/**
+ * The chart's window rule: the window ends on the last data date and starts at
+ * `visibleStart` when that is not after the data's end, otherwise at the first
+ * data date. Anything clipped to the plotted range uses this same rule.
+ */
+export function chartWindow(
+  data: TimeSeriesPoint[],
+  visibleStart: string | undefined,
+): ChartWindow | null {
+  const first = data[0]?.time;
+  const end = data.at(-1)?.time;
+  if (!first || !end) return null;
+
+  if (visibleStart && visibleStart <= end) {
+    return { start: visibleStart, end, startsAtVisibleStart: true };
+  }
+
+  return { start: first, end, startsAtVisibleStart: false };
+}
+
 export function calendarSpineData(
   data: TimeSeriesPoint[],
   rangeStart: string | undefined,

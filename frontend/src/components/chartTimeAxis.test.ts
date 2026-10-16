@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   calendarSpineData,
   chartDate,
+  chartWindow,
   formatIsoDate,
   isoFromTime,
   parseIsoDate,
@@ -113,5 +114,40 @@ describe("date helpers", () => {
 
   it("returns null for a chart time that is not a real date", () => {
     expect(chartDate("nonsense")).toBeNull();
+  });
+});
+
+describe("chartWindow", () => {
+  const data = [
+    { time: "2025-03-01", value: 1 },
+    { time: "2025-06-30", value: 2 },
+  ];
+
+  it("starts at the visible start when it is before the data", () => {
+    expect(chartWindow(data, "2025-01-15")).toEqual({
+      start: "2025-01-15",
+      end: "2025-06-30",
+      startsAtVisibleStart: true,
+    });
+  });
+
+  it("falls back to the first data date when the visible start is after the data", () => {
+    expect(chartWindow(data, "2025-07-01")).toEqual({
+      start: "2025-03-01",
+      end: "2025-06-30",
+      startsAtVisibleStart: false,
+    });
+  });
+
+  it("spans the data when there is no visible start", () => {
+    expect(chartWindow(data, undefined)).toEqual({
+      start: "2025-03-01",
+      end: "2025-06-30",
+      startsAtVisibleStart: false,
+    });
+  });
+
+  it("has no window without data", () => {
+    expect(chartWindow([], "2025-01-15")).toBeNull();
   });
 });
