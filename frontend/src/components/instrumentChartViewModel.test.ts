@@ -659,9 +659,59 @@ describe("averageAfterByDate", () => {
     );
 
     expect([...averages]).toEqual([
-      ["2025-02-01", 100],
-      ["2025-09-01", 95.1],
+      ["2025-02-01", "100"],
+      ["2025-09-01", "95.10"],
     ]);
+  });
+
+  it("shows the Holdings text for the open position's last step only", () => {
+    const averages = averageAfterByDate(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-02-01", "51.25"],
+              ["2025-03-01", "51.7142857143"],
+            ],
+            "2025-04-01",
+          ),
+          segment(
+            [
+              ["2025-05-01", "50.5"],
+              ["2025-06-01", "51.7142857143"],
+            ],
+            null,
+          ),
+        ],
+        "51.71",
+      ),
+    );
+
+    expect([...averages]).toEqual([
+      ["2025-02-01", "51.25"],
+      ["2025-03-01", "51.7143"],
+      ["2025-05-01", "50.5"],
+      ["2025-06-01", "51.71"],
+    ]);
+  });
+
+  it("matches the tag on a midpoint average rather than rounding half-up", () => {
+    const averages = averageAfterByDate(
+      withRunningAverage(
+        [
+          segment(
+            [
+              ["2025-05-05", "112"],
+              ["2025-08-04", "112.125"],
+            ],
+            null,
+          ),
+        ],
+        "112.12",
+      ),
+    );
+
+    expect(averages.get("2025-08-04")).toBe("112.12");
   });
 
   it("is empty without a response", () => {
@@ -728,7 +778,7 @@ describe("priceChartMarkers", () => {
         }),
       ],
       "USD",
-      new Map([["2025-07-01", 25]]),
+      new Map([["2025-07-01", "25"]]),
     );
 
     const split = markers.find((marker) => marker.side === "split");
@@ -756,14 +806,14 @@ describe("priceChartMarkers", () => {
         }),
       ],
       "USD",
-      new Map([["2025-05-11", 112.125]]),
+      new Map([["2025-05-11", "112.12"]]),
     );
 
     expect(rows(markers[0])).toEqual([
       ["Date", "2025-05-11"],
       ["Quantity", "1"],
       ["Avg price", "112.25 USD"],
-      ["Avg after", "112.13 USD"],
+      ["Avg after", "112.12 USD"],
       ["Fee", "9.60 SEK"],
     ]);
   });
@@ -796,7 +846,7 @@ describe("priceChartMarkers", () => {
 
     const buy = markers.find((marker) => marker.side === "buy");
     expect(buy ? rows(buy) : []).toContainEqual(["Avg price", "300 USD"]);
-    expect(buy ? rows(buy) : []).toContainEqual(["Avg after", "75 USD"]);
+    expect(buy ? rows(buy) : []).toContainEqual(["Avg after", "75.00 USD"]);
   });
 
   it("does not add Avg after to sells or to a buy day that ends flat", () => {
@@ -809,7 +859,7 @@ describe("priceChartMarkers", () => {
       ],
       "USD",
       // The flat-ending 2025-06-01 has no step.
-      new Map([["2025-05-11", 140.68]]),
+      new Map([["2025-05-11", "140.68"]]),
     );
 
     const labelled = markers.filter((marker) =>

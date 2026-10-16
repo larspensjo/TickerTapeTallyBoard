@@ -267,16 +267,29 @@ export function runningAverageCostLine(
 }
 
 /**
- * The running average after each buy day, keyed by date, in the same
- * split-adjusted frame the running average cost line draws.
+ * The running average after each buy day as display text, keyed by date, in
+ * the same split-adjusted frame the running average cost line draws. The open
+ * position's last step is today's average, so it shows the backend's Holdings
+ * text to match the line's tag; other steps use the unit-price formatter.
  */
 export function averageAfterByDate(
   response: PriceHistoryResponse | undefined,
-): Map<string, number> {
-  const averages = new Map<string, number>();
-  for (const segment of response?.running_average_cost.segments ?? []) {
-    for (const step of parsedSteps(segment.steps)) {
-      averages.set(step.time, step.value);
+): Map<string, string> {
+  const averages = new Map<string, string>();
+  const block = response?.running_average_cost;
+  for (const segment of block?.segments ?? []) {
+    for (const step of segment.steps) {
+      if (parseFiniteNumber(step.average) !== null) {
+        averages.set(step.date, formatUnitPrice(step.average));
+      }
+    }
+    const last = segment.steps.at(-1);
+    if (
+      segment.closed_on === null &&
+      last !== undefined &&
+      block?.current_average != null
+    ) {
+      averages.set(last.date, formatGroupedNumber(block.current_average));
     }
   }
   return averages;
@@ -299,7 +312,7 @@ function parsedSteps(steps: RunningAverageCostStep[]): TimeSeriesPoint[] {
 export function priceChartMarkers(
   transactions: Transaction[],
   currency: string,
-  averageAfter: Map<string, number>,
+  averageAfter: Map<string, string>,
 ): ChartTradeMarker[] {
   return [
     ...tradeChartMarkers(transactions, currency, averageAfter),
@@ -310,7 +323,7 @@ export function priceChartMarkers(
 function tradeChartMarkers(
   transactions: Transaction[],
   currency: string,
-  averageAfter: Map<string, number>,
+  averageAfter: Map<string, string>,
 ): ChartTradeMarker[] {
   return tradeMarkers(transactions, currency).map((marker) => {
     const rows = [
@@ -328,7 +341,7 @@ function tradeChartMarkers(
     if (marker.side === "buy" && average !== undefined) {
       rows.push({
         label: "Avg after",
-        value: `${formatUnitPrice(average)} ${marker.currency}`,
+        value: `${average} ${marker.currency}`,
       });
     }
     if (marker.fee !== null && marker.feeCurrency !== null) {

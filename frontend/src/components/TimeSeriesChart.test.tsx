@@ -504,7 +504,7 @@ describe("TimeSeriesChart", () => {
             title: "Buy",
             rows: [
               { label: "Avg price", value: "112.25 USD" },
-              { label: "Avg after", value: "112.13 USD" },
+              { label: "Avg after", value: "112.12 USD" },
             ],
           },
         ]}
@@ -520,7 +520,7 @@ describe("TimeSeriesChart", () => {
 
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip).toHaveTextContent("Avg after");
-    expect(tooltip).toHaveTextContent("112.13 USD");
+    expect(tooltip).toHaveTextContent("112.12 USD");
   });
 
   it("keeps the invested reference line out of axis scaling entirely", () => {
