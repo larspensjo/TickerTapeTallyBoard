@@ -131,16 +131,31 @@ impl RealizedGain {
 ///
 /// Callers must pass transactions already sorted by `(trade_date, id)`.
 pub fn derive_position(transactions: &[LedgerTransaction]) -> Result<Position, LedgerError> {
+    fold_positions(transactions, |_, _| {})
+}
+
+/// Fold `(trade_date, id)`-ordered transactions into a position, calling
+/// `observe` with each transaction and the position state after applying it.
+///
+/// Callers must pass transactions already sorted by `(trade_date, id)`.
+pub fn fold_positions<F>(
+    transactions: &[LedgerTransaction],
+    mut observe: F,
+) -> Result<Position, LedgerError>
+where
+    F: FnMut(&LedgerTransaction, &Position),
+{
     debug_assert!(
         transactions
             .windows(2)
             .all(|pair| { (pair[0].trade_date, pair[0].id) <= (pair[1].trade_date, pair[1].id) }),
-        "derive_position requires transactions sorted by (trade_date, id)"
+        "fold_positions requires transactions sorted by (trade_date, id)"
     );
 
     let mut position = Position::empty();
     for transaction in transactions {
         apply(&mut position, transaction)?;
+        observe(transaction, &position);
     }
     Ok(position)
 }

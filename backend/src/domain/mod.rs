@@ -18,6 +18,7 @@ mod price_history;
 mod price_resolution;
 mod rebalance;
 mod recent_price_change;
+mod running_average_cost;
 mod transaction;
 mod valuation;
 mod valuation_summary;
@@ -54,6 +55,10 @@ pub use recent_price_change::{
     price_versus_average, recent_price_change, PriceVersusAverage, PriceVersusAverageReason,
     RecentChangeReason, RecentPriceChange, RecentWindow, RECENT_CHANGE_HISTORY_DAYS,
     START_CLOSE_MAX_AGE_TRADING_DAYS,
+};
+#[allow(unused_imports)]
+pub use running_average_cost::{
+    running_average_cost, AverageCostSegment, AverageCostStep, RunningAverageCost,
 };
 #[allow(unused_imports)]
 pub use transaction::{
