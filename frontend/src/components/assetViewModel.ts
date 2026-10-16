@@ -10,7 +10,7 @@ import type {
   Transaction,
 } from "../api/types";
 import { priceAvailabilityLabel } from "./priceSourceViewModel";
-import { parseFiniteNumber, reasonLabel } from "./valuationDisplay";
+import { reasonLabel } from "./valuationDisplay";
 
 export type AssetData =
   | { kind: "not-found" }
@@ -202,17 +202,6 @@ function averageCostBase(holding: Holding | null): MoneyValue {
   }
 
   return { status: "unavailable", reasons: ["base_cost_basis_unavailable"] };
-}
-
-export function costBasisLineValue(
-  holding: Holding | null,
-): number | undefined {
-  if (holding === null || holding.average_cost_native === null) {
-    return undefined;
-  }
-
-  const parsed = parseFiniteNumber(holding.average_cost_native);
-  return parsed === null ? undefined : parsed;
 }
 
 export function deriveAssetData(args: {

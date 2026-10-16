@@ -24,7 +24,6 @@ import {
   canDeleteInstrument,
   convictionPanelView,
   convictionResetVisible,
-  costBasisLineValue,
   deleteInstrumentDisabledReason,
   deriveAssetData,
   headerStatus,
@@ -34,6 +33,7 @@ import {
   type Tiles,
   tilesView,
 } from "./assetViewModel";
+import { chartWindow } from "./chartTimeAxis";
 import { GainsWaterfall } from "./GainsWaterfall";
 import {
   CONVICTION_OPTIONS,
@@ -45,6 +45,7 @@ import {
   averageAfterByDate,
   instrumentPriceSeries,
   priceChartMarkers,
+  runningAverageCostLine,
 } from "./instrumentChartViewModel";
 import {
   effectivePriceSourceRow,
@@ -191,7 +192,6 @@ export function AssetView() {
           <AssetPriceChart
             query={pricesQuery}
             transactions={data.transactions}
-            costBasisLine={costBasisLineValue(data.holding)}
           />
           <div className="asset-two-col">
             <GainsWaterfall
@@ -520,11 +520,9 @@ function MetricTile({
 function AssetPriceChart({
   query,
   transactions,
-  costBasisLine,
 }: {
   query: ReturnType<typeof useInstrumentPrices>;
   transactions: Transaction[];
-  costBasisLine?: number;
 }) {
   const series = useMemo(
     () => instrumentPriceSeries(query.data, transactions),
@@ -544,6 +542,14 @@ function AssetPriceChart({
           )
         : [],
     [transactions, query.data],
+  );
+  const stepLines = useMemo(
+    () =>
+      runningAverageCostLine(
+        query.data,
+        chartWindow(series.points, visibleStart),
+      ),
+    [query.data, series.points, visibleStart],
   );
 
   if (query.isPending) {
@@ -589,7 +595,7 @@ function AssetPriceChart({
         ariaLabel={`Instrument price history in ${query.data?.currency ?? "native currency"}`}
         visibleStart={visibleStart}
         markers={markers}
-        costBasisLine={costBasisLine}
+        stepLines={stepLines}
       />
     </section>
   );

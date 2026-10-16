@@ -24,7 +24,7 @@ export type GainUnit = "sek" | "percent";
  * Gain over the selected period, drawn against a zero baseline: green above,
  * red below. Kept separate from `TimeSeriesChart` because a baseline series and
  * a percent axis are a different contract, not a prop — splitting leaves the
- * asset price chart's markers, tooltip and break-even line untouched.
+ * asset price chart's markers, tooltip and running average cost line untouched.
  *
  * The incoming series already carries its zero origin point, and `visibleStart`
  * is that origin's date, so the left edge of the window is the zero origin.

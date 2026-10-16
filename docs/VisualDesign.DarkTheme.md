@@ -226,6 +226,14 @@ areaSeries.bottomColor   = rgba(0,82,255,0.00)
 up markers / candles     = --up (#16c784)
 down markers / candles   = --down (#ff4d4f)
 
+// Running average cost line (asset price chart)
+runningAverageCost.color = gold #e0b15e, 1px, LineStyle.Dotted, LineType.WithSteps
+runningAverageCost.series= one line series per held period, so closed periods stay gaps
+runningAverageCost.tag   = right-axis tag only on an open position, drawn as a custom
+                           price-axis label (gold back, black text, like the library's
+                           own tag) because its text is supplied by the backend, not
+                           the library's default formatter
+
 // Gain chart (baseline series, zero baseline always in view)
 baseline.baseValue       = 0
 baseline.topLineColor    = --up (#16c784)

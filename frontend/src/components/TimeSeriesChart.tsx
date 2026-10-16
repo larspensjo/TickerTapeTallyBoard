@@ -3,11 +3,11 @@ import {
   createChart,
   createSeriesMarkers,
   type IChartApi,
-  type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   LineSeries,
   LineStyle,
+  LineType,
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
@@ -16,7 +16,6 @@ import {
   baseChartOptions,
   chartColors,
   compactPriceFormat,
-  fitToDataAutoscale,
   noAutoscale,
 } from "./chartTheme";
 import {
@@ -26,6 +25,7 @@ import {
   type TimeSeriesPoint,
   tickMarkFormatter,
 } from "./chartTimeAxis";
+import { fixedTextValueTag } from "./chartValueTag";
 
 export type { TimeSeriesPoint };
 
@@ -81,7 +81,7 @@ export function TimeSeriesChart({
   visibleStart,
   markers = [],
   referenceData,
-  costBasisLine,
+  stepLines,
   edgeTag,
   height = 240,
   lineColor = chartColors.value,
@@ -94,7 +94,7 @@ export function TimeSeriesChart({
   visibleStart?: string;
   markers?: ChartTradeMarker[];
   referenceData?: TimeSeriesPoint[];
-  costBasisLine?: number;
+  stepLines?: ChartStepLine[];
   edgeTag?: ChartEdgeTag;
   height?: number;
   lineColor?: string;
@@ -107,13 +107,13 @@ export function TimeSeriesChart({
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const referenceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const costPriceLineRef = useRef<IPriceLine | null>(null);
-  const costBasisValueRef = useRef<number | undefined>(costBasisLine);
   const markersRef = useRef<Map<string, ChartTradeMarker[]>>(new Map());
+  // Held in state as well as the ref so effects that add their own series
+  // re-run against a recreated chart.
+  const [chart, setChart] = useState<IChartApi | null>(null);
   const [tooltip, setTooltip] = useState<TradeTooltipState | null>(null);
 
   markersRef.current = groupedMarkers(markers);
-  costBasisValueRef.current = costBasisLine;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -143,13 +143,6 @@ export function TimeSeriesChart({
       bottomColor,
       lineWidth: 2,
       priceLineVisible: false,
-      // `createPriceLine` primitives do not participate in scale aggregation,
-      // so the break-even value is folded in here to stop it clipping.
-      autoscaleInfoProvider: fitToDataAutoscale(() =>
-        costBasisValueRef.current === undefined
-          ? []
-          : [costBasisValueRef.current],
-      ),
       ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
     });
 
@@ -157,6 +150,7 @@ export function TimeSeriesChart({
     seriesRef.current = series;
     seriesMarkersRef.current = createSeriesMarkers(series);
     referenceSeriesRef.current = referenceSeries;
+    setChart(chart);
 
     const resize = () => chart.applyOptions({ width: container.clientWidth });
     resize();
@@ -185,6 +179,7 @@ export function TimeSeriesChart({
       seriesRef.current = null;
       seriesMarkersRef.current = null;
       referenceSeriesRef.current = null;
+      setChart(null);
       setTooltip(null);
     };
   }, [height, lineColor, topColor, bottomColor, compactValueAxis]);
@@ -221,46 +216,52 @@ export function TimeSeriesChart({
   }, [data, visibleStart, referenceData]);
 
   useEffect(() => {
-    const previousPriceLine = costPriceLineRef.current;
-    const series = seriesRef.current;
-    const price = costBasisLine;
+    // Until the state catches up with a recreated chart, `chart` may be the
+    // removed one; the live chart is always the ref.
+    if (!chart || chartRef.current !== chart) return;
+    if (!stepLines || stepLines.length === 0) return;
 
-    if (previousPriceLine) {
-      if (series) {
-        series.removePriceLine(previousPriceLine);
-      }
-      costPriceLineRef.current = null;
-    }
+    // Added after the reference and area series, so the price scale keeps
+    // taking its tick format from those and never from a step line.
+    const added = stepLines.map((line) => {
+      const series = chart.addSeries(LineSeries, {
+        color: chartColors.reference,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        lineType: LineType.WithSteps,
+        priceLineVisible: false,
+        // The library's own tag takes its text from the shared price scale's
+        // formatter, so a flagged line draws its tag as a primitive instead.
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        pointMarkersVisible: line.points.length < 2,
+        ...(compactValueAxis ? { priceFormat: compactPriceFormat } : {}),
+      });
+      series.setData(line.points);
 
-    // Re-applying options re-runs the autoscale provider, so a changed
-    // break-even value rescales the axis instead of clipping at the edge.
-    series?.applyOptions({});
-
-    if (!series || typeof price !== "number" || !Number.isFinite(price)) {
-      return () => {
-        costPriceLineRef.current = null;
-      };
-    }
-
-    const priceLine = series.createPriceLine({
-      price,
-      color: chartColors.reference,
-      lineStyle: LineStyle.Dotted,
-      lineWidth: 1,
-      axisLabelVisible: true,
-      title: "",
-      lineVisible: true,
+      const terminal = line.points.at(-1);
+      const tag =
+        line.showLastValue && terminal
+          ? fixedTextValueTag({
+              value: terminal.value,
+              text: line.lastValueLabel ?? terminal.value.toFixed(2),
+              color: chartColors.reference,
+              textColor: chartColors.referenceLabelText,
+            })
+          : null;
+      if (tag) series.attachPrimitive(tag);
+      return { series, tag };
     });
 
-    costPriceLineRef.current = priceLine;
-
     return () => {
-      costPriceLineRef.current = null;
-      if (seriesRef.current) {
-        seriesRef.current.removePriceLine(priceLine);
+      // A chart that has already been torn down took its series with it.
+      if (chartRef.current !== chart) return;
+      for (const { series, tag } of added) {
+        if (tag) series.detachPrimitive(tag);
+        chart.removeSeries(series);
       }
     };
-  }, [costBasisLine]);
+  }, [chart, stepLines, compactValueAxis]);
 
   useEffect(() => {
     const seriesMarkersApi = seriesMarkersRef.current;

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   compactPriceFormat,
-  fitToDataAutoscale,
   noAutoscale,
   percentPriceFormat,
   zeroInViewAutoscale,
@@ -13,59 +12,6 @@ function base(minValue: number, maxValue: number) {
     margins: { above: 10, below: 10 },
   });
 }
-
-describe("fitToDataAutoscale", () => {
-  it("keeps the fitted range instead of forcing a zero floor", () => {
-    const info = fitToDataAutoscale()(base(3_950_000, 4_100_000));
-
-    expect(info?.priceRange).toEqual({
-      minValue: 3_950_000,
-      maxValue: 4_100_000,
-    });
-  });
-
-  it("widens the range downwards to keep an anchor below the data in view", () => {
-    const info = fitToDataAutoscale(() => [760_000])(
-      base(3_950_000, 4_100_000),
-    );
-
-    expect(info?.priceRange).toEqual({
-      minValue: 760_000,
-      maxValue: 4_100_000,
-    });
-  });
-
-  it("widens the range upwards to keep an anchor above the data in view", () => {
-    const info = fitToDataAutoscale(() => [5_000])(base(100, 900));
-
-    expect(info?.priceRange).toEqual({ minValue: 100, maxValue: 5_000 });
-  });
-
-  it("leaves the range alone when the anchor already sits inside it", () => {
-    const info = fitToDataAutoscale(() => [500])(base(100, 900));
-
-    expect(info?.priceRange).toEqual({ minValue: 100, maxValue: 900 });
-  });
-
-  it("ignores anchors that are not finite numbers", () => {
-    const info = fitToDataAutoscale(() => [
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-    ])(base(100, 900));
-
-    expect(info?.priceRange).toEqual({ minValue: 100, maxValue: 900 });
-  });
-
-  it("passes through a null autoscale result", () => {
-    expect(fitToDataAutoscale(() => [1])(() => null)).toBeNull();
-  });
-
-  it("passes through a result that carries no price range", () => {
-    const info = fitToDataAutoscale(() => [1])(() => ({ priceRange: null }));
-
-    expect(info).toEqual({ priceRange: null });
-  });
-});
 
 describe("noAutoscale", () => {
   it("removes the series from scale aggregation entirely", () => {

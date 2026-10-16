@@ -12,6 +12,9 @@ export const chartColors = {
   grid: "rgba(148, 163, 184, 0.08)",
   border: "rgba(148, 163, 184, 0.2)",
   reference: "#e0b15e",
+  // Text on a gold axis label: the library's contrast rule picks black for
+  // gold, so a custom tag matches the library's own tags.
+  referenceLabelText: "black",
   value: "#4f9cff",
   valueTop: "rgba(79, 156, 255, 0.30)",
   valueBottom: "rgba(79, 156, 255, 0.02)",
@@ -70,34 +73,6 @@ export function baseChartOptions(height: number) {
     timeScale: { borderColor: chartColors.border },
     handleScale: false,
     handleScroll: false,
-  };
-}
-
-/**
- * Fit the axis to the drawn data, optionally widening it to keep extra anchor
- * values in view. Price-line primitives (the cost-basis break-even line) do not
- * participate in scale aggregation, so their value is passed in as an anchor.
- */
-export function fitToDataAutoscale(
-  anchorValues?: () => number[],
-): AutoscaleInfoProvider {
-  return (baseImplementation) => {
-    const autoscale = baseImplementation();
-    if (autoscale === null || autoscale.priceRange === null) return autoscale;
-
-    const anchors = (anchorValues?.() ?? []).filter((value) =>
-      Number.isFinite(value),
-    );
-    if (anchors.length === 0) return autoscale;
-
-    return {
-      ...autoscale,
-      priceRange: {
-        ...autoscale.priceRange,
-        minValue: Math.min(autoscale.priceRange.minValue, ...anchors),
-        maxValue: Math.max(autoscale.priceRange.maxValue, ...anchors),
-      },
-    };
   };
 }
 

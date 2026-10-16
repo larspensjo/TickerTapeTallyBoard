@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TimeSeriesChart } from "./TimeSeriesChart";
+import { type ChartStepLine, TimeSeriesChart } from "./TimeSeriesChart";
 
 const chartMocks = vi.hoisted(() => {
   const LineSeries = { seriesType: "Line" };
   const AreaSeries = { seriesType: "Area" };
+  const LineType = { Simple: 0, WithSteps: 1, Curved: 2 };
   const setData = vi.fn();
   const setMarkers = vi.fn();
-  const createPriceLine = vi.fn((options?: unknown) => ({ options }));
-  const removePriceLine = vi.fn();
+  const createPriceLine = vi.fn();
   const setVisibleRange = vi.fn();
   const fitContent = vi.fn();
   const applyOptions = vi.fn();
@@ -23,7 +23,6 @@ const chartMocks = vi.hoisted(() => {
   const areaSeries = {
     setData,
     createPriceLine,
-    removePriceLine,
     applyOptions: seriesApplyOptions,
   };
   const lineSeries = {
@@ -32,14 +31,32 @@ const chartMocks = vi.hoisted(() => {
   };
   const addAreaSeries = vi.fn((_options?: unknown) => areaSeries);
   const addLineSeries = vi.fn((_options?: unknown) => lineSeries);
-  const addSeries = vi.fn((definition: unknown, options: unknown) =>
-    definition === AreaSeries ? addAreaSeries(options) : addLineSeries(options),
-  );
+  // Step-line series are told apart from the reference series by their step
+  // line type; each gets its own handle so removal can be traced.
+  const addStepSeries = vi.fn((_options?: unknown) => ({
+    setData: vi.fn(),
+    applyOptions: vi.fn(),
+    attachPrimitive: vi.fn(),
+    detachPrimitive: vi.fn(),
+    priceToCoordinate: vi.fn((price: number) => 500 - price),
+  }));
+  const addSeries = vi.fn((definition: unknown, options: unknown) => {
+    if (definition === AreaSeries) return addAreaSeries(options);
+    if ((options as { lineType?: number }).lineType === LineType.WithSteps) {
+      return addStepSeries(options);
+    }
+    return addLineSeries(options);
+  });
   const createSeriesMarkers = vi.fn(() => ({ setMarkers }));
+  // Each chart gets its own series bookkeeping, so a test can tell which
+  // chart a series was added to or removed from.
   const createChart = vi.fn(() => ({
-    addSeries,
+    addSeries: vi.fn((definition: unknown, options: unknown) =>
+      addSeries(definition, options),
+    ),
     applyOptions,
     remove,
+    removeSeries: vi.fn(),
     subscribeCrosshairMove,
     timeScale,
   }));
@@ -47,16 +64,17 @@ const chartMocks = vi.hoisted(() => {
   return {
     AreaSeries,
     LineSeries,
+    LineType,
     addAreaSeries,
     addLineSeries,
     addSeries,
+    addStepSeries,
     applyOptions,
     createChart,
     createPriceLine,
     createSeriesMarkers,
     fitContent,
     remove,
-    removePriceLine,
     referenceApplyOptions,
     setData,
     seriesApplyOptions,
@@ -83,6 +101,7 @@ vi.mock("lightweight-charts", () => ({
     LargeDashed: 3,
     SparseDotted: 4,
   },
+  LineType: chartMocks.LineType,
   AreaSeries: chartMocks.AreaSeries,
   LineSeries: chartMocks.LineSeries,
   createChart: chartMocks.createChart,
@@ -94,25 +113,93 @@ class TestResizeObserver {
   disconnect = vi.fn();
 }
 
-type AreaSeriesOptions = {
-  autoscaleInfoProvider: (
-    baseImplementation: () => {
-      priceRange: { minValue: number; maxValue: number } | null;
-      margins?: { above: number; below: number };
-    } | null,
-  ) => {
-    priceRange: { minValue: number; maxValue: number } | null;
-  } | null;
+type StepSeriesOptions = {
+  color: string;
+  lineWidth: number;
+  lineStyle: number;
+  lineType: number;
+  priceLineVisible: boolean;
+  lastValueVisible: boolean;
+  crosshairMarkerVisible: boolean;
+  pointMarkersVisible: boolean;
+  autoscaleInfoProvider?: unknown;
+  priceFormat?: unknown;
 };
 
-function areaSeriesOptions(): AreaSeriesOptions {
-  const calls = chartMocks.addAreaSeries.mock.calls as unknown as Array<
-    [AreaSeriesOptions]
-  >;
-  const options = calls[0]?.[0];
-  if (!options) throw new Error("area series was not created");
-  return options;
+type StepSeriesMock = {
+  setData: ReturnType<typeof vi.fn>;
+  attachPrimitive: ReturnType<typeof vi.fn>;
+  detachPrimitive: ReturnType<typeof vi.fn>;
+};
+
+type ChartMock = {
+  addSeries: ReturnType<typeof vi.fn>;
+  removeSeries: ReturnType<typeof vi.fn>;
+};
+
+function chartAt(index: number): ChartMock {
+  const chart = chartMocks.createChart.mock.results[index]?.value as
+    | ChartMock
+    | undefined;
+  if (!chart) throw new Error(`chart ${index} was not created`);
+  return chart;
 }
+
+function stepSeriesAddedTo(chart: ChartMock): number {
+  return chart.addSeries.mock.calls.filter(
+    ([, options]) =>
+      (options as { lineType?: number }).lineType ===
+      chartMocks.LineType.WithSteps,
+  ).length;
+}
+
+type AttachedTag = {
+  attached: (param: { series: unknown }) => void;
+  priceAxisViews: () => ReadonlyArray<{
+    coordinate: () => number;
+    text: () => string;
+    textColor: () => string;
+    backColor: () => string;
+    visible?: () => boolean;
+  }>;
+};
+
+function stepSeriesOptions(): StepSeriesOptions[] {
+  const calls = chartMocks.addStepSeries.mock.calls as unknown as Array<
+    [StepSeriesOptions]
+  >;
+  return calls.map(([options]) => options);
+}
+
+function addedStepSeries(): StepSeriesMock[] {
+  return chartMocks.addStepSeries.mock.results.map((result) => result.value);
+}
+
+const closedLine: ChartStepLine = {
+  key: "running-average-cost:2026-01-05",
+  points: [
+    { time: "2026-01-05", value: 100 },
+    { time: "2026-02-10", value: 110 },
+    { time: "2026-03-01", value: 110 },
+  ],
+  showLastValue: false,
+};
+
+const openLine: ChartStepLine = {
+  key: "running-average-cost:2026-04-01",
+  points: [
+    { time: "2026-04-01", value: 112 },
+    { time: "2026-04-15", value: 112.125 },
+    { time: "2026-06-01", value: 112.125 },
+  ],
+  showLastValue: true,
+  lastValueLabel: "112.12",
+};
+
+const priceData = [
+  { time: "2026-01-05", value: 105 },
+  { time: "2026-06-01", value: 130 },
+];
 
 describe("TimeSeriesChart", () => {
   beforeEach(() => {
@@ -180,7 +267,7 @@ describe("TimeSeriesChart", () => {
     expect(options.timeScale.tickMarkFormatter("2025-05-01", 1)).toBeNull();
   });
 
-  it("fits the axis to the drawn window instead of pinning the floor to zero", () => {
+  it("fits the axis to the drawn data instead of pinning the floor to zero", () => {
     render(
       <TimeSeriesChart
         ariaLabel="Price history"
@@ -191,15 +278,10 @@ describe("TimeSeriesChart", () => {
       />,
     );
 
-    const autoscale = areaSeriesOptions().autoscaleInfoProvider(() => ({
-      priceRange: { minValue: 224.43, maxValue: 300 },
-      margins: { above: 12, below: 24 },
-    }));
-
-    expect(autoscale?.priceRange).toEqual({
-      minValue: 224.43,
-      maxValue: 300,
-    });
+    // No provider means the library's own fit to the drawn data.
+    expect(chartMocks.addAreaSeries.mock.calls[0]?.[0]).not.toHaveProperty(
+      "autoscaleInfoProvider",
+    );
   });
 
   it("gives the axis symmetric margins so a fitted line is not drawn on the frame", () => {
@@ -223,23 +305,222 @@ describe("TimeSeriesChart", () => {
     });
   });
 
-  it("widens the axis to keep the break-even line on screen", () => {
+  it("draws one dotted gold step series per step line", () => {
     render(
       <TimeSeriesChart
         ariaLabel="Price history"
-        costBasisLine={120}
-        data={[
-          { time: "2026-06-01", value: 300 },
-          { time: "2026-06-02", value: 224.43 },
+        data={priceData}
+        stepLines={[closedLine, openLine]}
+      />,
+    );
+
+    const options = stepSeriesOptions();
+    expect(options).toHaveLength(2);
+    for (const option of options) {
+      expect(option).toMatchObject({
+        color: "#e0b15e",
+        lineWidth: 1,
+        lineStyle: 1, // LineStyle.Dotted
+        lineType: chartMocks.LineType.WithSteps,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        pointMarkersVisible: false,
+      });
+    }
+    // The library's own tag would take the price scale's half-up formatter.
+    expect(options.map((option) => option.lastValueVisible)).toEqual([
+      false,
+      false,
+    ]);
+
+    const [closedSeries, openSeries] = addedStepSeries();
+    expect(closedSeries?.setData).toHaveBeenCalledWith(closedLine.points);
+    expect(openSeries?.setData).toHaveBeenCalledWith(openLine.points);
+  });
+
+  it("adds step series after the reference and area series", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[openLine]}
+      />,
+    );
+
+    const stepOrder = chartMocks.addStepSeries.mock.invocationCallOrder[0];
+    const areaOrder = chartMocks.addAreaSeries.mock.invocationCallOrder[0];
+    const referenceOrder = chartMocks.addLineSeries.mock.invocationCallOrder[0];
+    expect(stepOrder).toBeDefined();
+    expect(stepOrder).toBeGreaterThan(areaOrder ?? Number.POSITIVE_INFINITY);
+    expect(stepOrder).toBeGreaterThan(
+      referenceOrder ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("shows a point marker for a step line with a single point", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[
+          {
+            key: "running-average-cost:2026-06-01",
+            points: [{ time: "2026-06-01", value: 120 }],
+            showLastValue: false,
+          },
         ]}
       />,
     );
 
-    const autoscale = areaSeriesOptions().autoscaleInfoProvider(() => ({
-      priceRange: { minValue: 224.43, maxValue: 300 },
-    }));
+    expect(stepSeriesOptions()[0]?.pointMarkersVisible).toBe(true);
+  });
 
-    expect(autoscale?.priceRange).toEqual({ minValue: 120, maxValue: 300 });
+  it("tags an open line with the supplied average text, not a half-up rounding", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[closedLine, openLine]}
+      />,
+    );
+
+    const [closedSeries, openSeries] = addedStepSeries();
+    expect(closedSeries?.attachPrimitive).not.toHaveBeenCalled();
+    expect(openSeries?.attachPrimitive).toHaveBeenCalledTimes(1);
+
+    const tag = openSeries?.attachPrimitive.mock.calls[0]?.[0] as AttachedTag;
+    tag.attached({ series: openSeries });
+    const [view] = tag.priceAxisViews();
+    // The library's default formatter would render 112.13 here.
+    expect(view?.text()).toBe("112.12");
+    expect(view?.backColor()).toBe("#e0b15e");
+    expect(view?.visible?.()).toBe(true);
+    expect(view?.coordinate()).toBe(500 - 112.125);
+  });
+
+  it("lets step lines take part in axis scaling while the reference stays out", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        referenceData={[{ time: "2026-01-05", value: 100 }]}
+        stepLines={[closedLine, openLine]}
+      />,
+    );
+
+    for (const option of stepSeriesOptions()) {
+      expect(option).not.toHaveProperty("autoscaleInfoProvider");
+    }
+    type ReferenceOptions = {
+      autoscaleInfoProvider: (base: () => unknown) => unknown;
+    };
+    const reference = chartMocks.addLineSeries.mock.calls[0]?.[0] as
+      | ReferenceOptions
+      | undefined;
+    expect(
+      reference?.autoscaleInfoProvider(() => ({
+        priceRange: { minValue: 100, maxValue: 100 },
+      })),
+    ).toBeNull();
+  });
+
+  it("replaces step series on change without leaking, and removes them with the prop", () => {
+    const { rerender } = render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[closedLine, openLine]}
+      />,
+    );
+
+    const chart = chartAt(0);
+    const firstSeries = addedStepSeries();
+    expect(firstSeries).toHaveLength(2);
+    expect(chart.removeSeries).not.toHaveBeenCalled();
+
+    rerender(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[openLine]}
+      />,
+    );
+
+    expect(chart.removeSeries).toHaveBeenCalledTimes(2);
+    expect(chart.removeSeries).toHaveBeenCalledWith(firstSeries[0]);
+    expect(chart.removeSeries).toHaveBeenCalledWith(firstSeries[1]);
+    expect(firstSeries[1]?.detachPrimitive).toHaveBeenCalledWith(
+      firstSeries[1]?.attachPrimitive.mock.calls[0]?.[0],
+    );
+    expect(addedStepSeries()).toHaveLength(3);
+
+    rerender(<TimeSeriesChart ariaLabel="Price history" data={priceData} />);
+
+    expect(chart.removeSeries).toHaveBeenCalledTimes(3);
+    expect(chart.removeSeries).toHaveBeenLastCalledWith(addedStepSeries()[2]);
+    expect(addedStepSeries()).toHaveLength(3);
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalled();
+  });
+
+  it("redraws step lines on a recreated chart without touching the removed one", () => {
+    const { rerender } = render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[closedLine, openLine]}
+      />,
+    );
+
+    // Height recreates the chart while the step lines change in the same render.
+    rerender(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[openLine]}
+        height={320}
+      />,
+    );
+
+    expect(chartMocks.createChart).toHaveBeenCalledTimes(2);
+    expect(chartMocks.remove).toHaveBeenCalledTimes(1);
+    const removedChart = chartAt(0);
+    const liveChart = chartAt(1);
+    expect(removedChart.removeSeries).not.toHaveBeenCalled();
+    expect(stepSeriesAddedTo(removedChart)).toBe(2);
+    expect(stepSeriesAddedTo(liveChart)).toBe(1);
+  });
+
+  it("shows the average after a buy in the trade tooltip", () => {
+    render(
+      <TimeSeriesChart
+        ariaLabel="Price history"
+        data={priceData}
+        stepLines={[openLine]}
+        markers={[
+          {
+            time: "2026-04-15",
+            side: "buy",
+            price: 112.25,
+            title: "Buy",
+            rows: [
+              { label: "Avg price", value: "112.25 USD" },
+              { label: "Avg after", value: "112.13 USD" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const onCrosshairMove = chartMocks.subscribeCrosshairMove.mock
+      .calls[0]?.[0] as ((param: unknown) => void) | undefined;
+    expect(onCrosshairMove).toBeDefined();
+    act(() => {
+      onCrosshairMove?.({ time: "2026-04-15", point: { x: 40, y: 60 } });
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Avg after");
+    expect(tooltip).toHaveTextContent("112.13 USD");
   });
 
   it("keeps the invested reference line out of axis scaling entirely", () => {
@@ -479,63 +760,5 @@ describe("TimeSeriesChart", () => {
       { time: "2026-01-03" },
       { time: "2026-01-04", value: 1000 },
     ]);
-  });
-
-  it("manages the cost basis price line without stacking or leaking handles", () => {
-    const { rerender } = render(
-      <TimeSeriesChart
-        ariaLabel="Price history"
-        data={[{ time: "2026-06-01", value: 300 }]}
-        costBasisLine={250}
-      />,
-    );
-
-    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(1);
-    expect(chartMocks.createPriceLine).toHaveBeenLastCalledWith({
-      price: 250,
-      color: "#e0b15e",
-      lineStyle: 1,
-      lineWidth: 1,
-      axisLabelVisible: true,
-      title: "",
-      lineVisible: true,
-    });
-
-    const firstHandle = chartMocks.createPriceLine.mock.results[0]?.value;
-    expect(chartMocks.removePriceLine).not.toHaveBeenCalled();
-
-    rerender(
-      <TimeSeriesChart
-        ariaLabel="Price history"
-        data={[{ time: "2026-06-01", value: 300 }]}
-        costBasisLine={275}
-      />,
-    );
-
-    expect(chartMocks.removePriceLine).toHaveBeenCalledTimes(1);
-    expect(chartMocks.removePriceLine).toHaveBeenLastCalledWith(firstHandle);
-    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(2);
-    expect(chartMocks.createPriceLine).toHaveBeenLastCalledWith({
-      price: 275,
-      color: "#e0b15e",
-      lineStyle: 1,
-      lineWidth: 1,
-      axisLabelVisible: true,
-      title: "",
-      lineVisible: true,
-    });
-
-    const secondHandle = chartMocks.createPriceLine.mock.results[1]?.value;
-
-    rerender(
-      <TimeSeriesChart
-        ariaLabel="Price history"
-        data={[{ time: "2026-06-01", value: 300 }]}
-      />,
-    );
-
-    expect(chartMocks.removePriceLine).toHaveBeenCalledTimes(2);
-    expect(chartMocks.removePriceLine).toHaveBeenLastCalledWith(secondHandle);
-    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(2);
   });
 });
