@@ -1,5 +1,6 @@
 import type {
   DateRange,
+  GainsPeriod,
   ValueHistoryPoint,
   ValueHistoryResponse,
 } from "../api/types";
@@ -367,16 +368,17 @@ function skippedFlow(
   );
 }
 
-const PERIOD_NAMES: Record<string, string> = {
+const PERIOD_NAMES: Record<Exclude<GainsPeriod, "custom">, string> = {
   today: "today",
   "7d": "last 7 days",
+  "30d": "last 30 days",
   "12m": "last 12 months",
   ytd: "year to date",
   all: "all time",
 };
 
 export interface ChartHeadingPeriod {
-  preset: string;
+  preset: GainsPeriod;
   startDate: string | null;
   endDate: string | null;
 }
@@ -403,8 +405,7 @@ export function chartPanelHeading({
 }
 
 function periodName(period: ChartHeadingPeriod): string {
-  const named = PERIOD_NAMES[period.preset];
-  if (named) return named;
+  if (period.preset !== "custom") return PERIOD_NAMES[period.preset];
   if (period.startDate && period.endDate) {
     return `${period.startDate} to ${period.endDate}`;
   }

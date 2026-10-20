@@ -30,6 +30,10 @@ pub fn resolve_period(
             start: Some(today - Duration::days(7)),
             end: today,
         },
+        Some("30d") => ResolvedPeriod {
+            start: Some(today - Duration::days(30)),
+            end: today,
+        },
         Some("12m") => ResolvedPeriod {
             start: Some(today.with_year(today.year() - 1).unwrap_or_else(|| {
                 NaiveDate::from_ymd_opt(today.year() - 1, 3, 1)
@@ -80,6 +84,7 @@ mod tests {
         for (preset, start, end) in [
             ("today", Some(d(2026, 9, 12)), d(2026, 9, 12)),
             ("7d", Some(d(2026, 9, 5)), d(2026, 9, 12)),
+            ("30d", Some(d(2026, 8, 13)), d(2026, 9, 12)),
             ("12m", Some(d(2025, 9, 12)), d(2026, 9, 12)),
             ("ytd", Some(d(2026, 1, 1)), d(2026, 9, 12)),
             ("all", None, d(2026, 9, 12)),

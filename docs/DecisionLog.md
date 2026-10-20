@@ -732,3 +732,8 @@ Consequences: The line cannot clip. Because an average lies between the prices p
 Decision: On the asset price chart, the "Avg after" row of the buy that set an open position's current average shows the backend's two-decimal Holdings text, the same text as the running average cost line's right-axis tag. Every other "Avg after" row keeps the adaptive unit-price formatter.
 Context: That row and the tag describe the same number. With the adaptive formatter they disagreed whenever the average had more than two decimals below 100 (51.7143 beside 51.71), or at a midpoint where half-up rounding differs from Holdings' midpoint-to-even (112.13 beside 112.12).
 Consequences: One position's buy tooltips can mix precisions (earlier buys 51.7143, the latest 51.71). Trade prices and every other chart tooltip row still follow the 2026-07-15 precision rule.
+
+## 2026-10-20 - Shared Performance Interval Includes 30 Days
+Decision: The shared Dashboard and Gains performance interval includes a 30-day preset, resolved by the backend as 30 calendar days back from its today through today, like 7D rather than one calendar month.
+Context: This updates the reasoning in the 2026-10-15 Opportunities window entry, which said the shared presets lacked both 2 weeks and 30 days.
+Consequences: Opportunities keeps its own recent-price-change window because its 2-week option and share-price-change meaning still differ from the shared performance interval.

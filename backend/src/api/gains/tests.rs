@@ -89,6 +89,22 @@ async fn a_period_preset_is_resolved_with_the_state_clock() {
 }
 
 #[tokio::test]
+async fn thirty_day_preset_resolves_calendar_days_with_the_state_clock() {
+    let state = AppState::for_tests()
+        .await
+        .with_clock(crate::clock::Clock::fixed(
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 5).expect("valid date"),
+        ));
+
+    let (status, body) = send(&state, "GET", "/api/gains?period=30d", json!({})).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["report_period"]["start_date"], "2026-02-03");
+    assert_eq!(body["report_period"]["end_date"], "2026-03-05");
+    assert_eq!(body["as_of_date"], "2026-03-05");
+}
+
+#[tokio::test]
 async fn an_unknown_period_is_rejected() {
     let state = AppState::for_tests().await;
 

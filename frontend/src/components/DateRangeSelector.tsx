@@ -19,11 +19,20 @@ const DEFAULT_SELECTION: DateRangeSelection = {
   customRange: { startDate: null, endDate: null },
 };
 
-const PRESETS: DatePreset[] = ["today", "7d", "12m", "ytd", "all", "custom"];
+const PRESETS: DatePreset[] = [
+  "today",
+  "7d",
+  "30d",
+  "12m",
+  "ytd",
+  "all",
+  "custom",
+];
 
 const PRESET_LABELS: Record<DatePreset, string> = {
   today: "Today",
   "7d": "7D",
+  "30d": "30D",
   "12m": "12M",
   ytd: "YTD",
   all: "All",

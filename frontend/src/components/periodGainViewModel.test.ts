@@ -579,7 +579,7 @@ describe("periodGainSeries — availability states", () => {
 
 describe("chartPanelHeading", () => {
   it("names the period in plain language for each preset", () => {
-    const heading = (preset: "today" | "7d" | "12m" | "ytd" | "all") =>
+    const heading = (preset: "today" | "7d" | "30d" | "12m" | "ytd" | "all") =>
       chartPanelHeading({
         view: "gain",
         unit: "sek",
@@ -588,6 +588,7 @@ describe("chartPanelHeading", () => {
 
     expect(heading("today")).toBe("Portfolio gain, today (SEK)");
     expect(heading("7d")).toBe("Portfolio gain, last 7 days (SEK)");
+    expect(heading("30d")).toBe("Portfolio gain, last 30 days (SEK)");
     expect(heading("12m")).toBe("Portfolio gain, last 12 months (SEK)");
     expect(heading("ytd")).toBe("Portfolio gain, year to date (SEK)");
     expect(heading("all")).toBe("Portfolio gain, all time (SEK)");

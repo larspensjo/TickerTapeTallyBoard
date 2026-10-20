@@ -60,6 +60,17 @@ describe("date range persistence", () => {
     expect(loadDateRangeSelection()).toEqual(selection);
   });
 
+  it("round-trips the 30-day preset through localStorage", () => {
+    const selection = {
+      datePreset: "30d" as const,
+      customRange: { startDate: null, endDate: null },
+    };
+
+    saveDateRangeSelection(selection);
+
+    expect(loadDateRangeSelection()).toEqual(selection);
+  });
+
   it("loads a custom selection saved in the previous shape", () => {
     localStorage.setItem(
       "portfolio.dateRangeSelection",
@@ -107,6 +118,39 @@ describe("DateRangeSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: "YTD" }));
 
     expect(onDatePresetChange).toHaveBeenCalledWith("ytd");
+    expect(onDateRangeChange).not.toHaveBeenCalled();
+  });
+
+  it("shows the 30D button between 7D and 12M and emits the 30-day preset", () => {
+    const onDatePresetChange = vi.fn();
+    const onDateRangeChange = vi.fn();
+
+    render(
+      <DateRangeSelector
+        customRange={{ startDate: null, endDate: null }}
+        selectedDatePreset="all"
+        onDatePresetChange={onDatePresetChange}
+        onDateRangeChange={onDateRangeChange}
+        valuationDate="2026-09-12"
+        ariaLabel="Test date range"
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    const labels = buttons.map((button) => button.textContent);
+    expect(labels).toEqual([
+      "Today",
+      "7D",
+      "30D",
+      "12M",
+      "YTD",
+      "All",
+      "Custom",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "30D" }));
+
+    expect(onDatePresetChange).toHaveBeenCalledWith("30d");
     expect(onDateRangeChange).not.toHaveBeenCalled();
   });
 
