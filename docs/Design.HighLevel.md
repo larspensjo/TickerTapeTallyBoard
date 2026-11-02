@@ -39,8 +39,8 @@ A self-hosted portfolio tracking application for stocks, ETFs, and funds, runnin
 | Testing | **`cargo test`** + **Vitest** (+ React Testing Library / jsdom) | Pure logic on both sides unit-tested; one runner per stack |
 
 ### Deployment model
-- **Dev:** `scripts/start.ps1 -Dev` runs the debug backend plus Vite, with Vite proxying `/api` to a loopback backend.
-- **Prod (home PC):** `scripts/start.ps1` builds a release backend and `frontend/dist`, then runs one executable serving those files from disk on the pinned loopback port `8480`. The production ledger is one SQLite file at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`; each launch writes an integrity-checked `VACUUM INTO` snapshot to the configured synced backup folder. Auto-start at logon and LAN access remain future work; LAN access must lift the loopback-only enforcement together with authentication.
+- **Dev:** `scripts/start.ps1 -Dev` runs the browser development loop: the debug backend plus Vite, with Vite proxying `/api` to a loopback backend. The browser is a development surface only.
+- **Prod (home PC):** `scripts/start.ps1` builds the release desktop shell and `frontend/dist`, then opens the native window, which serves the frontend and API in-process with no listener. A single installable desktop executable for other users is the intended direction. The production ledger is one SQLite file at `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite`; each launch writes an integrity-checked `VACUUM INTO` snapshot to the configured synced backup folder. Auto-start at logon and LAN access remain future work; LAN access must lift the loopback-only enforcement together with authentication.
 
 ### Testing strategy
 
@@ -77,7 +77,13 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
 - **Nasdaq Nordic:** Nasdaq's `api.nasdaq.com/api/nordic` interface is an undocumented internal API with no SLA, so the client is treated as best-effort. A provider outage or a stored mapping whose provider has no registered client is reported as an explicit `Unavailable` refresh item (serialized as `unavailable`). On backfill, Nasdaq rows that begin more than five calendar days after the requested start produce the `history_clamped` reason on a `Fetched` item. This warning-only heuristic can also be triggered by a recently listed instrument or a long holiday stretch, so it is not proof of a clamp. There is no per-instrument history-start marker; dates without usable rows flow through the existing value-history `incomplete` / `excluded_count` handling.
 - **Ambiguous instruments:** The authoritative signal that an instrument needs a hand mapping is a price refresh item with status `Ambiguous` (serialized as `ambiguous`). The asset page shows `No price source` when no provider-symbol rows exist, or `Price sources disabled` when rows exist but all are disabled. Ambiguity is visible only in `engine.log` or the raw refresh response because no UI renders refresh items.
 
-  Search Nasdaq by the instrument ISIN at `https://api.nasdaq.com/api/nordic/search?searchText=<ISIN>`. In `data[].instruments[]`, select the intended listing and copy its `orderbookId`, `assetClass`, and `currency`. Replace `123` below with the `instrument_id` from the `ambiguous` refresh item or the `instrument_id=` field in the corresponding `engine.log` warning, then run this against the locally running app (whose default port is 8480):
+  Search Nasdaq by the instrument ISIN at `https://api.nasdaq.com/api/nordic/search?searchText=<ISIN>`. In `data[].instruments[]`, select the intended listing and copy its `orderbookId`, `assetClass`, and `currency`. Replace `123` below with the `instrument_id` from the `ambiguous` refresh item or the `instrument_id=` field in the corresponding `engine.log` warning, then run this against a backend serving the production ledger. The desktop window has no HTTP listener, so start the browser development loop on that ledger first:
+
+  ```powershell
+  .\scripts\start.ps1 -Dev -NoBrowser -NoBackup -Port 8480 -DatabaseUrl (Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard\portfolio.sqlite")
+  ```
+
+  Then, from a second PowerShell window:
 
   ```powershell
   curl.exe -X PUT "http://localhost:8480/api/instruments/123/provider-symbols/NASDAQ_NORDIC" -H "Content-Type: application/json" -d '{"provider_symbol":"TX2997672","asset_class":"TRACKER_CERTIFICATES","currency":"SEK","enabled":true}'

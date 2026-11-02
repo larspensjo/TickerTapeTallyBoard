@@ -3,21 +3,23 @@
     Builds and runs TickerTapeTallyBoard.
 
 .DESCRIPTION
-    With no flags, builds the release backend and frontend static assets, then
-    runs the backend as the single application process on port 8480.
+    With no flags, builds the release desktop shell and frontend static assets,
+    then opens the native desktop window. Close the window to stop the app.
 
 .PARAMETER Dev
-    Uses debug builds; web mode also starts the Vite development server.
+    Runs the browser development loop: the debug backend plus the Vite
+    development server. Combine with -Desktop for the debug desktop window.
 
 .PARAMETER Desktop
-    Opens the native desktop window. Close the window to stop the app.
+    With -Dev, opens the debug desktop window instead of the browser loop.
+    Without -Dev it is accepted for compatibility; the desktop is the default.
 
 .PARAMETER ProbeWebView
-    Runs the native WebView2 probe (requires -Desktop).
+    Runs the native WebView2 probe in the desktop window.
 
 .PARAMETER Demo
-    Runs the seeded, in-memory demo. Alone it uses release static serving; with
-    -Dev it uses the Vite development loop.
+    Runs the seeded, in-memory demo. Alone it opens the desktop window; with
+    -Dev it uses the browser development loop.
 
 .PARAMETER InitLedger
     Allows the active non-demo ledger to be created when it is missing.
@@ -32,10 +34,13 @@
     Explicit SQLite database URL or path override for non-demo runs.
 
 .PARAMETER Port
-    Explicit backend port override.
+    Explicit backend port override for the browser development loop.
 
 .PARAMETER FrontendPort
-    Preferred Vite port for -Dev runs.
+    Preferred Vite port for the browser development loop.
+
+.PARAMETER NoBrowser
+    Starts the browser development loop without opening a browser.
 #>
 [CmdletBinding()]
 param(
@@ -179,43 +184,6 @@ function Resolve-FrontendPort {
     throw "No free frontend port was found starting at $PreferredPort."
 }
 
-function Get-PortOccupant {
-    param([Parameter(Mandatory = $true)][int]$Port)
-    $processId = $null
-    try {
-        $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
-            Select-Object -First 1
-        if ($connection) { $processId = [int]$connection.OwningProcess }
-    }
-    catch {
-        # Fall through to netstat for older Windows versions and restricted
-        # Get-NetTCPConnection environments.
-    }
-    if ($null -eq $processId) {
-        $netstatLine = netstat -ano |
-            Where-Object { $_ -match "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+(\d+)\s*$" } |
-            Select-Object -First 1
-        if ($netstatLine -match "\s(\d+)\s*$") { $processId = [int]$Matches[1] }
-    }
-    if ($null -eq $processId) { return $null }
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    return [pscustomobject]@{
-        Id = $processId
-        Name = if ($process) { $process.ProcessName } else { "unknown" }
-    }
-}
-
-function Assert-PinnedPortAvailable {
-    param([Parameter(Mandatory = $true)][int]$Port)
-    $occupant = Get-PortOccupant -Port $Port
-    if ($occupant) {
-        throw "Port $Port is already in use by process $($occupant.Name) (PID $($occupant.Id)). Use -Port <int> to choose another port."
-    }
-    if (-not (Test-PortAvailable -Port $Port)) {
-        throw "Port $Port is already in use, but its occupying process could not be identified. Use -Port <int> to choose another port."
-    }
-}
-
 function ConvertTo-SqliteUrl {
     param([Parameter(Mandatory = $true)][string]$Value)
     if ($Value.StartsWith("sqlite:", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -271,17 +239,24 @@ if ($Demo -and $PSBoundParameters.ContainsKey("DatabaseUrl")) {
 if ($Demo -and $InitLedger) {
     throw "-Demo cannot be combined with -InitLedger. Demo mode uses an in-memory ledger."
 }
-if ($ProbeWebView -and -not $Desktop) {
-    throw "-ProbeWebView requires -Desktop."
+# The desktop window is the application; only -Dev without -Desktop runs the
+# browser development loop.
+$UsesDesktop = $Desktop.IsPresent -or (-not $Dev)
+$UsesVite = -not $UsesDesktop
+if ($ProbeWebView -and -not $UsesDesktop) {
+    throw "-ProbeWebView runs in the desktop window; use it without -Dev, or with -Dev -Desktop."
 }
-if ($Desktop -and $PSBoundParameters.ContainsKey("Port")) {
-    throw "-Desktop cannot be combined with -Port because the desktop shell has no listener."
+if ($UsesDesktop -and $PSBoundParameters.ContainsKey("Port")) {
+    throw "-Port applies only to the browser development loop (-Dev); the desktop shell has no listener."
 }
-if ($Desktop -and $PSBoundParameters.ContainsKey("FrontendPort")) {
-    throw "-Desktop cannot be combined with -FrontendPort because it does not start Vite."
+if ($UsesDesktop -and $PSBoundParameters.ContainsKey("FrontendPort")) {
+    throw "-FrontendPort applies only to the browser development loop (-Dev)."
 }
-if ($Desktop -and $NoBrowser) {
-    throw "-Desktop cannot be combined with -NoBrowser because it opens no browser."
+if ($UsesDesktop -and $NoBrowser) {
+    throw "-NoBrowser applies only to the browser development loop (-Dev); the desktop opens no browser."
+}
+if ($Desktop -and -not $Dev) {
+    Write-Host "-Desktop is no longer needed; the desktop window is the default." -ForegroundColor Yellow
 }
 if ($ProbeWebView -and $PSBoundParameters.ContainsKey("DatabaseUrl")) {
     throw "-Desktop -ProbeWebView cannot be combined with -DatabaseUrl; the probe always uses demo mode."
@@ -304,23 +279,10 @@ if (-not (Test-Path $BackendDir)) { throw "Backend directory not found: $Backend
 if (-not (Test-Path $FrontendDir)) { throw "Frontend directory not found: $FrontendDir" }
 
 $RunMode = if ($Demo) { "demo" } elseif ($Dev) { "development" } else { "production" }
-$UsesVite = $Dev.IsPresent -and (-not $Desktop)
-$UsesPinnedPort = (-not $Desktop) -and (-not $Dev) -and (-not $Demo)
-$BackendPort = if ($UsesPinnedPort) {
-    if ($PSBoundParameters.ContainsKey("Port")) { $Port } else { $DefaultBackendPort }
-} else {
-    $null
-}
 $ExplicitDatabaseUrl = if ($PSBoundParameters.ContainsKey("DatabaseUrl")) {
     ConvertTo-SqliteUrl -Value $DatabaseUrl
 }
 $StaticAssetsDir = [System.IO.Path]::GetFullPath((Join-Path $FrontendDir "dist"))
-
-# Check the production socket before starting installers or build tools. A busy
-# pinned port is an operator error, not a reason to perform a partial launch.
-if ($UsesPinnedPort -and -not $BuildOnly) {
-    Assert-PinnedPortAvailable -Port $BackendPort
-}
 
 if (-not $SkipInstall) {
     Invoke-Step "Install frontend dependencies" {
@@ -330,10 +292,10 @@ if (-not $SkipInstall) {
     }
 }
 if (-not $SkipBuild) {
-    Invoke-Step $(if ($Desktop) { "Build desktop" } else { "Build backend" }) {
+    Invoke-Step $(if ($UsesDesktop) { "Build desktop" } else { "Build backend" }) {
         Push-Location $RepoRoot
         try {
-            $package = if ($Desktop) { "ticker-tape-tally-board-desktop" } else { "ticker-tape-tally-board-backend" }
+            $package = if ($UsesDesktop) { "ticker-tape-tally-board-desktop" } else { "ticker-tape-tally-board-backend" }
             $arguments = if ($Dev) {
                 @("build", "-p", $package)
             }
@@ -344,7 +306,7 @@ if (-not $SkipBuild) {
         }
         finally { Pop-Location }
     }
-    if ($Desktop -or -not $UsesVite) {
+    if ($UsesDesktop) {
         Invoke-Step "Build frontend" {
             Push-Location $FrontendDir
             try { Invoke-NativeCommand "npm.cmd" @("run", "build") }
@@ -352,8 +314,8 @@ if (-not $SkipBuild) {
         }
     }
 }
-elseif ($Desktop -or -not $UsesVite) {
-    Write-Warning "-SkipBuild can serve a stale frontend/dist and stale release binary."
+elseif ($UsesDesktop) {
+    Write-Warning "-SkipBuild can serve a stale frontend/dist and stale desktop binary."
 }
 
 if ($BuildOnly) {
@@ -364,7 +326,7 @@ if ($BuildOnly) {
 
 $BuildProfile = if ($Dev) { "debug" } else { "release" }
 $DesktopExe = Join-Path $RepoRoot "target/$BuildProfile/ticker-tape-tally-board-desktop.exe"
-if ($Desktop -and -not (Test-Path $DesktopExe)) {
+if ($UsesDesktop -and -not (Test-Path $DesktopExe)) {
     throw "Desktop executable not found: $DesktopExe. Run without -SkipBuild first."
 }
 
@@ -373,26 +335,22 @@ if ($UsesVite) {
     Stop-OrphanVite -Port $FrontendPort
     $ResolvedFrontendPort = Resolve-FrontendPort -PreferredPort $FrontendPort
 }
-# A pinned port was resolved and pre-checked above and is never scanned away.
-# Only the scanning modes choose their port here.
-if (-not $UsesPinnedPort) {
+$BackendPort = $null
+if ($UsesVite) {
     if ($PSBoundParameters.ContainsKey("Port")) {
-        if ($UsesVite -and $Port -eq $ResolvedFrontendPort) {
+        if ($Port -eq $ResolvedFrontendPort) {
             throw "-Port ($Port) must not match the frontend port ($ResolvedFrontendPort)."
         }
         $BackendPort = $Port
     }
-    elseif ($UsesVite) {
-        $BackendPort = Resolve-BackendPort -PreferredPort $DefaultBackendPort -FrontendPort $ResolvedFrontendPort
-    }
     else {
-        $BackendPort = Resolve-BackendPort -PreferredPort $DefaultBackendPort
+        $BackendPort = Resolve-BackendPort -PreferredPort $DefaultBackendPort -FrontendPort $ResolvedFrontendPort
     }
 }
 
 Write-Host ""
 Write-Host "==> Start application" -ForegroundColor Cyan
-if ($Desktop) { Write-Host "Desktop: $DesktopExe" }
+if ($UsesDesktop) { Write-Host "Desktop: $DesktopExe" }
 else { Write-Host "Backend: http://127.0.0.1:$BackendPort/" }
 if ($UsesVite) {
     Write-Host "Frontend: http://127.0.0.1:$ResolvedFrontendPort/"
@@ -404,25 +362,25 @@ if ($ProbeWebView) { Write-Host "Database: demo (in-memory, seeded; probe mode)"
 elseif ($Demo) { Write-Host "Database: demo (in-memory, seeded)" }
 elseif ($PSBoundParameters.ContainsKey("DatabaseUrl")) { Write-Host "Database: $ExplicitDatabaseUrl" }
 else { Write-Host "Database: application resolves the $RunMode default ledger; the runtime log records the resolved path" }
-if ($Desktop) {
+if ($UsesDesktop) {
     if ($env:LOCALAPPDATA) {
         Write-Host "Desktop logs: $(Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard\logs") (engine-desktop*.log)"
     }
     else { Write-Host "Desktop log: LOCALAPPDATA is unavailable (terminal logging only)" }
 }
-if ($Desktop) { Write-Host "Close the window to stop the app." }
+if ($UsesDesktop) { Write-Host "Close the window to stop the app." }
 else { Write-Host "Press Ctrl+C to stop the application." }
 Write-Host ""
 
 $BackendExe = Join-Path $RepoRoot "target/$BuildProfile/ticker-tape-tally-board-backend.exe"
-if (-not $Desktop -and -not (Test-Path $BackendExe)) {
+if ($UsesVite -and -not (Test-Path $BackendExe)) {
     throw "Backend executable not found: $BackendExe. Run without -SkipBuild first."
 }
 $BackendStdout = $null
 $BackendStderr = $null
 $FrontendStdout = $null
 $FrontendStderr = $null
-if (-not $Desktop) {
+if ($UsesVite) {
     $LogRoot = Join-Path $RepoRoot ".local/logs"
     New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
     $RunStamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
@@ -467,12 +425,12 @@ try {
     $env:TTTB_CREATE_LEDGER_IF_MISSING = if ($InitLedger) { "1" } else { "0" }
     $env:TTTB_BACKUP_ENABLED = if ($NoBackup) { "0" } else { "1" }
     $env:TTTB_MARKET_DATA_LAUNCH_REFRESH_ENABLED = if ($NoRefresh) { "0" } else { "1" }
-    if ($Desktop) { Remove-Item Env:\TTTB_PORT -ErrorAction SilentlyContinue }
+    if ($UsesDesktop) { Remove-Item Env:\TTTB_PORT -ErrorAction SilentlyContinue }
     else { $env:TTTB_PORT = $BackendPort }
     if ($UsesVite) { Remove-Item Env:\TTTB_STATIC_DIR -ErrorAction SilentlyContinue }
     else { $env:TTTB_STATIC_DIR = $StaticAssetsDir }
 
-    if ($Desktop) {
+    if ($UsesDesktop) {
         $desktopArguments = if ($ProbeWebView) { @("--probe-webview") } else { @() }
         $desktopStart = @{
             FilePath = $DesktopExe
@@ -499,34 +457,30 @@ try {
         -RedirectStandardError $BackendStderr `
         -PassThru `
         -WindowStyle Hidden
-    if ($UsesVite) {
-        $frontendProcess = Start-Process `
-            -FilePath "npm.cmd" `
-            -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $ResolvedFrontendPort, "--strictPort") `
-            -WorkingDirectory $FrontendDir `
-            -RedirectStandardOutput $FrontendStdout `
-            -RedirectStandardError $FrontendStderr `
-            -PassThru `
-            -WindowStyle Hidden
-    }
+    $frontendProcess = Start-Process `
+        -FilePath "npm.cmd" `
+        -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $ResolvedFrontendPort, "--strictPort") `
+        -WorkingDirectory $FrontendDir `
+        -RedirectStandardOutput $FrontendStdout `
+        -RedirectStandardError $FrontendStderr `
+        -PassThru `
+        -WindowStyle Hidden
     Wait-Url `
         -Url "http://127.0.0.1:$BackendPort/" `
         -Process $backendProcess `
         -StandardOutputPath $BackendStdout `
         -StandardErrorPath $BackendStderr `
         -Prefix "backend"
-    if ($UsesVite) {
-        Wait-Url `
-            -Url "http://127.0.0.1:$ResolvedFrontendPort/" `
-            -Process $frontendProcess `
-            -StandardOutputPath $FrontendStdout `
-            -StandardErrorPath $FrontendStderr `
-            -Prefix "frontend"
-    }
+    Wait-Url `
+        -Url "http://127.0.0.1:$ResolvedFrontendPort/" `
+        -Process $frontendProcess `
+        -StandardOutputPath $FrontendStdout `
+        -StandardErrorPath $FrontendStderr `
+        -Prefix "frontend"
     Write-Host "Application is running." -ForegroundColor Green
     Write-Host ""
     if (-not $NoBrowser) {
-        $BrowserUrl = if ($UsesVite) { "http://127.0.0.1:$ResolvedFrontendPort/" } else { "http://127.0.0.1:$BackendPort/" }
+        $BrowserUrl = "http://127.0.0.1:$ResolvedFrontendPort/"
         Write-Host "Opening $BrowserUrl in the default browser..." -ForegroundColor Cyan
         Start-Process $BrowserUrl
     }
@@ -535,7 +489,7 @@ try {
             Receive-AppJobOutput -StandardOutputPath $BackendStdout -StandardErrorPath $BackendStderr -Prefix "backend"
             throw "Backend process exited with code $($backendProcess.ExitCode)."
         }
-        if ($UsesVite -and $frontendProcess.HasExited) {
+        if ($frontendProcess.HasExited) {
             Receive-AppJobOutput -StandardOutputPath $FrontendStdout -StandardErrorPath $FrontendStderr -Prefix "frontend"
             throw "Frontend process exited with code $($frontendProcess.ExitCode)."
         }

@@ -16,40 +16,25 @@ cd frontend
 npm install
 ```
 
-Run the production composition:
+Run the application:
 
 ```powershell
 .\scripts\start.ps1
 ```
 
-With no flags, the script builds the release backend and `frontend/dist`, then
-runs the release backend as the sole application process at
-`http://127.0.0.1:8480/`. The backend serves the built static frontend. It
-resolves its production ledger at
+With no flags, the script builds the release desktop shell and `frontend/dist`,
+then opens the application in a native Windows window. The desktop shell has no
+listener and opens no browser. It resolves its production ledger at
 `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio.sqlite` from backend
 configuration. On a fresh clone, create that ledger once with
 `.\scripts\start.ps1 -InitLedger`. Existing installs that still use the old
 repository-local ledger must first run `.\scripts\migrate-ledger.ps1`. The first
-release build can take several minutes.
+release build can take several minutes. Close the window to stop the app.
 
-The script blocks until Ctrl+C. Run a second PowerShell window when a procedure
-needs a second instance.
+The desktop window is the only everyday way to run the application. `-Desktop`
+is still accepted on its own but is no longer needed.
 
-Run the same built frontend in a native Windows window:
-
-```powershell
-.\scripts\start.ps1 -Desktop
-```
-
-The desktop shell uses the same production ledger configuration as the web
-shell but has no listener or browser step. Close the window to stop the app.
-For the seeded, read-only presentation demo in the native window:
-
-```powershell
-.\scripts\start.ps1 -Desktop -Demo
-```
-
-For the debug backend plus Vite development loop (including HMR):
+For the browser development loop (debug backend plus Vite, including HMR):
 
 ```powershell
 .\scripts\start.ps1 -Dev
@@ -57,7 +42,9 @@ For the debug backend plus Vite development loop (including HMR):
 
 Vite proxies `/api` to the backend, so the frontend can call `/api/health`
 without a separate development API URL. Development can scan to a free backend
-port and a free Vite port.
+port and a free Vite port. The loop blocks until Ctrl+C; run a second PowerShell
+window when a procedure needs a second instance. `.\scripts\start.ps1 -Dev
+-Desktop` opens the debug desktop window instead of the browser loop.
 
 Development uses the separate ledger
 `%LOCALAPPDATA%\TickerTapeTallyBoard\portfolio-dev.sqlite`. Create a new dev
@@ -83,8 +70,8 @@ For the seeded, in-memory demo:
 .\scripts\start.ps1 -Demo
 ```
 
-`-Demo` alone uses the release/static composition for a presentation-ready
-demo. It composes with `-Dev` when the Vite loop is wanted.
+`-Demo` alone opens the seeded, read-only presentation demo in the desktop
+window. It composes with `-Dev` when the browser loop is wanted.
 
 For a faster rerun after dependencies and builds are already current:
 
@@ -92,14 +79,14 @@ For a faster rerun after dependencies and builds are already current:
 .\scripts\start.ps1 -SkipInstall -SkipBuild
 ```
 
-`-SkipBuild` in the release/static composition can serve a stale
-`frontend/dist` and release binary.
+`-SkipBuild` for the desktop window can open a stale `frontend/dist` and
+desktop binary.
 
-Use `-DatabaseUrl` to explicitly override the non-demo ledger, and `-Port` to
-explicitly override the backend port:
+Use `-DatabaseUrl` to explicitly override the non-demo ledger. In the browser
+development loop, `-Port` explicitly overrides the backend port:
 
 ```powershell
-.\scripts\start.ps1 -DatabaseUrl "sqlite://C:/path/to/ledger.sqlite" -Port 8481
+.\scripts\start.ps1 -Dev -DatabaseUrl "sqlite://C:/path/to/ledger.sqlite" -Port 8481
 ```
 
 `-InitLedger` sets `TTTB_CREATE_LEDGER_IF_MISSING=1`. `-NoBackup` sets
@@ -113,10 +100,11 @@ variables `TTTB_DEMO_MODE`, `TTTB_PRODUCTION_DATABASE_URL`, and
 `TTTB_DATABASE_URL` instead.
 
 The remaining launcher switches are `-FrontendPort` (preferred Vite port in
-development), `-SkipInstall`, `-SkipBuild`, `-BuildOnly`, and `-NoBrowser`.
-`-NoBrowser` suppresses the browser opened by web runs; it is not a desktop
-window option. `-Desktop -ProbeWebView` runs the native transport probe; it
-always uses demo mode and rejects a database override.
+the browser loop), `-SkipInstall`, `-SkipBuild`, `-BuildOnly`, and
+`-NoBrowser`. `-Port`, `-FrontendPort`, and `-NoBrowser` belong to the browser
+development loop and are rejected for the desktop window. `-ProbeWebView` runs
+the native transport probe; it always uses demo mode and rejects a database
+override.
 
 ## Backend Commands
 
@@ -134,7 +122,7 @@ cargo fmt
 The native-window transport probe is available through the launcher:
 
 ```powershell
-.\scripts\start.ps1 -Desktop -ProbeWebView
+.\scripts\start.ps1 -ProbeWebView
 ```
 
 Run it in an interactive Windows session with WebView2 available. It renders
@@ -169,7 +157,7 @@ message create separate rotation boundaries.
 If the log file cannot be opened, the app still starts and writes logs to the
 terminal instead.
 
-Each web-mode `scripts/start.ps1` launch writes its redirected process output under
+Each browser development loop launch of `scripts/start.ps1` writes its redirected process output under
 `.local/logs/run-<UTC timestamp>/` as `backend.out.log`, `backend.err.log`,
 `frontend.out.log`, and `frontend.err.log`. The launcher keeps the five newest
 run directories; connectivity and provider probe logs directly under
@@ -248,22 +236,35 @@ backup.
 
 ### Restore drill
 
-Run this procedure with two PowerShell windows because `scripts/start.ps1` blocks
-until Ctrl+C. It captures the live instance before any writes, restores the
-launch snapshot into a clean directory, and compares the two read-only views.
-Before starting, build the current checkout once with
-`.\scripts\start.ps1 -BuildOnly` so `-SkipBuild` cannot run stale artifacts.
+Run this procedure with two PowerShell windows because the browser development
+loop blocks until Ctrl+C. The desktop window has no HTTP listener, so the
+measurements read the ledger through the browser development loop's backend
+with an explicit database. The procedure takes a launch snapshot, captures the
+live ledger before any writes, restores the snapshot into a clean directory, and
+compares the two read-only views. Before starting, build the current checkout
+once with `.\scripts\start.ps1 -BuildOnly` and `.\scripts\start.ps1 -Dev
+-BuildOnly` so `-SkipBuild` cannot run stale artifacts.
 
-1. In window 1, start the live production instance with launch refresh disabled.
-   `-SkipInstall` and `-SkipBuild` use the already-installed dependencies and
-   built artifacts:
+1. In window 1, open the desktop application with launch refresh disabled so
+   its launch writes a snapshot of the live ledger, then close the window
+   without making any changes. `-SkipInstall` and `-SkipBuild` use the
+   already-installed dependencies and built artifacts:
 
    ```powershell
-   .\scripts\start.ps1 -SkipInstall -SkipBuild -NoBrowser -NoRefresh
+   .\scripts\start.ps1 -SkipInstall -SkipBuild -NoRefresh
    ```
 
-2. In window 2, define the comparison settings and immediately capture from the
-   live instance. Do not write to the application while this procedure is in
+2. In window 1, serve the live ledger through the browser development loop on
+   the capture tooling's default port. `-NoBackup` keeps this measurement from
+   adding a snapshot, and `-NoRefresh` keeps prices identical to the snapshot:
+
+   ```powershell
+   .\scripts\start.ps1 -Dev -SkipInstall -SkipBuild -NoBrowser -NoBackup -NoRefresh `
+       -Port 8480 -DatabaseUrl (Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard\portfolio.sqlite")
+   ```
+
+3. In window 2, define the comparison settings and immediately capture from the
+   live ledger. Do not write to the application while this procedure is in
    progress. `-NoRefresh` matters because the launch snapshot and the captured
    state must be identical.
 
@@ -281,9 +282,9 @@ Before starting, build the current checkout once with
    }
    ```
 
-3. Stop the live instance in window 1 with Ctrl+C.
+4. Stop the live instance in window 1 with Ctrl+C.
 
-4. In window 2, select the newest ordinary launch snapshot, excluding
+5. In window 2, select the newest ordinary launch snapshot, excluding
    pre-migration snapshots and incomplete or failed files. Restore it into a
    freshly removed-and-recreated directory. Removing the directory first is
    required because stale SQLite `-wal`/`-shm` sidecars would otherwise be
@@ -309,7 +310,7 @@ Before starting, build the current checkout once with
    Copy-Item -LiteralPath $snapshot.FullName -Destination (Join-Path $restoreDirectory "portfolio.sqlite")
    ```
 
-5. In window 1, start a second backend against the restored copy. Both
+6. In window 1, start a second backend against the restored copy. Both
    `-NoBackup` and `-NoRefresh` are required: the first prevents the drill from
    polluting the retention ladder, and the second prevents fresh prices from
    changing the copy being measured. `-NoBackup` does not disable the mandatory
@@ -319,11 +320,11 @@ Before starting, build the current checkout once with
 
    ```powershell
    $restoreDirectory = Join-Path $env:LOCALAPPDATA "TickerTapeTallyBoard\restore-drill"
-   .\scripts\start.ps1 -SkipInstall -SkipBuild -NoBrowser -NoBackup -NoRefresh `
+   .\scripts\start.ps1 -Dev -SkipInstall -SkipBuild -NoBrowser -NoBackup -NoRefresh `
        -Port 8481 -DatabaseUrl (Join-Path $restoreDirectory "portfolio.sqlite")
    ```
 
-6. In window 2, capture the restored instance with the same `$endDate` and
+7. In window 2, capture the restored instance with the same `$endDate` and
    `$method`:
 
    ```powershell
@@ -339,7 +340,7 @@ Before starting, build the current checkout once with
    }
    ```
 
-7. Diff the captures with `-FailOnChange`. The normal diff summary prints first;
+8. Diff the captures with `-FailOnChange`. The normal diff summary prints first;
    the command passes only when `$LASTEXITCODE -eq 0`.
 
    ```powershell
@@ -391,15 +392,6 @@ npm run dev
 npm run check
 npm run fmt
 npm run build
-```
-
-## Static-serving smoke test
-
-After starting the default production composition, smoke-test both surfaces:
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:8480/ -UseBasicParsing
-Invoke-WebRequest http://127.0.0.1:8480/api/health -UseBasicParsing
 ```
 
 ## Sharesight Import Spike
