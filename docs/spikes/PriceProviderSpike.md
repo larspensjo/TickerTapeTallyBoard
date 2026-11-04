@@ -3,9 +3,14 @@
 **Date:** 2026-06-13
 **Scope:** Phase 0 representative EOD and FX provider check for one USD instrument and one EUR instrument.
 
+> The sections from **Summary** to **Provider Trait Requirements** record the original
+> 2026-06-13 assessment and observations. They are kept as written, except for
+> pointers on conclusions that no longer hold. **Update 2026-11-04** gives current
+> guidance and the application's actual behaviour. It wins where the two differ.
+
 ## Summary
 
-Use Yahoo Finance's unofficial chart endpoint as the v1 primary equity EOD provider, and use Frankfurter v2 as the FX provider for SEK conversion. Keep Twelve Data as the first fallback equity provider if Yahoo becomes unreliable or unacceptable, because it documents Euronext Amsterdam coverage and has a free personal API key path, but it requires a key for actual time-series requests.
+Use Yahoo Finance's unofficial chart endpoint as the v1 primary equity EOD provider, and use Frankfurter v2 as the FX provider for SEK conversion. Keep Twelve Data as the first fallback equity provider if Yahoo becomes unreliable or unacceptable, because it documents Euronext Amsterdam coverage and has a free personal API key path, but it requires a key for actual time-series requests. *(Historical: Amsterdam is not on the free tier, and Nasdaq Nordic, not Twelve Data, became the second provider. See Update 2026-11-04.)*
 
 This is a personal self-hosted app choice, not a general commercial licensing recommendation. Re-check provider terms before any hosted or distributed use.
 
@@ -57,7 +62,7 @@ Concerns:
 
 - Endpoint is unofficial for this use and can change without notice.
 - Yahoo's API terms reserve discretionary rate limits and restrict excessive or abusive usage.
-- Provider may serve split-adjusted historical prices. Valuation should multiply provider close by derived quantity for the valuation date, while later chart buy markers may need split-ratio adjustment.
+- Provider may serve split-adjusted historical prices. Valuation should multiply provider close by derived quantity for the valuation date, while later chart buy markers may need split-ratio adjustment. *(Historical, incorrect: the quantity must also be adjusted for later splits. See Update 2026-11-04, "Split-adjusted valuation".)*
 - Tests should use recorded fixtures rather than live calls.
 
 ### Frankfurter v2 FX API
@@ -96,7 +101,7 @@ Strengths:
 Concerns:
 
 - This solves FX only, not equity prices.
-- The API's default provider set is blended unless constrained by provider parameters. For deterministic accounting rules, decide in Phase 0.7 whether to pin to a provider such as ECB or accept blended central-bank rates.
+- The API's default provider set is blended unless constrained by provider parameters. For deterministic accounting rules, decide in Phase 0.7 whether to pin to a provider such as ECB or accept blended central-bank rates. *(Historical: settled on 2026-06-13 in favour of ECB. The request URLs and rates above were unfiltered, so they show blended rates. See Update 2026-11-04, "FX source".)*
 
 ### Twelve Data
 
@@ -171,7 +176,7 @@ Primary v1 equity provider: Yahoo Finance chart endpoint.
 
 Primary v1 FX provider: Frankfurter v2, storing `USD -> SEK` and `EUR -> SEK` rates directly.
 
-Fallback strategy:
+Fallback strategy *(historical: this is not how the application selects providers today, and a free Twelve Data key does not cover Amsterdam. See Update 2026-11-04, "Current price providers" and "Twelve Data")*:
 
 1. Use recorded fixtures for deterministic tests and local development.
 2. If Yahoo fails or becomes unacceptable, add Twelve Data behind the same provider trait after verifying `MSFT` and `ASML` time-series calls with a real free key.
@@ -189,10 +194,111 @@ A later provider boundary should support:
 - Provider-specific symbol mappings stored outside instrument identity.
 - Fixture-backed tests that do not call live services.
 
+## Update 2026-11-04
+
+This section corrects guidance above that conflicts with later decisions, the
+implementation, or current provider documentation. The June observations above are
+unchanged.
+
+### Split-adjusted valuation
+
+Yahoo's daily history is split-adjusted: after a split, earlier closes are restated in
+post-split units. A historical valuation must therefore multiply the restated close by
+the quantity **adjusted for every split after the valuation date**, not by the raw
+ledger quantity held on that date.
+
+Example: 10 shares held when the close was $100 are worth $1,000. After a later 2:1
+split, the provider restates that close to $50. The valuation uses 20 adjusted
+shares × $50 = $1,000. Raw 10 shares × $50 would understate it as $500.
+
+This is the 2026-06-19 decision "Split-Adjusted Quantities For Period Valuation".
+The cumulative factor for a split with delta d at quantity q is (q + d) / q. The
+performance computation implements it.
+
+### FX source
+
+The 2026-06-13 decision "Base Currency And FX Rules" pins Frankfurter to the European
+Central Bank where it supports the date and pair, and the Frankfurter client sends
+`providers=ECB` by default. Frankfurter's documentation confirms that unfiltered
+requests return rates blended across all its providers.
+
+The June request URLs and the rates table above were unfiltered, so they are blended
+rates. They stay as the original observation. ECB-pinned verification, re-requested
+on 2026-11-04 for the same June range:
+
+| Pair | Date | ECB (`providers=ECB`) | Unfiltered (blended) |
+|---|---:|---:|---:|
+| USD/SEK | 2026-06-08 | 9.4246 | 9.4135 |
+| USD/SEK | 2026-06-12 | 9.4476 | 9.4741 |
+| EUR/SEK | 2026-06-08 | 10.876 | 10.8852 |
+| EUR/SEK | 2026-06-12 | 10.928 | 10.9531 |
+
+```text
+https://api.frankfurter.dev/v2/rates?from=2026-06-08&to=2026-06-12&base=USD&quotes=SEK&providers=ECB
+https://api.frankfurter.dev/v2/rates?from=2026-06-08&to=2026-06-12&base=EUR&quotes=SEK&providers=ECB
+```
+
+The two differ by up to about 0.3%. That is why the accounting rules use ECB.
+
+### Twelve Data
+
+Twelve Data's exchange coverage lists Euronext Amsterdam (XAMS) only from the paid
+**Grow** individual plan (Venture for business use). The free **Basic** plan's
+exchanges are the United States, forex and crypto. The June symbol search with the
+demo key showed that Twelve Data knows the listing, not that a free key can fetch its
+price history.
+
+Twelve Data is therefore a potential **paid** fallback for Amsterdam listings, still
+subject to verifying actual time-series access with such a key. It is not implemented
+and is not a free fallback.
+
+### Current price providers
+
+The application does not switch providers whenever Yahoo fails. Its selection rules
+are the 2026-08-29 decision "Nasdaq Nordic is a second automatic provider with
+per-date resolution":
+
+- Yahoo Finance is the first automatic price provider, and Nasdaq Nordic is the second.
+- For each date, the enabled source with a stored row wins, by that precedence.
+  Disabled mappings count as no source, and their stored rows are never promoted.
+- Nasdaq is connected automatically only for an instrument **without** an enabled
+  Yahoo mapping, and only when exactly one search candidate matches the instrument
+  currency. Ambiguous instruments stay unmapped until mapped by hand.
+- A Yahoo outage does not fail over to Nasdaq for an instrument with an enabled Yahoo
+  mapping, and Nasdaq does not fill that instrument's Yahoo gaps.
+- Price history, portfolio value history and day change all read through this
+  per-date resolution. Day change is unavailable when the latest and previous closes
+  come from different sources.
+
+Manual price CSV import remains the documented last resort from the 2026-06-13
+decision.
+
+### Is the latest daily bar final?
+
+The spike set no finality rule for "EOD". Lars settled it on 2026-11-04: a daily bar
+counts as a close only once its trading session has ended. See `docs/DecisionLog.md`,
+"A daily close counts only after its trading session has ended". Until that is
+implemented, the application behaves as follows:
+
+- A latest refresh requests Yahoo history up to today, by the backend clock.
+- The Yahoo parser stores every returned daily bar that has a close, without checking
+  whether that day's trading session has ended.
+- A refresh during market hours therefore stores the moving intraday price as today's
+  close, and it counts as fresh. The next refresh that covers that date overwrites it
+  (latest refreshes re-request a recent window). Until then, valuations and day change
+  use the intraday value.
+- The company-figures spike recorded exactly this: chart fixtures captured at about
+  16:00 UTC carried a 2026-11-04 bar that was an intraday value.
+- Nasdaq Nordic's behaviour for the current day was not checked. It must be
+  established before that provider can follow the rule.
+
 ## Sources Checked
 
 - Yahoo Developer API Terms of Use: `https://legal.yahoo.com/us/en/yahoo/terms/product-atos/apiforydn/index.html`
 - Frankfurter v2 API documentation: `https://frankfurter.dev/`
 - Twelve Data documentation and Euronext Amsterdam exchange page: `https://twelvedata.com/docs`, `https://twelvedata.com/exchanges/XAMS`
+- Twelve Data exchange coverage by plan (checked 2026-11-04): `https://twelvedata.com/exchanges?level=grow`, `https://twelvedata.com/exchanges?level=basic`
 - Alpha Vantage documentation and support page: `https://www.alphavantage.co/documentation/`, `https://www.alphavantage.co/support/`
 - Stooq historical data page: `https://stooq.com/db/h/`
+- Company figures and report dates (Yahoo fundamentals-timeseries, Nasdaq US earnings
+  dates): see `docs/spikes/FundamentalsSourceSpike.md`
