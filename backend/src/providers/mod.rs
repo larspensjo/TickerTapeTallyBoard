@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -270,6 +270,8 @@ pub trait SymbolSearchProvider: Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriceHistoryRequest {
+    /// Application-clock instant used by providers to establish session finality.
+    pub as_of: DateTime<Utc>,
     pub symbol: String,
     pub asset_class: Option<String>,
     pub quote_currency: Option<String>,
@@ -551,6 +553,10 @@ mod tests {
 
         let prices = price
             .daily_history(&PriceHistoryRequest {
+                as_of: crate::clock::Clock::fixed(
+                    NaiveDate::from_ymd_opt(2026, 6, 13).expect("date"),
+                )
+                .now_utc(),
                 symbol: "MSFT".to_owned(),
                 asset_class: None,
                 quote_currency: None,

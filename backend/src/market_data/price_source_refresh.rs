@@ -26,8 +26,10 @@ pub(super) const HISTORY_CLAMP_TOLERANCE_DAYS: i64 = 5;
 ///
 /// A failure disables or reports only *this* mapping; the instrument's other
 /// sources are fetched independently by the caller.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn refresh_one_source(
     providers: &ProviderSet,
+    clock: &crate::clock::Clock,
     pool: &SqlitePool,
     target: &RefreshTarget,
     source: &PriceSourceMapping,
@@ -56,7 +58,9 @@ pub(super) async fn refresh_one_source(
         }));
     }
 
-    let resolved = match price_history_for_source(providers, instrument, source, window).await {
+    let resolved = match price_history_for_source(providers, clock, instrument, source, window)
+        .await
+    {
         Ok(resolved) => resolved,
         Err(error) => {
             crate::engine_warn!(
@@ -228,6 +232,7 @@ pub(super) async fn persist_mapping(
 /// provider is a straight fetch against the mapping as stored.
 pub(super) async fn price_history_for_source(
     providers: &ProviderSet,
+    clock: &crate::clock::Clock,
     instrument: &crate::db::instruments::InstrumentRow,
     source: &PriceSourceMapping,
     window: &RefreshWindow,
@@ -237,6 +242,7 @@ pub(super) async fn price_history_for_source(
             instrument,
             &source.provider_symbol,
             window,
+            clock,
             providers.price_provider(MarketDataProvider::Yahoo),
             providers.symbol_search_provider(MarketDataProvider::Yahoo),
         )
@@ -251,6 +257,7 @@ pub(super) async fn price_history_for_source(
     })?;
     let rows = client
         .daily_history(&PriceHistoryRequest {
+            as_of: clock.now_utc(),
             symbol: source.provider_symbol.clone(),
             asset_class: source.asset_class.clone(),
             quote_currency: source.currency.clone(),

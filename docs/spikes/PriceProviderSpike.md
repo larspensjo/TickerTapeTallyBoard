@@ -277,20 +277,30 @@ decision.
 
 The spike set no finality rule for "EOD". Lars settled it on 2026-11-04: a daily bar
 counts as a close only once its trading session has ended. See `docs/DecisionLog.md`,
-"A daily close counts only after its trading session has ended". Until that is
-implemented, the application behaves as follows:
+"A daily close counts only after its trading session has ended". The implemented
+behavior following the 2026-11-04 checks is:
 
-- A latest refresh requests Yahoo history up to today, by the backend clock.
-- The Yahoo parser stores every returned daily bar that has a close, without checking
-  whether that day's trading session has ended.
-- A refresh during market hours therefore stores the moving intraday price as today's
-  close, and it counts as fresh. The next refresh that covers that date overwrites it
-  (latest refreshes re-request a recent window). Until then, valuations and day change
-  use the intraday value.
-- The company-figures spike recorded exactly this: chart fixtures captured at about
-  16:00 UTC carried a 2026-11-04 bar that was an intraday value.
-- Nasdaq Nordic's behaviour for the current day was not checked. It must be
-  established before that provider can follow the rule.
+- A latest refresh requests price history up to today, by the backend clock, and
+  every price request carries the current instant from that same injected clock.
+- Yahoo withholds the current regular session's daily bar until the response's
+  `currentTradingPeriod.regular.end` plus 30 minutes. Earlier sessions are kept.
+  The company-figures chart fixtures captured at about 16:00 UTC on 2026-11-04
+  carried an intraday bar for that date; it is now withheld during the session
+  and the margin after its end.
+- If Yahoo's current regular trading period is missing or malformed, bars dated
+  on or after the listing-local date of the request instant are withheld, using
+  the response's `meta.gmtoffset`. If that offset is also missing or unusable,
+  the same rule uses UTC dates.
+- Nasdaq Nordic never stores a row dated on or after the request instant's UTC
+  date. On 2026-11-04, the current Stockholm row was absent an hour after close,
+  and the response carried no signal establishing whether a row was final.
+  Nordic exchanges are at UTC+0 through UTC+3, so the UTC-date cutoff is
+  deliberately conservative: a final close can wait until a refresh after UTC
+  midnight.
+- During a session, the previous close carries the same minor 1-day staleness
+  indication it already carries before the open.
+- Existing provisional rows are not deleted; a later post-close refresh overwrites
+  them because latest refreshes re-request a recent window. FX is unchanged.
 
 ## Sources Checked
 

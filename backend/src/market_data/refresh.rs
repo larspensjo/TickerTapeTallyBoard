@@ -350,9 +350,7 @@ impl MarketDataService {
             owner: self.inner.owner.clone(),
             cancelled,
         };
-        let outcome = self
-            .execute_refresh(pool, clock.today(), &request, &lease)
-            .await;
+        let outcome = self.execute_refresh(pool, clock, &request, &lease).await;
         let (status, message) = match &outcome {
             Ok(outcome) => (outcome.status, outcome.message.clone()),
             Err(error) => (RefreshRunStatus::Failed, Some(error.to_string())),
@@ -466,11 +464,11 @@ impl MarketDataService {
     async fn execute_refresh(
         &self,
         pool: &SqlitePool,
-        today: NaiveDate,
+        clock: &crate::clock::Clock,
         request: &RefreshPricesRequest,
         lease: &RefreshLease,
     ) -> Result<RefreshOutcome, MarketDataError> {
-        refresh_execution::execute_refresh(&self.inner.providers, pool, today, request, lease).await
+        refresh_execution::execute_refresh(&self.inner.providers, pool, clock, request, lease).await
     }
 }
 

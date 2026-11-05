@@ -165,6 +165,9 @@ impl NasdaqNordicClient {
             ));
         }
 
+        // No response field establishes finality. Nordic local dates are never
+        // behind UTC, so waiting until the next UTC day is conservative.
+        rows.retain(|row| row.date < request.as_of.date_naive());
         rows.sort_by_key(|row| row.date);
         Ok(rows)
     }
@@ -463,6 +466,7 @@ mod tests {
         currency: Option<&str>,
     ) -> PriceHistoryRequest {
         PriceHistoryRequest {
+            as_of: "2026-08-28T12:00:00Z".parse().expect("instant"),
             symbol: symbol.to_owned(),
             asset_class: asset_class.map(str::to_owned),
             quote_currency: currency.map(str::to_owned),
@@ -490,6 +494,28 @@ mod tests {
         );
         assert_eq!(rows[0].provider_symbol, "TX2997672");
         assert_eq!(rows[0].currency, "SEK");
+    }
+
+    #[test]
+    fn latest_row_is_withheld_until_the_next_utc_day() {
+        let body =
+            include_str!("../../tests/fixtures/market_data/nasdaq_price_history_ava_samsung.json");
+        let mut request = request("TX2997672", Some("TRACKER_CERTIFICATES"), Some("SEK"));
+        request.as_of = "2026-08-27T23:59:59Z".parse().expect("instant");
+        let rows = NasdaqNordicClient::parse_price_response(&request, body).expect("history");
+        assert_eq!(rows.len(), 412);
+        assert!(rows.iter().all(|row| row.date < request.as_of.date_naive()));
+        request.as_of = "2026-08-28T00:00:00Z".parse().expect("instant");
+        let rows = NasdaqNordicClient::parse_price_response(&request, body).expect("history");
+        assert_eq!(rows.len(), 413);
+        assert_eq!(
+            rows.last().expect("latest close").date.to_string(),
+            "2026-08-27"
+        );
+        request.as_of = "2025-01-02T23:59:59Z".parse().expect("instant");
+        assert!(NasdaqNordicClient::parse_price_response(&request, body)
+            .expect("provisional bars are not an error")
+            .is_empty());
     }
 
     #[test]
@@ -662,6 +688,7 @@ mod tests {
     fn builds_expected_price_history_and_search_urls() {
         let client = NasdaqNordicClient::with_base_url("http://localhost:8480/api/nordic/");
         let request = PriceHistoryRequest {
+            as_of: "2026-08-28T12:00:00Z".parse().expect("instant"),
             symbol: "TX271/quoted".to_owned(),
             asset_class: Some("SHARES & CERTIFICATES".to_owned()),
             quote_currency: Some("SEK".to_owned()),
@@ -738,6 +765,7 @@ mod tests {
     fn split_adjusted_nasdaq_history_agrees_with_yahoo_within_tolerance() {
         let nasdaq = NasdaqNordicClient::parse_price_response(
             &PriceHistoryRequest {
+                as_of: "2026-08-28T12:00:00Z".parse().expect("instant"),
                 symbol: "TX76".to_owned(),
                 asset_class: Some("SHARES".to_owned()),
                 quote_currency: Some("SEK".to_owned()),
@@ -752,6 +780,7 @@ mod tests {
         let yahoo = crate::providers::yahoo::YahooChartClient::parse_response(
             "INVE-B.ST",
             include_str!("../../tests/fixtures/market_data/yahoo_inve_b_adjusted.json"),
+            "2026-08-28T12:00:00Z".parse().expect("instant"),
         )
         .expect("Yahoo fixture should parse");
 

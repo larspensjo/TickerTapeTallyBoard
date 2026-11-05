@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Days, NaiveDate, Weekday};
 use sqlx::sqlite::SqlitePool;
 
 use crate::{
@@ -39,6 +39,7 @@ pub(crate) async fn price_history_with_symbol_recovery(
     instrument: &crate::db::instruments::InstrumentRow,
     mapped_symbol: &str,
     window: &super::refresh::RefreshWindow,
+    clock: &crate::clock::Clock,
     price_provider: Option<&Arc<dyn PriceProvider + Send + Sync>>,
     symbol_search_provider: Option<&Arc<dyn SymbolSearchProvider + Send + Sync>>,
 ) -> Result<ResolvedPriceHistory, ProviderError> {
@@ -50,6 +51,7 @@ pub(crate) async fn price_history_with_symbol_recovery(
     };
     let initial = client
         .daily_history(&PriceHistoryRequest {
+            as_of: clock.now_utc(),
             symbol: mapped_symbol.to_owned(),
             asset_class: None,
             quote_currency: None,
@@ -61,7 +63,9 @@ pub(crate) async fn price_history_with_symbol_recovery(
     match initial {
         Ok(rows) => {
             let latest_date = latest_close_date(&rows);
-            if latest_date.is_some_and(|date| date >= window.end) {
+            // Today's bar may still be provisional. The previous weekday's
+            // close is current enough to keep the established mapping.
+            if latest_date.is_some_and(|date| date >= previous_weekday_before(window.end)) {
                 return Ok(ResolvedPriceHistory::new(mapped_symbol, rows));
             }
 
@@ -69,6 +73,7 @@ pub(crate) async fn price_history_with_symbol_recovery(
                 instrument,
                 mapped_symbol,
                 window,
+                clock,
                 latest_date,
                 Some(client),
                 symbol_search_provider,
@@ -89,6 +94,7 @@ pub(crate) async fn price_history_with_symbol_recovery(
                     instrument,
                     mapped_symbol,
                     window,
+                    clock,
                     None,
                     Some(client),
                     symbol_search_provider,
@@ -107,6 +113,7 @@ pub(crate) async fn recover_changed_yahoo_symbol(
     instrument: &crate::db::instruments::InstrumentRow,
     mapped_symbol: &str,
     window: &super::refresh::RefreshWindow,
+    clock: &crate::clock::Clock,
     mapped_latest_date: Option<NaiveDate>,
     price_provider: Option<&Arc<dyn PriceProvider + Send + Sync>>,
     symbol_search_provider: Option<&Arc<dyn SymbolSearchProvider + Send + Sync>>,
@@ -169,6 +176,7 @@ pub(crate) async fn recover_changed_yahoo_symbol(
     for candidate in candidates {
         let rows = match client
             .daily_history(&PriceHistoryRequest {
+                as_of: clock.now_utc(),
                 symbol: candidate.provider_symbol.clone(),
                 asset_class: None,
                 quote_currency: None,
@@ -499,6 +507,16 @@ fn should_recover_symbol_after_error(error: &ProviderError) -> bool {
             | ProviderMissingReason::NotListed
             | ProviderMissingReason::NoDataInRange
     )
+}
+
+fn previous_weekday_before(date: NaiveDate) -> NaiveDate {
+    let days = match date.weekday() {
+        Weekday::Mon => 3,
+        Weekday::Sun => 2,
+        _ => 1,
+    };
+    date.checked_sub_days(Days::new(days))
+        .unwrap_or(NaiveDate::MIN)
 }
 
 fn latest_close_date(rows: &[crate::providers::DailyClose]) -> Option<NaiveDate> {

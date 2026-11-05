@@ -4,6 +4,7 @@ mod avanza_symbol_mapping;
 mod instrument_selection;
 mod lease_coordination;
 mod multi_provider;
+mod session_finality;
 
 pub(crate) use multi_provider::{
     empty_search, map_nasdaq_symbol, multi_provider_service, silent_fake_price,
