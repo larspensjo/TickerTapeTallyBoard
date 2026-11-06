@@ -76,11 +76,7 @@ impl YahooChartClient {
         );
     }
 
-    pub(crate) fn parse_response(
-        symbol: &str,
-        body: &str,
-        as_of: DateTime<Utc>,
-    ) -> ProviderResult<Vec<DailyClose>> {
+    pub(crate) fn parse_response(symbol: &str, body: &str) -> ProviderResult<Vec<DailyClose>> {
         let response: YahooChartResponse = serde_json::from_str(body).map_err(|error| {
             ProviderError::provider_error(
                 MarketDataProvider::Yahoo.as_str(),
@@ -101,8 +97,6 @@ impl YahooChartClient {
             )
         })?;
 
-        let finality = YahooSessionFinality::from_meta(&result.meta, as_of)?;
-        let gmtoffset = finality.gmtoffset;
         let meta_symbol = result.meta.symbol.unwrap_or_else(|| symbol.to_owned());
         let currency = result.meta.currency.ok_or_else(|| {
             ProviderError::provider_error(
@@ -126,7 +120,7 @@ impl YahooChartClient {
             rows.push(DailyClose {
                 provider: MarketDataProvider::Yahoo,
                 provider_symbol: meta_symbol.clone(),
-                date: date_from_timestamp(timestamp, gmtoffset)?,
+                date: date_from_timestamp(timestamp, result.meta.gmtoffset.unwrap_or(0))?,
                 close: number_to_decimal(&close, symbol)?,
                 currency: currency.clone(),
             });
@@ -140,9 +134,6 @@ impl YahooChartClient {
             ));
         }
 
-        // An otherwise valid response containing only provisional bars is a
-        // successful fetch with no final closes, not a provider failure.
-        rows.retain(|row| finality.is_final(row.date));
         rows.sort_by_key(|row| row.date);
         Ok(rows)
     }
@@ -323,7 +314,7 @@ impl super::PriceProvider for YahooChartClient {
             return Err(error);
         }
 
-        let parsed = Self::parse_response(symbol, &body, request.as_of);
+        let parsed = Self::parse_response(symbol, &body);
         if let Err(error) = &parsed {
             Self::log_failure(symbol, start, end, error);
         }
@@ -338,17 +329,7 @@ fn date_from_timestamp(timestamp: i64, gmtoffset: i64) -> ProviderResult<NaiveDa
             format!("Yahoo timestamp {timestamp} could not be converted to a date"),
         )
     })?;
-    datetime
-        .checked_add_signed(Duration::seconds(gmtoffset))
-        .map(|local| local.date_naive())
-        .ok_or_else(|| {
-            ProviderError::provider_error(
-                MarketDataProvider::Yahoo.as_str(),
-                format!(
-                    "Yahoo timestamp {timestamp} with offset {gmtoffset} is outside the date range"
-                ),
-            )
-        })
+    Ok((datetime + Duration::seconds(gmtoffset)).date_naive())
 }
 
 fn number_to_decimal(number: &Number, symbol: &str) -> ProviderResult<Decimal> {
@@ -445,79 +426,8 @@ struct YahooMeta {
     currency: Option<String>,
     #[serde(default)]
     symbol: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_gmt_offset")]
+    #[serde(default)]
     gmtoffset: Option<i64>,
-    #[serde(rename = "currentTradingPeriod", default)]
-    current_trading_period: serde_json::Value,
-}
-
-fn deserialize_gmt_offset<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // Only an absent field defaults to None; a present value must be valid.
-    let offset = i64::deserialize(deserializer)?;
-    if (-86_399..=86_399).contains(&offset) {
-        Ok(Some(offset))
-    } else {
-        Err(serde::de::Error::custom(
-            "Yahoo gmtoffset is outside the supported range",
-        ))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct YahooRegularSession {
-    start: i64,
-    end: i64,
-    gmtoffset: i64,
-}
-
-/// Session dates use the listing's offset, never the application's timezone.
-/// Keep malformed session metadata out of the typed chart envelope so it can
-/// fall back conservatively instead of rejecting otherwise usable history.
-struct YahooSessionFinality {
-    gmtoffset: i64,
-    provisional_from: NaiveDate,
-    session_final: bool,
-}
-
-impl YahooSessionFinality {
-    fn from_meta(meta: &YahooMeta, as_of: DateTime<Utc>) -> ProviderResult<Self> {
-        let regular = serde_json::from_value::<YahooRegularSession>(
-            meta.current_trading_period["regular"].clone(),
-        )
-        .ok()
-        .filter(|session| {
-            session.start < session.end && (-86_399..=86_399).contains(&session.gmtoffset)
-        });
-        if let Some(session) = regular {
-            if let (Some(start), Some(end)) = (
-                DateTime::<Utc>::from_timestamp(session.start, 0),
-                DateTime::<Utc>::from_timestamp(session.end, 0),
-            ) {
-                if let (Some(local_start), Some(final_at)) = (
-                    start.checked_add_signed(Duration::seconds(session.gmtoffset)),
-                    end.checked_add_signed(Duration::minutes(30)),
-                ) {
-                    return Ok(Self {
-                        gmtoffset: session.gmtoffset,
-                        provisional_from: local_start.date_naive(),
-                        session_final: as_of >= final_at,
-                    });
-                }
-            }
-        }
-        Ok(Self {
-            gmtoffset: meta.gmtoffset.unwrap_or(0),
-            provisional_from: date_from_timestamp(as_of.timestamp(), meta.gmtoffset.unwrap_or(0))?,
-            session_final: false,
-        })
-    }
-
-    fn is_final(&self, date: NaiveDate) -> bool {
-        date < self.provisional_from || (date == self.provisional_from && self.session_final)
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -543,7 +453,6 @@ mod tests {
         let rows = YahooChartClient::parse_response(
             "MSFT",
             include_str!("../../tests/fixtures/market_data/yahoo_msft.json"),
-            "2026-06-13T12:00:00Z".parse().expect("instant"),
         )
         .expect("fixture should parse");
 
@@ -563,7 +472,6 @@ mod tests {
         let rows = YahooChartClient::parse_response(
             "ASML.AS",
             include_str!("../../tests/fixtures/market_data/yahoo_asml_as.json"),
-            "2026-06-13T12:00:00Z".parse().expect("instant"),
         )
         .expect("fixture should parse");
 
@@ -575,175 +483,6 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 6, 12).expect("date should be valid")
         );
         assert_eq!(rows[2].close.round_dp(2).to_string(), "1629.60");
-    }
-
-    #[test]
-    fn current_session_closes_wait_for_the_thirty_minute_margin() {
-        for body in [
-            include_str!("../../tests/fixtures/fundamentals/yahoo_chart_volv_b_st.json"),
-            include_str!("../../tests/fixtures/fundamentals/yahoo_chart_msft.json"),
-        ] {
-            let chart: serde_json::Value = serde_json::from_str(body).expect("fixture");
-            let meta = &chart["chart"]["result"][0]["meta"];
-            let symbol = meta["symbol"].as_str().expect("symbol");
-            let recorded = meta["regularMarketTime"].as_i64().expect("recorded time");
-            let end = meta["currentTradingPeriod"]["regular"]["end"]
-                .as_i64()
-                .expect("session end");
-            let today = NaiveDate::from_ymd_opt(2026, 11, 4).expect("date");
-            let previous = NaiveDate::from_ymd_opt(2026, 11, 3).expect("date");
-            for instant in [recorded, end, end + 29 * 60, end + 30 * 60 - 1] {
-                let rows = YahooChartClient::parse_response(
-                    symbol,
-                    body,
-                    DateTime::from_timestamp(instant, 0).expect("instant"),
-                )
-                .expect("closes");
-                assert!(
-                    rows.iter().all(|row| row.date < today),
-                    "{symbol} at {instant}"
-                );
-                assert_eq!(rows.last().expect("earlier closes").date, previous);
-            }
-            for instant in [end + 30 * 60, end + 31 * 60] {
-                let rows = YahooChartClient::parse_response(
-                    symbol,
-                    body,
-                    DateTime::from_timestamp(instant, 0).expect("instant"),
-                )
-                .expect("closes");
-                assert_eq!(
-                    rows.last().expect("final close").date,
-                    today,
-                    "{symbol} at {instant}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn finalized_regular_session_does_not_finalize_later_bars() {
-        let mut chart: serde_json::Value = serde_json::from_str(include_str!(
-            "../../tests/fixtures/fundamentals/yahoo_chart_volv_b_st.json"
-        ))
-        .expect("fixture");
-        let result = &mut chart["chart"]["result"][0];
-        let end = result["meta"]["currentTradingPeriod"]["regular"]["end"]
-            .as_i64()
-            .expect("session end");
-        result["timestamp"]
-            .as_array_mut()
-            .expect("timestamps")
-            .push(serde_json::json!(end + 24 * 60 * 60));
-        result["indicators"]["quote"][0]["close"]
-            .as_array_mut()
-            .expect("closes")
-            .push(serde_json::json!(999));
-
-        let rows = YahooChartClient::parse_response(
-            "VOLV-B.ST",
-            &chart.to_string(),
-            DateTime::from_timestamp(end + 30 * 60, 0).expect("instant"),
-        )
-        .expect("closes");
-        assert_eq!(rows.len(), 23);
-        assert_eq!(
-            rows.last().expect("final close").date.to_string(),
-            "2026-11-04"
-        );
-    }
-
-    #[test]
-    fn malformed_gmt_offset_is_a_provider_error() {
-        let original: serde_json::Value = serde_json::from_str(include_str!(
-            "../../tests/fixtures/fundamentals/yahoo_chart_volv_b_st.json"
-        ))
-        .expect("fixture");
-        for offset in [
-            serde_json::json!("3600"),
-            serde_json::json!(3600.5),
-            serde_json::json!(true),
-            serde_json::Value::Null,
-            serde_json::json!(86400),
-            serde_json::json!(-86400),
-            serde_json::json!(u64::MAX),
-        ] {
-            // Reject bad offsets even when regular-session metadata is valid.
-            for has_session in [true, false] {
-                let mut chart = original.clone();
-                let meta = chart["chart"]["result"][0]["meta"]
-                    .as_object_mut()
-                    .expect("meta");
-                meta.insert("gmtoffset".to_owned(), offset.clone());
-                if !has_session {
-                    meta.remove("currentTradingPeriod");
-                }
-                let error = YahooChartClient::parse_response(
-                    "VOLV-B.ST",
-                    &chart.to_string(),
-                    "2026-11-04T16:00:00Z".parse().expect("instant"),
-                )
-                .expect_err("malformed offset must fail");
-                assert_eq!(error.reason(), ProviderMissingReason::ProviderError);
-                assert!(error.message().contains("VOLV-B.ST"));
-            }
-        }
-    }
-
-    #[test]
-    fn missing_or_malformed_session_uses_listing_local_today() {
-        let original: serde_json::Value = serde_json::from_str(include_str!(
-            "../../tests/fixtures/market_data/yahoo_msft.json"
-        ))
-        .expect("fixture");
-        // UTC June 13 is still June 12 in New York: June 12 must be withheld.
-        let as_of = "2026-06-13T01:00:00Z".parse().expect("instant");
-        for period in [
-            serde_json::Value::Null,
-            serde_json::json!({"regular": {"start": "bad", "end": 1781280000, "gmtoffset": -14400}}),
-            serde_json::json!({"regular": {"start": 1781280000, "end": 1781280000, "gmtoffset": -14400}}),
-            serde_json::json!({"regular": {"start": 1781271000, "end": 1781280000}}),
-            serde_json::json!({"regular": {"start": 1781271000, "end": 1781280000, "gmtoffset": 999999}}),
-            serde_json::json!({"regular": {"start": 1781271000, "end": i64::MAX, "gmtoffset": -14400}}),
-        ] {
-            let mut chart = original.clone();
-            chart["chart"]["result"][0]["meta"]["currentTradingPeriod"] = period;
-            let rows = YahooChartClient::parse_response("MSFT", &chart.to_string(), as_of)
-                .expect("fallback closes");
-            assert_eq!(rows.len(), 2);
-            assert_eq!(
-                rows.last().expect("previous close").date.to_string(),
-                "2026-06-11"
-            );
-        }
-    }
-
-    #[test]
-    fn missing_offset_uses_utc_today_and_withholds_future_dates() {
-        let mut chart: serde_json::Value = serde_json::from_str(include_str!(
-            "../../tests/fixtures/market_data/yahoo_msft.json"
-        ))
-        .expect("fixture");
-        chart["chart"]["result"][0]["meta"]
-            .as_object_mut()
-            .expect("meta")
-            .remove("gmtoffset");
-        let body = chart.to_string();
-        let rows = YahooChartClient::parse_response(
-            "MSFT",
-            &body,
-            "2026-06-11T23:00:00Z".parse().expect("instant"),
-        )
-        .expect("UTC fallback");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].date.to_string(), "2026-06-10");
-        let rows = YahooChartClient::parse_response(
-            "MSFT",
-            &body,
-            "2026-06-10T12:00:00Z".parse().expect("instant"),
-        )
-        .expect("provisional bars are not an error");
-        assert!(rows.is_empty());
     }
 
     #[test]

@@ -202,119 +202,12 @@ async fn avanza_known_isins_seed_yahoo_mappings_without_search() {
 }
 
 #[tokio::test]
-async fn avanza_mapping_is_preserved_when_only_the_current_session_close_is_withheld() {
-    for (instant, previous_weekday) in [
-        ("2026-11-04T16:00:00Z", "2026-11-03"),
-        ("2026-11-02T16:00:00Z", "2026-10-30"),
-    ] {
-        let clock = Clock::fixed_instant(instant.parse().expect("instant"));
-        let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
-        for (symbol, date) in [
-            ("EXAMPLE.F", previous_weekday.parse().expect("date")),
-            ("EXAMPLE.DE", clock.today()),
-        ] {
-            price_provider.push_response(Ok(vec![DailyClose {
-                provider: MarketDataProvider::Yahoo,
-                provider_symbol: symbol.to_owned(),
-                date,
-                close: dec!(100),
-                currency: "EUR".to_owned(),
-            }]));
-        }
-        let symbol_search = FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
-        symbol_search.push_response(Ok(vec![SymbolSearchMatch {
-            provider: MarketDataProvider::Yahoo,
-            provider_symbol: "EXAMPLE.DE".to_owned(),
-            quote_type: Some("EQUITY".to_owned()),
-            exchange: Some("GER".to_owned()),
-            name: Some("Example Inc".to_owned()),
-            asset_class: None,
-            currency: Some("EUR".to_owned()),
-        }]));
-        let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
-        fx_provider.push_response(Ok(vec![FxRate {
-            provider: FxProvider::Frankfurter,
-            base: "EUR".to_owned(),
-            quote: "SEK".to_owned(),
-            date: clock.today(),
-            rate: dec!(11),
-        }]));
-        let pool = db::memory_pool().await.expect("memory pool");
-        let service = MarketDataService::with_symbol_search_providers(
-            price_provider.clone(),
-            fx_provider,
-            symbol_search.clone(),
-        );
-        let instrument_id = instrument(&pool, "Example Inc", "AVANZA", "EUR").await;
-        provider_symbols::upsert(
-            &pool,
-            &provider_symbols::NewProviderSymbol {
-                instrument_id,
-                provider: MarketDataProvider::Yahoo,
-                provider_symbol: "EXAMPLE.F".to_owned(),
-                asset_class: None,
-                currency: Some("EUR".to_owned()),
-                enabled: true,
-                created_at: now_iso8601(),
-                updated_at: now_iso8601(),
-            },
-        )
-        .await
-        .expect("mapping");
-        buy(
-            &pool,
-            instrument_id,
-            "2026-10-01",
-            10,
-            "100",
-            "EUR",
-            Some("11"),
-        )
-        .await;
-
-        let response = service
-            .refresh(
-                &pool,
-                &clock,
-                RefreshTrigger::Manual,
-                RefreshPricesRequest {
-                    mode: RefreshMode::Latest,
-                    start_date: None,
-                    end_date: None,
-                },
-            )
-            .await
-            .expect("refresh");
-
-        assert_eq!(response.status, RefreshRunStatus::Succeeded);
-        assert_eq!(response.prices_written, 1);
-        assert!(symbol_search.calls().is_empty());
-        let calls = price_provider.calls();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].symbol, "EXAMPLE.F");
-        assert_eq!(calls[0].as_of, clock.now_utc());
-        let mapping = provider_symbols::find_by_instrument_provider(
-            &pool,
-            instrument_id,
-            MarketDataProvider::Yahoo,
-        )
-        .await
-        .expect("mapping lookup")
-        .expect("mapping retained");
-        assert_eq!(mapping.provider_symbol, "EXAMPLE.F");
-        assert_eq!(mapping.currency.as_deref(), Some("EUR"));
-        assert!(mapping.enabled);
-    }
-}
-
-#[tokio::test]
 async fn stale_avanza_symbol_is_replaced_only_after_newer_candidate_is_verified() {
     let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
     price_provider.push_response(Ok(vec![DailyClose {
         provider: MarketDataProvider::Yahoo,
         provider_symbol: "SKHYV".to_owned(),
-        // Thursday is older than the previous weekday (Friday) of this Monday refresh.
-        date: NaiveDate::from_ymd_opt(2026, 7, 9).expect("date"),
+        date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
         close: dec!(168),
         currency: "USD".to_owned(),
     }]));
@@ -396,11 +289,10 @@ async fn stale_avanza_symbol_is_replaced_only_after_newer_candidate_is_verified(
     )
     .await;
 
-    let clock = Clock::fixed_instant("2026-07-13T16:00:00Z".parse().expect("instant"));
     let response = service
         .refresh(
             &pool,
-            &clock,
+            &Clock::System,
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -415,10 +307,6 @@ async fn stale_avanza_symbol_is_replaced_only_after_newer_candidate_is_verified(
     assert_eq!(response.prices_written, 2);
     assert_eq!(price_provider.calls()[0].symbol, "SKHYV");
     assert_eq!(price_provider.calls()[1].symbol, "SKHY");
-    assert!(price_provider
-        .calls()
-        .iter()
-        .all(|call| call.as_of == clock.now_utc()));
     assert_eq!(symbol_search.calls()[0].query, "US78392B2060");
     assert_eq!(symbol_search.calls()[1].query, "SK Hynix Inc");
     let mapping =

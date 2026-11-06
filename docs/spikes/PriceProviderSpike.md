@@ -275,32 +275,24 @@ decision.
 
 ### Is the latest daily bar final?
 
-The spike set no finality rule for "EOD". Lars settled it on 2026-11-04: a daily bar
-counts as a close only once its trading session has ended. See `docs/DecisionLog.md`,
-"A daily close counts only after its trading session has ended". The implemented
-behavior following the 2026-11-04 checks is:
+The spike set no finality rule for "EOD". On 2026-11-04 Lars settled that a daily bar
+counts as a close only once its trading session has ended. That rule was implemented
+on 2026-11-05 and reversed on 2026-11-06, because a refresh during market hours then
+showed only the previous close. See `docs/DecisionLog.md`, "A refresh shows the latest
+price, including during market hours". The current behavior is:
 
-- A latest refresh requests price history up to today, by the backend clock, and
-  every price request carries the current instant from that same injected clock.
-- Yahoo withholds the current regular session's daily bar until the response's
-  `currentTradingPeriod.regular.end` plus 30 minutes. Earlier sessions are kept.
-  The company-figures chart fixtures captured at about 16:00 UTC on 2026-11-04
-  carried an intraday bar for that date; it is now withheld during the session
-  and the margin after its end.
-- If Yahoo's current regular trading period is missing or malformed, bars dated
-  on or after the listing-local date of the request instant are withheld, using
-  the response's `meta.gmtoffset`. If that offset is also missing or unusable,
-  the same rule uses UTC dates.
-- Nasdaq Nordic never stores a row dated on or after the request instant's UTC
-  date. On 2026-11-04, the current Stockholm row was absent an hour after close,
-  and the response carried no signal establishing whether a row was final.
-  Nordic exchanges are at UTC+0 through UTC+3, so the UTC-date cutoff is
-  deliberately conservative: a final close can wait until a refresh after UTC
-  midnight.
-- During a session, the previous close carries the same minor 1-day staleness
-  indication it already carries before the open.
-- Existing provisional rows are not deleted; a later post-close refresh overwrites
-  them because latest refreshes re-request a recent window. FX is unchanged.
+- A latest refresh requests price history up to today, by the backend clock.
+- The Yahoo parser stores every returned daily bar that has a close. During market
+  hours, today's bar is Yahoo's latest intraday price and is stored as that day's
+  value. The company-figures chart fixtures captured at about 16:00 UTC on 2026-11-04
+  carried exactly such an intraday bar.
+- Each later refresh that covers the date overwrites it (latest refreshes re-request
+  a recent window), so a refresh after the session ends stores the final close.
+  A day refreshed only during market hours keeps the intraday value until a later
+  refresh covers it.
+- Nasdaq Nordic gave no current-day row on 2026-11-04 an hour after the Stockholm
+  close, and its response carries no finality signal. Instruments priced only by
+  Nasdaq Nordic therefore update to a new day's price later than Yahoo-priced ones.
 
 ## Sources Checked
 

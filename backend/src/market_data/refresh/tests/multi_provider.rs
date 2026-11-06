@@ -112,7 +112,7 @@ async fn instrument_yahoo_cannot_price_is_valued_from_nasdaq() {
     let service = multi_provider_service(
         silent_fake_price(),
         empty_search(MarketDataProvider::Yahoo),
-        nasdaq_price.clone(),
+        nasdaq_price,
         nasdaq_search,
         FakeFxRateProvider::with_provider(FxProvider::Frankfurter),
     );
@@ -121,11 +121,10 @@ async fn instrument_yahoo_cannot_price_is_valued_from_nasdaq() {
         instrument_with_isin(&pool, "JE00BJ7HNC92", "AVANZA", "SEK", "JE00BJ7HNC92").await;
     buy(&pool, tracker, "2026-06-01", 10, "120", "SEK", None).await;
 
-    let clock = Clock::fixed_instant("2026-06-12T16:00:00Z".parse().expect("instant"));
     let response = service
         .refresh(
             &pool,
-            &clock,
+            &Clock::System,
             RefreshTrigger::Manual,
             RefreshPricesRequest {
                 mode: RefreshMode::Latest,
@@ -139,7 +138,6 @@ async fn instrument_yahoo_cannot_price_is_valued_from_nasdaq() {
     assert_eq!(response.status, RefreshRunStatus::Succeeded);
     assert_eq!(response.unmapped_instruments, 0);
     assert_eq!(response.prices_written, 2);
-    assert_eq!(nasdaq_price.calls()[0].as_of, clock.now_utc());
     assert_eq!(response.items[0].provider.as_deref(), Some("NASDAQ_NORDIC"));
 
     let mapping = provider_symbols::find_by_instrument_provider(
