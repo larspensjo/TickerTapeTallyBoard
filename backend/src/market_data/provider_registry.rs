@@ -8,6 +8,7 @@ use crate::providers::{
 /// Registration surface for the multi-provider tests and for `live()`.
 #[derive(Default)]
 pub struct ProviderRegistry {
+    fundamentals_provider: Option<Arc<dyn crate::providers::FundamentalsProvider>>,
     price_providers: Vec<(MarketDataProvider, Arc<dyn PriceProvider + Send + Sync>)>,
     symbol_search_providers: Vec<(
         MarketDataProvider,
@@ -17,6 +18,13 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    pub fn with_fundamentals_provider<F: crate::providers::FundamentalsProvider + 'static>(
+        mut self,
+        client: F,
+    ) -> Self {
+        self.fundamentals_provider = Some(Arc::new(client));
+        self
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -48,6 +56,7 @@ impl ProviderRegistry {
 }
 
 pub(crate) struct ProviderSet {
+    fundamentals_provider: Option<Arc<dyn crate::providers::FundamentalsProvider>>,
     /// Both registries are ordered by `PRICE_PROVIDER_PRECEDENCE`, which stays
     /// the single source of truth for precedence; lookup is a linear scan over
     /// a handful of entries.
@@ -62,6 +71,7 @@ pub(crate) struct ProviderSet {
 impl ProviderSet {
     pub(crate) fn from_registry(registry: ProviderRegistry) -> Self {
         let ProviderRegistry {
+            fundamentals_provider,
             mut price_providers,
             mut symbol_search_providers,
             fx_provider,
@@ -70,6 +80,7 @@ impl ProviderSet {
         sort_by_precedence(&mut symbol_search_providers);
 
         Self {
+            fundamentals_provider,
             price_providers,
             symbol_search_providers,
             fx_provider: fx_provider
@@ -108,6 +119,11 @@ impl ProviderSet {
 
     pub(crate) fn fx_provider(&self) -> &Arc<dyn FxRateProvider + Send + Sync> {
         &self.fx_provider
+    }
+    pub(crate) fn fundamentals_provider(
+        &self,
+    ) -> Option<&Arc<dyn crate::providers::FundamentalsProvider>> {
+        self.fundamentals_provider.as_ref()
     }
 }
 

@@ -412,6 +412,19 @@ only.
 **Human check recommended.** Lars spot-checks the P/E and P/S of three or four of the
 companies above against a reference he trusts.
 
+**Human check result (2026-11-07): passed.** Lars compared four companies with Stock
+Analysis's published 2026-11-06 statistics. Each is within about 6%, which matches the
+price move since the intraday fixture price:
+
+| Company | Fixture P/E / P/S | Published P/E / P/S |
+|---|---|---|
+| MSFT | 28.9 / 11.90 | 27.71 / 11.37 |
+| ASML | 38.0 / 12.92 | 36.55 / 12.17 |
+| EVO | 14.6 / 6.96 | 13.93 / 6.58 |
+| VOLV B | 16.3 / 1.33 | 16.29 / 1.33 |
+
+EVO's P/S shows no sign of the roughly 11× currency error.
+
 ## Findings that change plan expectations
 
 1. **TSM is not a unit-mismatch case.** Yahoo already reports its EPS and diluted shares

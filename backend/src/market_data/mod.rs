@@ -1,4 +1,6 @@
 pub mod effective_prices;
+mod fundamentals_refresh;
+mod fundamentals_source_discovery;
 mod fx_refresh;
 mod price_source_refresh;
 mod price_status;

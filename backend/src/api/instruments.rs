@@ -226,6 +226,7 @@ pub async fn remove(
     let provider_symbol_rows =
         provider_symbols::delete_by_instrument_id_in_tx(&mut tx, instrument.id).await?;
     let price_rows = prices::delete_by_instrument_id_in_tx(&mut tx, instrument.id).await?;
+    crate::db::fundamental_values::delete_by_instrument_in_tx(&mut tx, instrument.id).await?;
     let deleted = instruments::delete_in_tx(&mut tx, instrument.id).await?;
     if deleted == 0 {
         if let Err(error) = tx.rollback().await {
@@ -547,6 +548,52 @@ mod tests {
         )
         .await
         .expect("price");
+
+        let link = crate::db::fundamentals_sources::correct(
+            &state.pool,
+            id,
+            Some(crate::db::fundamentals_sources::LinkDefinition {
+                source: Some(crate::domain::fundamentals::FundamentalsSource::Yahoo),
+                symbol: Some("CORN".to_owned()),
+                security_type: Some("ETF".to_owned()),
+                classification: crate::domain::fundamentals::Classification::Fund,
+                status: crate::domain::fundamentals::LinkStatus::NotApplicable,
+                ..crate::db::fundamentals_sources::LinkDefinition::pending()
+            }),
+            None,
+            "2026-11-07T12:00:00Z",
+        )
+        .await
+        .expect("fundamentals link");
+        let mut tx = state
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .expect("transaction");
+        crate::db::fundamental_values::write_fetch(
+            &mut tx,
+            &crate::db::fundamental_values::FetchWrite {
+                instrument_id: id,
+                expected: Some(link.token),
+                discovery: None,
+                values: vec![crate::domain::fundamentals::FundamentalValue {
+                    period_type: crate::domain::fundamentals::PeriodType::Quarter,
+                    period_end: "2026-09-30".parse().expect("date"),
+                    metric: crate::domain::fundamentals::Metric::Revenue,
+                    value: Decimal::ONE,
+                    currency: Some("USD".to_owned()),
+                }],
+                splits: vec![],
+                at: "2026-11-07T12:00:00Z".to_owned(),
+                seen_on: "2026-11-07".parse().expect("date"),
+                previous_success_on: None,
+                status: crate::domain::fundamentals::AttemptStatus::Succeeded,
+                reason: None,
+            },
+        )
+        .await
+        .expect("cached figures");
+        tx.commit().await.expect("commit");
 
         let (status, _) = send(
             &state,

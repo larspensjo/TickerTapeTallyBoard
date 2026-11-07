@@ -6,7 +6,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
 };
 
-async fn two_file_pools(name: &str) -> (SqlitePool, SqlitePool, PathBuf) {
+pub(super) async fn two_file_pools(name: &str) -> (SqlitePool, SqlitePool, PathBuf) {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -65,7 +65,7 @@ fn leased_search_service(
     )
 }
 
-async fn close_file_pools(first: SqlitePool, second: SqlitePool, path: PathBuf) {
+pub(super) async fn close_file_pools(first: SqlitePool, second: SqlitePool, path: PathBuf) {
     first.close().await;
     second.close().await;
     let _ = fs::remove_file(&path);

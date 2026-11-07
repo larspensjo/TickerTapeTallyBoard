@@ -52,6 +52,15 @@ impl Clock {
         }
     }
 
+    /// Convert a stored instant using the same calendar as today(). Date-only
+    /// test clocks use UTC for their synthetic midnight timestamps.
+    pub fn local_date(&self, instant: DateTime<Utc>) -> NaiveDate {
+        match self {
+            Clock::Fixed(_) => instant.date_naive(),
+            Clock::System | Clock::FixedInstant(_) => instant.with_timezone(&Local).date_naive(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_instant(&self, instant: DateTime<Utc>) {
         match self {
@@ -87,6 +96,12 @@ mod tests {
     fn fixed_clock_returns_its_pinned_date() {
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).expect("valid date");
         assert_eq!(Clock::fixed(date).today(), date);
+        let clock = Clock::fixed(date);
+        assert_eq!(clock.local_date(clock.now_utc()), clock.today());
+        assert_eq!(
+            clock.local_date(clock.now_utc() - chrono::Duration::days(1)),
+            date - chrono::Duration::days(1)
+        );
     }
 
     #[test]

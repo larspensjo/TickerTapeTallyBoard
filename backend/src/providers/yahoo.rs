@@ -179,7 +179,10 @@ impl YahooSearchClient {
         url.to_string()
     }
 
-    fn parse_response(query: &str, body: &str) -> ProviderResult<Vec<SymbolSearchMatch>> {
+    pub(crate) fn parse_response(
+        query: &str,
+        body: &str,
+    ) -> ProviderResult<Vec<SymbolSearchMatch>> {
         let response: YahooSearchResponse = serde_json::from_str(body).map_err(|error| {
             ProviderError::provider_error(
                 MarketDataProvider::Yahoo.as_str(),

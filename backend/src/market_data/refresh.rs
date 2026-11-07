@@ -150,7 +150,8 @@ impl MarketDataService {
                     MarketDataProvider::NasdaqNordic,
                     crate::providers::NasdaqNordicClient::new(),
                 )
-                .with_fx_provider(crate::providers::FrankfurterClient::new()),
+                .with_fx_provider(crate::providers::FrankfurterClient::new())
+                .with_fundamentals_provider(crate::providers::YahooFundamentalsClient::new()),
         )
     }
 
@@ -350,9 +351,7 @@ impl MarketDataService {
             owner: self.inner.owner.clone(),
             cancelled,
         };
-        let outcome = self
-            .execute_refresh(pool, clock.today(), &request, &lease)
-            .await;
+        let outcome = self.execute_refresh(pool, clock, &request, &lease).await;
         let (status, message) = match &outcome {
             Ok(outcome) => (outcome.status, outcome.message.clone()),
             Err(error) => (RefreshRunStatus::Failed, Some(error.to_string())),
@@ -381,6 +380,15 @@ impl MarketDataService {
             },
         )
         .await;
+
+        if finish_result.is_err() {
+            if let Err(error) = crate::data_revision::bump(pool).await {
+                crate::engine_error!(
+                    "market data refresh revision recovery failed run_id={} owner={} operation=finish_run reason=repository_error message={}",
+                    run.id, self.inner.owner, error
+                );
+            }
+        }
 
         summary.status = status;
         summary.finished_at = Some(finished_at.to_rfc3339());
@@ -426,6 +434,7 @@ impl MarketDataService {
                 fx_rates_written: outcome.fx_rates_written,
                 unmapped_instruments: outcome.unmapped_instruments,
                 failed_items: outcome.failed_items,
+                fundamentals: outcome.fundamentals,
                 items: outcome.items,
             }),
             Err(error) => Err(error),
@@ -459,23 +468,46 @@ impl MarketDataService {
             fx_rates_written: active.fx_rates_written,
             unmapped_instruments: active.unmapped_instruments,
             failed_items: active.failed_items,
+            fundamentals: active.fundamentals,
             items: Vec::new(),
         }
+    }
+
+    pub(super) async fn publish_prices(
+        pool: &SqlitePool,
+        lease: &RefreshLease,
+    ) -> Result<(), MarketDataError> {
+        let written = market_data_runs::fenced_write(pool, lease.run_id, &lease.owner, |conn| {
+            Box::pin(async move {
+                crate::data_revision::bump(&mut *conn).await?;
+                Ok(())
+            })
+        })
+        .await?;
+        written.map_err(|_| MarketDataError::LeaseLost)
     }
 
     async fn execute_refresh(
         &self,
         pool: &SqlitePool,
-        today: NaiveDate,
+        clock: &crate::clock::Clock,
         request: &RefreshPricesRequest,
         lease: &RefreshLease,
     ) -> Result<RefreshOutcome, MarketDataError> {
-        refresh_execution::execute_refresh(&self.inner.providers, pool, today, request, lease).await
+        refresh_execution::execute_refresh(&self.inner.providers, pool, clock, request, lease).await
     }
 }
 
 pub(super) fn run_summary(row: market_data_runs::RefreshRunRow) -> RefreshRunSummary {
     RefreshRunSummary {
+        fundamentals: super::fundamentals_refresh::FundamentalsSummary {
+            status: row.fundamentals_status,
+            fetched: row.fundamentals_fetched as usize,
+            skipped: row.fundamentals_skipped as usize,
+            superseded: row.fundamentals_superseded as usize,
+            failed: row.fundamentals_failed as usize,
+            items: Vec::new(),
+        },
         run_id: row.id,
         trigger: super::refresh_contract::refresh_trigger_from_db(&row.trigger),
         mode: super::refresh_contract::refresh_mode_from_trigger(&row.trigger),

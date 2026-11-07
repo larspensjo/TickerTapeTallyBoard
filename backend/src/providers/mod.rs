@@ -13,6 +13,10 @@ pub mod frankfurter;
 pub(crate) mod http;
 pub mod nasdaq_nordic;
 pub mod yahoo;
+pub mod yahoo_fundamentals;
+pub use yahoo_fundamentals::{
+    FakeFundamentalsProvider, FundamentalsProvider, YahooFundamentalsClient,
+};
 
 pub use frankfurter::FrankfurterClient;
 pub use nasdaq_nordic::NasdaqNordicClient;

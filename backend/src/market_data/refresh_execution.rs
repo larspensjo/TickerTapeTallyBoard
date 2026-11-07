@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
-use chrono::NaiveDate;
 use sqlx::sqlite::SqlitePool;
 
 use crate::{
@@ -22,6 +21,7 @@ use super::{
 };
 
 pub(super) struct RefreshOutcome {
+    pub(super) fundamentals: super::fundamentals_refresh::FundamentalsSummary,
     pub(super) status: RefreshRunStatus,
     pub(super) message: Option<String>,
     pub(super) prices_written: usize,
@@ -40,6 +40,7 @@ impl RefreshOutcome {
         items: Vec<RefreshItem>,
     ) -> Self {
         Self {
+            fundamentals: Default::default(),
             status: RefreshRunStatus::Failed,
             message: Some("lease_lost".to_owned()),
             prices_written,
@@ -59,10 +60,11 @@ pub(super) struct RefreshTarget {
 pub(super) async fn execute_refresh(
     providers: &ProviderSet,
     pool: &SqlitePool,
-    today: NaiveDate,
+    clock: &crate::clock::Clock,
     request: &RefreshPricesRequest,
     lease: &RefreshLease,
 ) -> Result<RefreshOutcome, MarketDataError> {
+    let today = clock.today();
     let target_window = refresh::refresh_window(request, pool, today).await?;
     let transactions = transactions::all_for_holdings(pool).await?;
     let grouped = group_transactions(transactions);
@@ -226,6 +228,40 @@ pub(super) async fn execute_refresh(
     failed_items += fx_outcome.failed_items;
     items.extend(fx_outcome.items);
 
+    let fundamentals = if request.mode == RefreshMode::Latest {
+        match super::fundamentals_refresh::run(
+            providers,
+            pool,
+            &targets,
+            clock,
+            &target_window,
+            lease,
+            fx_outcome.attempted_currencies,
+        )
+        .await
+        {
+            Ok(summary) => summary,
+            Err(MarketDataError::LeaseLost) => {
+                return Ok(RefreshOutcome::lease_lost(
+                    prices_written,
+                    fx_rates_written,
+                    unmapped_instruments,
+                    failed_items,
+                    items,
+                ))
+            }
+            Err(error) => {
+                crate::engine_error!("fundamentals phase failure instrument_id=none symbol=none endpoint=repository run_id={} link_generation=none reason=repository_error message={}", lease.run_id, error);
+                super::fundamentals_refresh::FundamentalsSummary {
+                    status: crate::domain::fundamentals::FundamentalsStatus::Failed,
+                    ..Default::default()
+                }
+            }
+        }
+    } else {
+        Default::default()
+    };
+
     let status = if failed_items == 0 && unmapped_instruments == 0 {
         RefreshRunStatus::Succeeded
     } else if prices_written == 0 && fx_rates_written == 0 {
@@ -243,6 +279,7 @@ pub(super) async fn execute_refresh(
     ));
 
     Ok(RefreshOutcome {
+        fundamentals,
         status,
         message,
         prices_written,

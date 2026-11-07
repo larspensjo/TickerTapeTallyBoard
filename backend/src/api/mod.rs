@@ -156,20 +156,23 @@ async fn demo_read_only_layer(
     Ok(next.run(request).await)
 }
 
-/// Records that stored data may have changed. Every mutation reaches the app
-/// through a mutating HTTP method, so bumping here means no handler has to
-/// remember to do it.
+/// Records that stored data may have changed after a mutating HTTP request.
+/// Refreshes publish their own revisions for manual and launch jobs; other
+/// handlers rely on this layer rather than bumping individually.
 ///
 /// A client error means the request was rejected before touching anything, so
-/// the revision stays put. A server error does not: a refresh can write prices
-/// and still fail afterwards, and that data must not stay hidden behind an
-/// unchanged revision.
+/// the revision stays put. A server error may follow committed writes, so it
+/// still publishes a revision to make those changes visible.
 async fn data_revision_layer(
     State(state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> axum::response::Response {
-    let mutating = is_mutating_method(request.method());
+    let mutating = is_mutating_method(request.method())
+        && !matches!(
+            request.uri().path(),
+            "/api/prices/refresh" | "/prices/refresh"
+        );
     let response = next.run(request).await;
 
     if mutating && !response.status().is_client_error() {

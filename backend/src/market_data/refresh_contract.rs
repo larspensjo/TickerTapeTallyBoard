@@ -84,6 +84,7 @@ pub struct RefreshPricesRequest {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RefreshPricesResponse {
+    pub fundamentals: super::fundamentals_refresh::FundamentalsSummary,
     pub run_id: i64,
     pub trigger: RefreshTrigger,
     pub mode: RefreshMode,
@@ -100,6 +101,7 @@ pub struct RefreshPricesResponse {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RefreshRunSummary {
+    pub fundamentals: super::fundamentals_refresh::FundamentalsSummary,
     pub run_id: i64,
     pub trigger: RefreshTrigger,
     pub mode: RefreshMode,
@@ -121,6 +123,7 @@ impl RefreshRunSummary {
         started_at: String,
     ) -> Self {
         Self {
+            fundamentals: Default::default(),
             run_id,
             trigger,
             mode,
@@ -307,6 +310,7 @@ impl PriceSnapshotState {
 
 #[derive(Debug)]
 pub enum MarketDataError {
+    FundamentalsProvider(crate::providers::ProviderError),
     InvalidRequest { code: &'static str, message: String },
     LeaseLost,
     Internal(String),
@@ -329,6 +333,7 @@ impl MarketDataError {
 impl fmt::Display for MarketDataError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::FundamentalsProvider(error) => write!(f, "{error}"),
             Self::InvalidRequest { code, message } => write!(f, "{code}: {message}"),
             Self::LeaseLost => f.write_str("lease_lost"),
             Self::Internal(message) => f.write_str(message),

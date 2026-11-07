@@ -160,9 +160,6 @@ fn spawn_launch_refresh(
         {
             crate::engine_error!("launch refresh failed: {error}");
         }
-        if let Err(error) = state.revision.bump().await {
-            crate::engine_error!("launch refresh could not bump data revision: {error}");
-        }
         crate::engine_info!(
             "launch refresh finished; data revision is now {}",
             state

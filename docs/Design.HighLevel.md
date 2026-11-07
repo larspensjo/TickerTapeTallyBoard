@@ -65,6 +65,26 @@ transactions     id, instrument_id (nullable for cash tx), type, trade_date,
 prices           instrument_id, provider, provider_symbol, date, close, currency
                                                                -- EOD cache; keyed by provider, so several providers can cover one instrument
 fx_rates         base, quote, date, rate                     -- EOD cache
+instrument_fundamentals_sources
+                 instrument_id, source, provider_symbol, security_type,
+                 classification, origin, status, candidates, generation,
+                 last_attempt_at/status/reason, last_success_at, consecutive_empty
+fundamental_values
+                 id, instrument_id, source, provider_symbol, period_type,
+                 period_end, metric, value (TEXT decimal), currency,
+                 first_seen_at, updated_at, set_aside_at, set_aside_reason
+fundamental_period_observations
+                 id, instrument_id, period_type, period_end, provider_symbol,
+                 first_seen_on, absent_fetch_on, set_aside_at, set_aside_reason
+fundamental_split_events
+                 id, instrument_id, provider_symbol, split_date, numerator,
+                 denominator, updated_at, set_aside_at, set_aside_reason
+market_data_refresh_runs
+                 id, trigger, started_at, finished_at, status, message,
+                 prices_written, fx_rates_written, unmapped_instruments,
+                 failed_items, claim_owner, heartbeat_at,
+                 fundamentals_status, fundamentals_fetched, fundamentals_skipped,
+                 fundamentals_superseded, fundamentals_failed
 import_batches   id, source (SHARESIGHT|CSV|MANUAL), imported_at, raw_file_hash
 settings         key, value (base_currency, data provider keys, …)
 ```
@@ -97,6 +117,10 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
 
   The app-bar **Refresh** button (accessible name "Refresh prices") sends `mode: "latest"` and fills only the 37-calendar-day window ending today, which covers the Opportunities page's longest period (30 days) plus its start-close tolerance; the length is that period plus a fixed margin kept wider than the tolerance.
 - Fetched data is cached in SQLite and valuation reads the stored rows; refreshes fetch each enabled provider mapping and upsert its returned rows. Refresh runs as a background job at application launch and on demand from the manual refresh action; there is no scheduled fetch.
+- **Company figures:** Each instrument has a company-figures source link separate from its price mappings. Discovery verifies an enabled Yahoo listing first, then searches by ISIN or symbol when needed, preferring the same exchange for Nordic listings. Classification distinguishes companies, funds and certificates; uncertain or missing data remains explicit. Yahoo's fundamentals-timeseries endpoint supplies quarterly, annual, trailing and market-value evidence; its chart endpoint supplies classification and split events. Calls happen outside database transactions. Latest-mode refreshes fetch company figures after prices and FX; backfills do not fetch them, and demo mode remains offline.
+- **Link generations and retained history:** Every company-figures write verifies both the refresh lease and the expected source-link generation and symbol in one transaction; a changed link supersedes an in-flight result. Quarters belong to the instrument. A same-company correction retains active history across symbols, while a wrong-company correction sets aside values, observations and split events so active reads exclude them. Whole-instrument deletion removes its stored company figures with it.
+- **Fetch timing:** The application clock supplies calendar dates. An instrument is attempted at most once per day under its current link. A never-fetched link is due immediately; estimated report dates trigger daily fetching through 21 days afterwards, with a backstop after more than seven days without success and next-day retries for rate limits or provider outages. The first rate limit skips later instrument fetches for that run. Repository failures are reported per instrument and later instruments continue; lease loss or cancellation stops the work.
+- **Separate outcome and FX completion:** The response and refresh-run record carry a fundamentals outcome separately from the price/FX status and counts. Its fetched, skipped, superseded and failed counts count instruments only; report-currency FX items remain in the response's fundamentals items. Stored and newly discovered report currencies in the verified ECB set receive same-run FX completion, once per currency per run, with lease and link-generation checks. Unsupported currencies remain explicit FX gaps. Fundamentals and completion failures never degrade the price/FX run status. Latest refreshes publish a data revision after price/FX work commits and again at finish, so prices become visible while figures are still updating; a failed finish gets a best-effort revision bump.
 
 ### Sharesight import
 Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date, type (buy/sell/adjustment), quantity, price, fees, exchange rate, and trade value. Importer parses the export (convert XLS→CSV or parse XLS directly via `calamine` crate), maps rows to ledger transactions, matches/creates instruments, and tags everything with an `import_batch_id` so a bad import can be rolled back atomically. Dividends may need a second report (Taxable Income / dividend report) or manual entry — verify during Phase 0 spike.
@@ -105,6 +129,14 @@ TODO: Avanza import rows already parse and count dividends, but dividend rows ar
 
 ### API surface (v1 sketch)
 REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/opportunities?window=7d|14d|30d` (held assets' recent share-price change over a backend-resolved window), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices` (price history, plus the instrument's running average cost segments over its whole ledger and the open position's current native average), `POST /api/import/sharesight`, `POST /api/prices/refresh`.
+
+`POST /api/prices/refresh` includes an additive `fundamentals` block with `status`
+(`not_run`, `succeeded`, `partial`, `failed`), instrument counts (`fetched`, `skipped`,
+`superseded`, `failed`) and detailed `items` (instrument, symbol, status, reason and
+optional `fx_pair`). `GET /api/prices/status` exposes the same block on `latest_run`,
+using the five persisted fundamentals columns; its `items` is empty because item
+details are not persisted. Backfills report `not_run`. This block never changes the
+existing price/FX status or counts.
 
 ## 3. Implementation phases
 

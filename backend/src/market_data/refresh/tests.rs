@@ -1,6 +1,7 @@
 use super::*;
 
 mod avanza_symbol_mapping;
+mod fundamentals;
 mod instrument_selection;
 mod lease_coordination;
 mod multi_provider;

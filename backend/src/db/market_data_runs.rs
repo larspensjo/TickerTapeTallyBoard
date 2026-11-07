@@ -4,26 +4,26 @@ use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use sqlx::sqlite::{SqliteConnection, SqlitePool};
 
-use crate::{data_revision, db::RepoError};
+use crate::{data_revision, db::RepoError, domain::fundamentals::FundamentalsStatus};
 
 /// A holder that has not renewed this lease is recoverable by another process.
 pub const REFRESH_CLAIM_STALE_AFTER: Duration = Duration::from_secs(120);
 
 const LIST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
-    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at, fundamentals_status, fundamentals_fetched, fundamentals_skipped, fundamentals_superseded, fundamentals_failed \
     FROM market_data_refresh_runs ORDER BY started_at DESC, id DESC";
 const FIND_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
-    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at, fundamentals_status, fundamentals_fetched, fundamentals_skipped, fundamentals_superseded, fundamentals_failed \
     FROM market_data_refresh_runs WHERE id = ?";
 const LATEST_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
-    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at, fundamentals_status, fundamentals_fetched, fundamentals_skipped, fundamentals_superseded, fundamentals_failed \
     FROM market_data_refresh_runs ORDER BY started_at DESC, id DESC LIMIT 1";
 const RUNNING_SQL: &str = "SELECT id, \"trigger\", started_at, finished_at, status, message, \
-    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at \
+    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at, fundamentals_status, fundamentals_fetched, fundamentals_skipped, fundamentals_superseded, fundamentals_failed \
     FROM market_data_refresh_runs WHERE status = 'RUNNING' ORDER BY id DESC";
 const INSERT_CLAIM_SQL: &str = "INSERT INTO market_data_refresh_runs (\"trigger\", started_at, status, claim_owner, heartbeat_at) \
     VALUES (?, ?, 'RUNNING', ?, ?) RETURNING id, \"trigger\", started_at, finished_at, status, message, \
-    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at";
+    prices_written, fx_rates_written, unmapped_instruments, failed_items, claim_owner, heartbeat_at, fundamentals_status, fundamentals_fetched, fundamentals_skipped, fundamentals_superseded, fundamentals_failed";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RefreshRunCounts {
@@ -32,8 +32,31 @@ pub struct RefreshRunCounts {
     pub unmapped_instruments: i64,
     pub failed_items: i64,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FundamentalsCounts {
+    pub fetched: i64,
+    pub skipped: i64,
+    pub superseded: i64,
+    pub failed: i64,
+}
+
+impl TryFrom<String> for FundamentalsStatus {
+    type Error = RepoError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        super::fundamentals_sources::code(&value, Self::from_db_str)
+    }
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct RefreshRunRow {
+    #[sqlx(try_from = "String")]
+    pub fundamentals_status: FundamentalsStatus,
+    pub fundamentals_fetched: i64,
+    pub fundamentals_skipped: i64,
+    pub fundamentals_superseded: i64,
+    pub fundamentals_failed: i64,
     pub id: i64,
     pub trigger: String,
     pub started_at: String,
@@ -85,6 +108,17 @@ pub async fn latest(pool: &SqlitePool) -> Result<Option<RefreshRunRow>, RepoErro
     Ok(sqlx::query_as::<_, RefreshRunRow>(LATEST_SQL)
         .fetch_optional(pool)
         .await?)
+}
+
+pub async fn store_fundamentals_summary(
+    conn: &mut SqliteConnection,
+    run_id: i64,
+    status: FundamentalsStatus,
+    counts: FundamentalsCounts,
+) -> Result<(), RepoError> {
+    sqlx::query("UPDATE market_data_refresh_runs SET fundamentals_status=?, fundamentals_fetched=?, fundamentals_skipped=?, fundamentals_superseded=?, fundamentals_failed=? WHERE id=?")
+        .bind(status.as_str()).bind(counts.fetched).bind(counts.skipped).bind(counts.superseded).bind(counts.failed).bind(run_id).execute(&mut *conn).await?;
+    Ok(())
 }
 
 pub async fn try_claim_run(
@@ -153,7 +187,12 @@ pub async fn finish_run(
     message: Option<&str>,
     counts: RefreshRunCounts,
 ) -> Result<LeaseState, RepoError> {
-    let changed = sqlx::query("UPDATE market_data_refresh_runs SET finished_at = ?, status = ?, message = ?, prices_written = ?, fx_rates_written = ?, unmapped_instruments = ?, failed_items = ? WHERE id = ? AND claim_owner = ? AND status = 'RUNNING'").bind(finished_at.to_rfc3339()).bind(status).bind(message).bind(counts.prices_written).bind(counts.fx_rates_written).bind(counts.unmapped_instruments).bind(counts.failed_items).bind(id).bind(owner).execute(pool).await?.rows_affected();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let changed = sqlx::query("UPDATE market_data_refresh_runs SET finished_at = ?, status = ?, message = ?, prices_written = ?, fx_rates_written = ?, unmapped_instruments = ?, failed_items = ? WHERE id = ? AND claim_owner = ? AND status = 'RUNNING'").bind(finished_at.to_rfc3339()).bind(status).bind(message).bind(counts.prices_written).bind(counts.fx_rates_written).bind(counts.unmapped_instruments).bind(counts.failed_items).bind(id).bind(owner).execute(&mut *tx).await?.rows_affected();
+    if changed == 1 {
+        data_revision::bump(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(if changed == 1 {
         LeaseState::Held
     } else {

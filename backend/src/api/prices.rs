@@ -38,6 +38,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<PriceStatusRes
 
 fn api_error(error: MarketDataError) -> ApiError {
     match error {
+        MarketDataError::FundamentalsProvider(error) => ApiError::internal(error.to_string()),
         MarketDataError::InvalidRequest { code, message } => ApiError::bad_request(code, message),
         MarketDataError::LeaseLost => ApiError::internal("unexpected unhandled lease loss"),
         MarketDataError::Internal(message) => ApiError::internal(message),
@@ -116,6 +117,12 @@ mod tests {
         let pool = db::memory_pool().await.expect("memory pool");
         let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
         let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        let fundamentals_provider = crate::providers::FakeFundamentalsProvider::new();
+        fundamentals_provider.push_listing(Err(crate::providers::ProviderError::with_http_status(
+            "YAHOO",
+            429,
+            "rate limited",
+        )));
         price_provider.push_response(Ok(vec![DailyClose {
             provider: MarketDataProvider::Yahoo,
             provider_symbol: "MSFT".to_owned(),
@@ -133,7 +140,12 @@ mod tests {
 
         let state = AppState::with_market_data(
             pool,
-            MarketDataService::with_providers(price_provider, fx_provider),
+            MarketDataService::with_provider_registry(
+                crate::market_data::ProviderRegistry::new()
+                    .with_price_provider(MarketDataProvider::Yahoo, price_provider)
+                    .with_fx_provider(fx_provider)
+                    .with_fundamentals_provider(fundamentals_provider),
+            ),
         );
         let msft = instrument(&state.pool).await;
         transactions::insert(
@@ -154,6 +166,8 @@ mod tests {
         .await
         .expect("transaction insert should succeed");
 
+        let before = state.revision.current().await.expect("revision");
+
         let (status, body) = send(
             &state,
             "POST",
@@ -165,12 +179,29 @@ mod tests {
         assert_eq!(body["status"], "succeeded");
         assert_eq!(body["prices_written"], 1);
         assert_eq!(body["fx_rates_written"], 1);
+        assert_eq!(body["fundamentals"]["failed"], 1);
+        assert_eq!(body["fundamentals"]["status"], "failed");
+        let after = state.revision.current().await.expect("revision");
+        let counter = |revision: &str| {
+            revision
+                .rsplit(':')
+                .next()
+                .expect("counter")
+                .parse::<i64>()
+                .expect("number")
+        };
+        assert_eq!(counter(&after) - counter(&before), 2);
 
         let (status, status_body) = send(&state, "GET", "/api/prices/status", json!({})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(status_body["refreshing"], false);
         assert_eq!(status_body["latest_run"]["prices_written"], 1);
         assert_eq!(status_body["latest_run"]["fx_rates_written"], 1);
+        assert_eq!(status_body["latest_run"]["fundamentals"]["failed"], 1);
+        assert_eq!(
+            status_body["latest_run"]["fundamentals"]["status"],
+            "failed"
+        );
         assert_eq!(
             status_body["instruments"][0]["latest_price"]["status"],
             "available"
@@ -211,9 +242,15 @@ mod tests {
         let pool = db::memory_pool().await.expect("memory pool");
         let price_provider = FakePriceProvider::with_provider(MarketDataProvider::Yahoo);
         let fx_provider = FakeFxRateProvider::with_provider(FxProvider::Frankfurter);
+        let fundamentals_provider = crate::providers::FakeFundamentalsProvider::new();
         let state = AppState::with_market_data(
             pool,
-            MarketDataService::with_providers(price_provider.clone(), fx_provider.clone()),
+            MarketDataService::with_provider_registry(
+                crate::market_data::ProviderRegistry::new()
+                    .with_price_provider(MarketDataProvider::Yahoo, price_provider.clone())
+                    .with_fx_provider(fx_provider.clone())
+                    .with_fundamentals_provider(fundamentals_provider.clone()),
+            ),
         )
         .with_mode(crate::config::Mode::Demo);
 
@@ -229,6 +266,8 @@ mod tests {
         assert_eq!(body["error"]["code"], "demo_read_only");
         assert!(price_provider.calls().is_empty());
         assert!(fx_provider.calls().is_empty());
+        assert!(fundamentals_provider.calls().is_empty());
+        assert!(fundamentals_provider.listing_calls().is_empty());
     }
 
     #[tokio::test]

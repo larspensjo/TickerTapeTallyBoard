@@ -38,6 +38,14 @@ tax calculation.
   `base=<currency>&quotes=SEK`.
 - Missing FX or price data is represented as missing data with a reason. It is
   never stored as zero.
+- Refreshes also collect active company-report currencies for their targets, and
+  complete newly discovered report currencies in the same run. A report currency
+  is added only when it belongs to the verified ECB reference-currency constant:
+  AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK
+  NZD PHP PLN RON SEK SGD THB TRY USD ZAR. Unsupported currencies such as TWD are
+  never requested for company figures and remain an explicit `fx_unavailable`.
+  Report-currency completion outcomes belong to the fundamentals summary and do
+  not change the price/FX run status.
 
 ## Sharesight Import Rules
 
