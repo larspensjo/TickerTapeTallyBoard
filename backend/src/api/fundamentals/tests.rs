@@ -285,6 +285,7 @@ async fn seed_company_with_currencies(state: &AppState, id: i64, report: &str, l
     let write = FetchWrite {
         instrument_id: id,
         expected: None,
+        verified: None,
         discovery: Some(LinkDefinition {
             source: Some(FundamentalsSource::Yahoo),
             symbol: Some("TEST".into()),
@@ -393,7 +394,7 @@ async fn fundamentals_are_additive_and_corrections_exclude_all_set_aside_history
     let empty = get(&state, &format!("/api/instruments/{id}/fundamentals")).await;
     assert_eq!(empty["source"]["awaiting_figures"], false);
     assert_eq!(empty["source"]["last_attempt_outcome"], "EMPTY");
-    assert_eq!(empty["pe"]["reasons"][0]["code"], "share_basis_unverified");
+    assert_eq!(empty["pe"]["reasons"][0]["code"], "too_few_quarters");
     assert_eq!(
         empty["next_report"]["reasons"][0]["code"],
         "too_few_quarters"
@@ -416,6 +417,7 @@ async fn finish_attempt(state: &AppState, id: i64, status: AttemptStatus) {
                 instrument_id: id,
                 expected: Some(link.token),
                 discovery: None,
+                verified: None,
                 values: vec![],
                 splits: vec![],
                 at: format!("{}T14:00:00Z", state.clock.today()),

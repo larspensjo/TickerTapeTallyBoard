@@ -44,7 +44,7 @@ async function parseBody<T>(response: Response): Promise<T> {
   }
 
   // Preserve response contracts verbatim, including decimal strings, nullable
-  // tickers, and the fundamentals certainty, basis, reasons and backend days_until.
+  // tickers, and the fundamentals certainty, basis, reasons, backend local dates and days_until.
   return body as T;
 }
 

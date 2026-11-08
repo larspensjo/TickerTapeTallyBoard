@@ -331,6 +331,7 @@ pub(super) async fn refresh(
                 instrument_id: id,
                 expected,
                 discovery: None,
+                verified: None,
                 values: Vec::new(),
                 splits: Vec::new(),
                 at: clock.now_utc().to_rfc3339(),
@@ -359,15 +360,10 @@ pub(super) async fn refresh(
                     write.reason = found.reason;
                     write.values = found.values;
                     write.splits = found.splits;
-                    if rediscover
-                        || link.as_ref().is_some_and(|old| {
-                            old.definition.origin == LinkOrigin::Discovered
-                                && (old.definition.classification
-                                    != found.definition.classification
-                                    || old.definition.status != found.definition.status)
-                        })
-                    {
+                    if rediscover {
                         write.discovery = Some(found.definition);
+                    } else {
+                        write.verified = Some(found.definition);
                     }
                 }
                 Err(MarketDataError::FundamentalsProvider(error)) => {
@@ -457,13 +453,31 @@ async fn fetch_link(
         discovery::provider_error(error)
     })?;
     let mut definition = link.definition.clone();
+    if listing.security_type.is_some()
+        && (definition.security_type.is_none()
+            || discovery::classify(listing.security_type.as_deref())
+                != fundamentals_sources::Classification::Unknown)
+    {
+        definition.security_type = listing.security_type;
+        definition.classification = discovery::classify(definition.security_type.as_deref());
+    }
     let has_quarters = discovery::has_quarters(&values);
     if has_quarters && definition.classification == fundamentals_sources::Classification::Unknown {
         definition.classification = fundamentals_sources::Classification::Figures;
     }
-    if has_quarters {
-        definition.status = LinkStatus::Usable;
-    }
+    definition.status = if matches!(
+        definition.classification,
+        fundamentals_sources::Classification::Fund
+            | fundamentals_sources::Classification::Certificate
+    ) {
+        LinkStatus::NotApplicable
+    } else if has_quarters {
+        LinkStatus::Usable
+    } else if definition.status == LinkStatus::Pending {
+        LinkStatus::Unavailable
+    } else {
+        definition.status
+    };
     let reason = (!has_quarters).then(|| {
         if definition.classification == fundamentals_sources::Classification::Unknown {
             "security_type_unknown"

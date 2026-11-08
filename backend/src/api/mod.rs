@@ -5,6 +5,7 @@ mod data_version;
 mod error;
 pub mod extract;
 mod fundamentals;
+mod fundamentals_source;
 mod gains;
 mod health;
 mod holdings;
@@ -130,6 +131,14 @@ fn api_router() -> Router<AppState> {
         )
         .route("/instruments/{id}/prices", get(instrument_prices::list))
         .route("/instruments/{id}/fundamentals", get(fundamentals::get))
+        .route(
+            "/instruments/{id}/fundamentals-source",
+            put(fundamentals_source::put).delete(fundamentals_source::delete),
+        )
+        .route(
+            "/instruments/{id}/fundamentals-source/preview",
+            get(fundamentals_source::preview),
+        )
         .route(
             "/instruments/{id}/provider-symbols/{provider}",
             put(provider_symbols::update),
@@ -396,6 +405,16 @@ mod tests {
                 json!({"conviction":"Low"}),
             ),
             ("DELETE", "/api/instruments/1", Value::Null),
+            (
+                "PUT",
+                "/api/instruments/1/fundamentals-source",
+                json!({"provider":"YAHOO","provider_symbol":"MSFT"}),
+            ),
+            (
+                "DELETE",
+                "/api/instruments/1/fundamentals-source",
+                json!({}),
+            ),
             (
                 "PUT",
                 "/api/instruments/convictions",

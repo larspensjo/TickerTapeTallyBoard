@@ -677,3 +677,88 @@ export interface RollbackResult {
   batch_id: number;
   removed: number;
 }
+
+export type PreviousFundamentalsLink = "same_company" | "wrong_company";
+export interface FundamentalsCorrection {
+  provider?: "YAHOO" | null;
+  provider_symbol?: string;
+  not_a_company?: boolean;
+  previous_link?: PreviousFundamentalsLink;
+}
+export interface FundamentalsPreview {
+  status: "found" | "no_match" | "provider_unavailable";
+  symbol: string;
+  name: string | null;
+  security_type: string | null;
+  report_currency: string | null;
+  quarters: number;
+  latest_period_end: string | null;
+  data_revision: string;
+}
+export interface FundamentalsSource {
+  symbol: string | null;
+  origin: "DISCOVERED" | "MANUAL" | null;
+  security_type: string | null;
+  classification:
+    | "EQUITY"
+    | "FUND"
+    | "CERTIFICATE"
+    | "NOT_COMPANY"
+    | "UNKNOWN"
+    | "FIGURES";
+  status:
+    | "PENDING"
+    | "USABLE"
+    | "NOT_APPLICABLE"
+    | "AMBIGUOUS"
+    | "NO_MATCH"
+    | "UNAVAILABLE";
+  candidates: {
+    symbol: string;
+    name: string | null;
+    security_type?: string | null;
+    exchange?: string | null;
+  }[];
+  last_success: string | null;
+  last_success_on: string | null;
+  last_attempt_on: string | null;
+  last_attempt_at: string | null;
+  last_attempt_outcome: "SUCCEEDED" | "EMPTY" | "FAILED" | null;
+  last_attempt_reason: string | null;
+  awaiting_figures: boolean;
+  has_active_figures: boolean;
+  pending_update: boolean;
+}
+export interface FundamentalsQuarter {
+  period_end: string;
+  missing: boolean;
+  sales_missing: boolean;
+  eps_missing: boolean;
+  currency: string | null;
+  sales: Figure;
+  eps: Figure;
+}
+export interface InstrumentFundamentals {
+  pe: Figure;
+  ps: Figure;
+  profit_margin: Figure;
+  sales_growth: Figure;
+  next_report: ReportDate;
+  last_report: ReportDate;
+  source: FundamentalsSource;
+  quarters: FundamentalsQuarter[];
+  fx_conversion: {
+    from: string;
+    to: string;
+    rate: string;
+    date: string;
+    from_rate_date: string;
+    to_rate_date: string;
+  } | null;
+  share_basis: {
+    state: "established" | "listing_unit_mismatch" | "share_basis_unverified";
+    ratio: string | null;
+    evidence_date: string | null;
+  };
+  data_revision: string;
+}

@@ -4,6 +4,7 @@ import {
   useDeleteInstrument,
   useGains,
   useHoldings,
+  useInstrumentFundamentals,
   useInstrumentPrices,
   useInstruments,
   usePriceStatus,
@@ -33,6 +34,8 @@ import {
   type Tiles,
   tilesView,
 } from "./assetViewModel";
+import { CompanyFiguresPanel } from "./CompanyFiguresPanel";
+import { CompanyFiguresSource } from "./CompanyFiguresSource";
 import { chartWindow } from "./chartTimeAxis";
 import { GainsWaterfall } from "./GainsWaterfall";
 import {
@@ -82,6 +85,8 @@ export function AssetView() {
   const transactionsQuery = useTransactions();
   const priceStatusQuery = usePriceStatus();
   const pricesQuery = useInstrumentPrices(id);
+  const fundamentalsQuery = useInstrumentFundamentals(id);
+  const { canMutate } = useAppMode();
   const deleteInstrument = useDeleteInstrument();
 
   const isPending =
@@ -193,6 +198,7 @@ export function AssetView() {
             query={pricesQuery}
             transactions={data.transactions}
           />
+          <AssetCompanyFigures query={fundamentalsQuery} />
           <div className="asset-two-col">
             <GainsWaterfall
               view={waterfallView(data.gain)}
@@ -205,6 +211,15 @@ export function AssetView() {
               holding={data.holding}
               gain={data.gain}
               priceStatus={data.priceStatus}
+              companySource={
+                fundamentalsQuery.data ? (
+                  <CompanyFiguresSource
+                    id={instrument.id}
+                    source={fundamentalsQuery.data.source}
+                    canMutate={canMutate}
+                  />
+                ) : null
+              }
             />
             <AssetSplits events={splits} />
           </div>
@@ -215,12 +230,22 @@ export function AssetView() {
             query={pricesQuery}
             transactions={data.transactions}
           />
+          <AssetCompanyFigures query={fundamentalsQuery} />
           <AssetDataMapping
             key={instrument.id}
             instrument={instrument}
             holding={null}
             gain={null}
             priceStatus={data.priceStatus}
+            companySource={
+              fundamentalsQuery.data ? (
+                <CompanyFiguresSource
+                  id={instrument.id}
+                  source={fundamentalsQuery.data.source}
+                  canMutate={canMutate}
+                />
+              ) : null
+            }
           />
           <AssetSplits events={splits} />
         </>
@@ -667,11 +692,13 @@ function AssetDataMapping({
   holding,
   gain,
   priceStatus,
+  companySource,
 }: {
   instrument: Instrument;
   holding: Holding | null;
   gain: GainsRow | null;
   priceStatus: PriceStatusInstrument | null;
+  companySource: ReactNode;
 }) {
   const sourceRows = priceStatus ? priceSourceRows(priceStatus, gain) : [];
   const effectiveSource = effectivePriceSourceRow(priceStatus, gain);
@@ -697,6 +724,7 @@ function AssetDataMapping({
         <h3>Conviction</h3>
         <AssetConvictionSection instrument={instrument} holding={holding} />
       </div>
+      {companySource}
     </section>
   );
 }
@@ -838,6 +866,24 @@ function AssetTransactions({
           showActions={false}
         />
       )}
+    </section>
+  );
+}
+
+function AssetCompanyFigures({
+  query,
+}: {
+  query: ReturnType<typeof useInstrumentFundamentals>;
+}) {
+  if (query.data) return <CompanyFiguresPanel data={query.data} />;
+  return (
+    <section className="panel asset-panel" aria-label="Company figures">
+      <AsyncBoundary
+        isPending={query.isPending}
+        isError={query.isError}
+        errorMessage="Could not load company figures."
+        onRetry={() => void query.refetch()}
+      />
     </section>
   );
 }

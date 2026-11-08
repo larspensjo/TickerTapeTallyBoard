@@ -67,6 +67,7 @@ async fn write(
             instrument_id: id,
             expected,
             discovery,
+            verified: None,
             values,
             splits: vec![SplitEvent {
                 date: "2026-09-01".parse().unwrap(),

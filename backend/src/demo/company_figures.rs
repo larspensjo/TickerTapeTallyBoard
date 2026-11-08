@@ -92,6 +92,7 @@ pub(super) async fn seed(
         let mut write = FetchWrite {
             instrument_id: ids[index],
             expected: None,
+            verified: None,
             discovery: Some(LinkDefinition {
                 source: Some(FundamentalsSource::Yahoo),
                 symbol: (symbol != "VARV").then(|| instrument.provider_symbol.into()),

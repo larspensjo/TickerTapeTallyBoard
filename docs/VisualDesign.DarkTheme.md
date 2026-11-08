@@ -193,6 +193,40 @@ with an unresolved-report reason reads "expected <date>" and keeps its label,
 with the visible hint "figures not seen yet" instead of a days-ago count. This column
 sorts by the backend's days-until count, soonest first, with no-date rows last.
 
+**Stock-page company figures** — "How the company is doing" sits directly under
+the price chart. Four labelled values (P/E, P/S, profit margin, sales growth) use
+the Holdings certainty markers and precision. Next and last report dates include
+the backend days-away label, observation window and quarter ending where known.
+A currency-crossing conversion note names the currencies, rate and price date.
+An awaiting message replaces chart history after a wrong-company correction until
+an attempt completes; it persists while the last attempt failed.
+
+Two compact DOM bar charts show sales and EPS in the latest report currency.
+Other currencies are excluded from the scale and shown as hatched placeholders
+with the currency-change reason.
+Bars use neutral `--wf-bar-total` fill; negative EPS uses `--wf-bar-subtotal` and
+extends below a visible `--text-muted` zero axis. Missing quarters have explicit
+hatched placeholders: `--surface-2` alternates with `--wf-hatch-stripe`, bordered
+by `--hairline`. Their accessible name is "No figures reported for the quarter ending ...".
+Reported but excluded slots say "Figures excluded for the quarter ending ..."
+with the reason. Period-end dates and values use mono type. Each chart uses a
+count-derived grid with shrinking bars and bounded gaps so all quarters fit,
+oldest first and newest last, without scrolling as history grows. The two charts
+stack on narrow windows. Date labels abbreviate backend period ends to YYYY-MM.
+Company-figure amount labels use k/M/B at the thousand/million/billion thresholds
+with one decimal, including EPS; smaller amounts retain unit-price precision,
+with whole amounts dropping a trailing .0. Other surfaces keep their precision.
+Value labels hide below a 5rem slot width and dates below 3rem; full period-end
+dates and unabridged amounts remain in every bar's accessible label and title.
+Set-aside quarters are absent from the response and charts.
+
+The Data & mapping panel includes company-figures source details and a compact
+preview-then-save correction form. Existing figures require an explicit same-
+company or wrong-company choice; there is no default radio selection. Pending
+updates say "Figures load on the next refresh" while retained figures stay
+visible. Source update and attempt dates use backend local calendar dates.
+Demo shows source details with no correction controls.
+
 **Opportunities table** — the density spec above, read-only, no column-header
 sorting. The panel header carries two segmented controls: the window ("1 week",
 "2 weeks", "30 days") and the order ("Biggest fallers", "Biggest risers"); the

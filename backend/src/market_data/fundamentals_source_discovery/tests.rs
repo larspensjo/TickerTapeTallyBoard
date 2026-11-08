@@ -92,6 +92,7 @@ async fn run(
         instrument_id: instrument.id,
         expected: None,
         discovery: Some(result.definition.clone()),
+        verified: None,
         values: result.values.clone(),
         splits: result.splits.clone(),
         at: clock.now_utc().to_rfc3339(),

@@ -142,6 +142,38 @@ quarters (never before the earliest stored quarter), and source-panel
 status and attempt history. Unknown instruments return 404. The response carries
 `data_revision` as a cache token; it does not promise a cross-query snapshot.
 
+`PUT /api/instruments/:id/fundamentals-source` sets a hand-managed link with
+`{provider: "YAHOO", provider_symbol}` or `{provider: null, not_a_company: true}`.
+`DELETE` on the same path returns to automatic discovery, carrying `previous_link`
+in the query string with no request body. PUT accepts it in JSON. The values are
+`"same_company" | "wrong_company"`; it is required when active
+figures exist (`400 previous_link_required`). In one immediate transaction the
+repository increments the link generation, resets fetch bookkeeping, and, for
+`wrong_company`, sets aside all active values, observations and split evidence.
+`same_company` retains figures for calculations and charts until the next refresh
+merges newer values. Neither correction deletes history. Mutations return 204,
+use the shared API body limit, demo guard and revision-bump middleware, and do
+not fetch providers. Invalid providers and blank symbols return standard error
+envelopes with `invalid_provider` and `invalid_provider_symbol`.
+
+`GET /api/instruments/:id/fundamentals-source/preview?symbol=...` searches Yahoo
+and fetches its timeseries once, without storing anything. It returns `status`
+(`found`, `no_match`, `provider_unavailable`), symbol, name, security type, report
+currency, distinct quarter count, latest period end and `data_revision`. In demo
+it returns `provider_unavailable` without network calls. Unknown instruments
+return 404 on all three source endpoints.
+
+The stock-page fundamentals source block includes `has_active_figures`,
+`awaiting_figures` and `pending_update` alongside the symbol, discovery origin,
+classification, candidates and attempt history. Additive `last_success_on` and
+`last_attempt_on` dates come from the backend clock's local calendar; raw timestamps
+remain available. A hand-managed link is never
+replaced by discovery; a generation-fenced refresh may enrich its security type
+and classification after verifying the same symbol. The source correction UI
+previews a typed symbol, then asks how to treat existing figures before saving.
+The same choice applies to "Not a company" and "Use automatic". In demo the
+source details remain visible and the correction form is hidden.
+
 Figures contain `certainty`, a decimal-string `value` or null, and stable reason
 codes with optional detail. Complete inputs yield `complete`; three-quarter
 scaling, derived EPS, warning-stale prices, stale source outages, moderate
@@ -171,8 +203,11 @@ Report dates currently use app estimates (`last_year_date` or `typical_gap`), wi
 window of at most seven days, otherwise `period_only`. Company-announced and
 Nasdaq-expected dates will extend these inputs separately. Active-only reads
 exclude wrong-company history from figures, charts, observations and estimates;
-an empty replacement history is explicitly `awaiting_figures` until an attempt
-under the current link generation completes, including an empty result.
+an empty replacement history is `awaiting_figures` while no attempt in the current
+link generation has completed or the last attempt failed. A completed attempt,
+including empty, no-match or ambiguous, ends awaiting and exposes the actual reason.
+Empty or failed fetches do not restore rejected history. Empty fetches preserve an
+established link's status and observation baseline; only rediscovery replaces it.
 
 `POST /api/prices/refresh` includes an additive `fundamentals` block with `status`
 (`not_run`, `succeeded`, `partial`, `failed`), instrument counts (`fetched`, `skipped`,

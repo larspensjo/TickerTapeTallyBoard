@@ -353,6 +353,7 @@ fn splits_block_old_report_units_and_exclude_unrestated_per_share_slots() {
     }
     let f = c.run();
     assert_eq!(f.quarters[3].eps.value, None);
+    assert_eq!(f.quarters[3].eps.reasons[0].code, "split_since_report");
     assert_eq!(f.quarters[3].shares, None);
     assert!(f.quarters[3].sales.value.is_some());
     missing(&f.pe, "too_few_quarters");

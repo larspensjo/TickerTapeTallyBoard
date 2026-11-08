@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reportDate } from "../test/companyFiguresFixtures";
+import { instrumentFundamentals } from "../test/instrumentFundamentalsFixture";
 import { ApiError, apiGet, apiSend, apiSendWithStatus } from "./client";
 import type {
   Figure,
   HoldingsResponse,
   Instrument,
+  InstrumentFundamentals,
   ReportBasis,
 } from "./types";
 
@@ -22,6 +24,73 @@ function mockResponse(status: number, body: unknown = undefined): Response {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("fundamentals source contracts", () => {
+  it("preserves backend local dates separately from raw UTC instants", async () => {
+    const body = instrumentFundamentals();
+    body.source.last_success = "2026-11-01T23:30:00+00:00";
+    body.source.last_attempt_at = "2026-11-02T23:30:00+00:00";
+    body.source.last_success_on = "2026-11-02";
+    body.source.last_attempt_on = "2026-11-03";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse(200, body)));
+    const parsed = await apiGet<InstrumentFundamentals>(
+      "/api/instruments/1/fundamentals",
+    );
+    expect(parsed.source).toEqual(body.source);
+  });
+  it.each(["PUT", "DELETE"])(
+    "preserves %s validation error codes and messages",
+    async (method) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockResponse(400, {
+            error: {
+              code: "previous_link_required",
+              message: "Choose the previous company",
+            },
+          }),
+        ),
+      );
+      await expect(
+        apiSend(method, "/api/instruments/1/fundamentals-source", {}),
+      ).rejects.toMatchObject({
+        code: "previous_link_required",
+        message: "Choose the previous company",
+      });
+    },
+  );
+  it("preserves preview error bodies", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse(400, {
+          error: {
+            code: "invalid_provider_symbol",
+            message: "Symbol is required",
+          },
+        }),
+      ),
+    );
+    await expect(
+      apiGet("/api/instruments/1/fundamentals-source/preview?symbol="),
+    ).rejects.toMatchObject({
+      code: "invalid_provider_symbol",
+      message: "Symbol is required",
+    });
+  });
+  it.each(["PUT", "DELETE"])(
+    "handles %s's empty successful body",
+    async (method) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse(204)));
+      await expect(
+        apiSend(method, "/api/instruments/1/fundamentals-source", {
+          previous_link: "wrong_company",
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
 });
 
 describe("apiGet", () => {

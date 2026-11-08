@@ -268,6 +268,7 @@ async fn store(pool: &SqlitePool, id: i64, symbol: &str, currency: &str) {
             instrument_id: id,
             expected: Some(link.token),
             discovery: None,
+            verified: None,
             values: vec![value(currency)],
             splits: vec![],
             at: "2026-10-01T12:00:00Z".into(),
@@ -642,6 +643,154 @@ async fn wait_for_call(figures: &FakeFundamentalsProvider) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn usable_discovered_link_preserves_generation_and_absence_across_empty_fetch() {
+    let pool = db::testing::memory_pool().await;
+    let id = target(&pool, "EVO.ST").await;
+    let mut old = value("SEK");
+    old.period_end = "2026-06-30".parse().unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    fundamental_values::write_fetch(
+        &mut tx,
+        &FetchWrite {
+            instrument_id: id,
+            expected: None,
+            discovery: Some(LinkDefinition {
+                origin: LinkOrigin::Discovered,
+                ..definition("EVO.ST")
+            }),
+            verified: None,
+            values: vec![old],
+            splits: vec![],
+            at: "2026-10-01T12:00:00Z".into(),
+            seen_on: "2026-10-01".parse().unwrap(),
+            previous_success_on: None,
+            status: AttemptStatus::Succeeded,
+            reason: None,
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let initial = fundamentals_sources::find(&pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let prices = FakePriceProvider::new();
+    let figures = FakeFundamentalsProvider::new();
+    let service = MarketDataService::with_provider_registry(registry(
+        prices.clone(),
+        FakeFxRateProvider::new(),
+        figures.clone(),
+    ));
+    for (offset, values) in [(0, vec![]), (1, vec![value("SEK")])] {
+        prices_for(&prices, "EVO.ST");
+        figures.push_response(Ok(values));
+        figures.push_listing(Ok(ListingDetails {
+            security_type: Some("UNRECOGNISED".into()),
+            splits: vec![],
+        }));
+        service
+            .refresh(
+                &pool,
+                &Clock::fixed(day() + chrono::Duration::days(offset)),
+                RefreshTrigger::Manual,
+                request(),
+            )
+            .await
+            .unwrap();
+        let link = fundamentals_sources::find(&pool, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(link.token, initial.token);
+        assert_eq!(link.definition, initial.definition);
+        assert_eq!(link.consecutive_empty, if offset == 0 { 1 } else { 0 });
+    }
+    let observations = fundamental_values::active_observations(&pool, id)
+        .await
+        .unwrap();
+    let new = observations
+        .iter()
+        .find(|o| o.period_end == value("SEK").period_end)
+        .unwrap();
+    assert_eq!(new.absent_fetch_on, Some(day()));
+    assert_eq!(new.first_seen_on, day() + chrono::Duration::days(1));
+    assert_eq!(
+        fundamental_values::active_report_history(&pool, id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn manual_empty_links_never_rediscover_and_recognised_fund_type_is_verified() {
+    let pool = db::testing::memory_pool().await;
+    let id = target(&pool, "EVO.ST").await;
+    let link = fundamentals_sources::correct(
+        &pool,
+        id,
+        Some(LinkDefinition {
+            status: LinkStatus::Pending,
+            security_type: None,
+            classification: Classification::Unknown,
+            ..definition("HAND.SET")
+        }),
+        None,
+        "2026-10-01T12:00:00Z",
+    )
+    .await
+    .unwrap();
+    let prices = FakePriceProvider::new();
+    let figures = FakeFundamentalsProvider::new();
+    let search =
+        crate::providers::FakeSymbolSearchProvider::with_provider(MarketDataProvider::Yahoo);
+    let service = MarketDataService::with_provider_registry(
+        registry(prices.clone(), FakeFxRateProvider::new(), figures.clone())
+            .with_symbol_search_provider(MarketDataProvider::Yahoo, search.clone()),
+    );
+    for attempt in 0..5 {
+        prices_for(&prices, "EVO.ST");
+        figures.push_response(Ok(vec![]));
+        figures.push_listing(Ok(ListingDetails {
+            security_type: Some(if attempt == 4 { "ETF" } else { "EQUITY" }.into()),
+            splits: vec![],
+        }));
+        service
+            .refresh(
+                &pool,
+                &Clock::fixed(day() + chrono::Duration::days(attempt * 8)),
+                RefreshTrigger::Manual,
+                request(),
+            )
+            .await
+            .unwrap();
+        let after = fundamentals_sources::find(&pool, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.definition.symbol, link.definition.symbol);
+        assert_eq!(after.definition.origin, LinkOrigin::Manual);
+        assert_eq!(after.consecutive_empty, attempt + 1);
+        assert_eq!(
+            after.definition.status,
+            if attempt == 4 {
+                LinkStatus::NotApplicable
+            } else {
+                LinkStatus::Unavailable
+            }
+        );
+        if attempt == 4 {
+            assert_eq!(after.definition.classification, Classification::Fund);
+        }
+    }
+    assert!(search.calls().is_empty());
+    assert_eq!(figures.calls().len(), 5);
+    assert!(figures.calls().iter().all(|r| r.symbol == "HAND.SET"));
 }
 
 #[tokio::test]

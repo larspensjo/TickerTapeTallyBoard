@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   availabilityNumber,
   availabilitySortValues,
+  formatCompactAmount,
   formatExchangeRate,
   formatGroupedNumber,
   formatUnitPrice,
@@ -133,6 +134,33 @@ describe("formatExchangeRate", () => {
   it("uses four decimals regardless of quote magnitude", () => {
     expect(formatExchangeRate("10.154321")).toBe("10.1543");
     expect(formatExchangeRate("1.2345")).toBe("1.2345");
+  });
+});
+
+describe("formatCompactAmount", () => {
+  it.each([
+    ["999.99", "999.99"],
+    ["1000", "1.0k"],
+    ["999999", "1000.0k"],
+    ["1000000", "1.0M"],
+    ["999999999", "1000.0M"],
+    ["1000000000", "1.0B"],
+    ["565871000.0", "565.9M"],
+    ["1.23e11", "123.0B"],
+    ["-12300000", "-12.3M"],
+    ["-1000", "-1.0k"],
+    ["-1000000000", "-1.0B"],
+    ["0.0", "0"],
+    ["-0.0", "0"],
+    ["42.0", "42"],
+    ["999.000", "999"],
+    ["1.22", "1.22"],
+    ["1.2345", "1.2345"],
+    ["-0.5", "-0.5"],
+    ["0.00123456", "0.001235"],
+    ["168.716301", "168.72"],
+  ])("formats %s as %s", (input, expected) => {
+    expect(formatCompactAmount(input)).toBe(expected);
   });
 });
 

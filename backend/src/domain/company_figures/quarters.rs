@@ -143,6 +143,13 @@ fn build_grid(values: &[ReportedValue], splits: &[NaiveDate], trailing_only: boo
             } else if let (Some((n, _)), Some(s)) = (&income, shares.filter(|s| *s > Decimal::ZERO))
             {
                 Figure::available(*n / s, vec![Reason::new("eps_derived_from_net_income")])
+            } else if values.iter().any(|v| {
+                v.input.period_end == *date
+                    && v.input.period_type == PeriodType::Quarter
+                    && matches!(v.input.metric, Metric::DilutedEps | Metric::DilutedShares)
+                    && splits.iter().any(|s| *s > *date && *s > v.fetched_on)
+            }) {
+                Figure::unavailable("split_since_report")
             } else {
                 Figure::unavailable("quarter_missing")
             };

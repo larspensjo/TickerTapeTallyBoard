@@ -204,7 +204,7 @@ pub async fn correct(
     at: &str,
 ) -> Result<SourceLink, CorrectionError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let has_values: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM fundamental_values WHERE instrument_id=? AND set_aside_at IS NULL)").bind(instrument_id).fetch_one(&mut *tx).await?;
+    let has_values = super::fundamental_values::has_active_values(&mut *tx, instrument_id).await?;
     if has_values && previous.is_none() {
         return Err(CorrectionError::PreviousLinkRequired);
     }

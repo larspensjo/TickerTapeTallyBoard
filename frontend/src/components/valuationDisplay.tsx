@@ -155,6 +155,26 @@ export function formatUnitPrice(value: string | number): string {
   return formatGroupedNumber(rounded);
 }
 
+/** Company-figure amounts use one decimal at compact scales, unit-price precision below. */
+export function formatCompactAmount(value: string | number): string {
+  const parsed = parseFiniteNumber(value);
+  if (parsed === null) return "—";
+  if (parsed === 0) return "0";
+
+  const magnitude = Math.abs(parsed);
+  const scale =
+    magnitude >= 1e9
+      ? { divisor: 1e9, suffix: "B" }
+      : magnitude >= 1e6
+        ? { divisor: 1e6, suffix: "M" }
+        : magnitude >= 1e3
+          ? { divisor: 1e3, suffix: "k" }
+          : null;
+  if (scale) return `${(parsed / scale.divisor).toFixed(1)}${scale.suffix}`;
+
+  return formatUnitPrice(value).replace(/\.0+$/, "");
+}
+
 /** FX quotes retain four decimals independently of the unit-price scale. */
 export function formatExchangeRate(value: string | number): string {
   return formatGroupedNumber(roundDecimal(value, 4));

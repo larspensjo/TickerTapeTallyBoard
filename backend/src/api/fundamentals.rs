@@ -49,10 +49,14 @@ pub struct SourcePanel {
     pub status: LinkStatus,
     pub candidates: serde_json::Value,
     pub last_success: Option<String>,
+    pub last_success_on: Option<NaiveDate>,
+    pub last_attempt_on: Option<NaiveDate>,
     pub last_attempt_at: Option<String>,
     pub last_attempt_outcome: Option<AttemptStatus>,
     pub last_attempt_reason: Option<String>,
     pub awaiting_figures: bool,
+    pub has_active_figures: bool,
+    pub pending_update: bool,
 }
 
 pub async fn get(
@@ -156,9 +160,23 @@ pub(super) async fn load(
             .unwrap_or_else(|| serde_json::json!([])),
         last_success: link.as_ref().and_then(|s| s.last_success_at.clone()),
         last_attempt_at: link.as_ref().and_then(|s| s.last_attempt_at.clone()),
+        last_success_on: link
+            .as_ref()
+            .and_then(|s| s.last_success_at.as_deref())
+            .map(|at| loading::local_date(clock, id, at))
+            .transpose()?,
+        last_attempt_on: link
+            .as_ref()
+            .and_then(|s| s.last_attempt_at.as_deref())
+            .map(|at| loading::local_date(clock, id, at))
+            .transpose()?,
         last_attempt_outcome: link.as_ref().and_then(|s| s.last_attempt_status),
         last_attempt_reason: link.as_ref().and_then(|s| s.last_attempt_reason.clone()),
         awaiting_figures: awaiting,
+        has_active_figures: fundamental_values::has_active_values(pool, id).await?,
+        pending_update: link.as_ref().is_some_and(|s| {
+            s.last_attempt_at.is_none() && s.definition.status != LinkStatus::NotApplicable
+        }),
     };
     Ok(FundamentalsResponse {
         figures: figures.into(),

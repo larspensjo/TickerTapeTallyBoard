@@ -10,7 +10,11 @@ pub(super) struct Loaded {
     pub annual: Vec<NaiveDate>,
 }
 
-fn local_date(clock: &crate::clock::Clock, id: i64, at: &str) -> Result<NaiveDate, ApiError> {
+pub(super) fn local_date(
+    clock: &crate::clock::Clock,
+    id: i64,
+    at: &str,
+) -> Result<NaiveDate, ApiError> {
     let timestamp = chrono::DateTime::parse_from_rfc3339(at).map_err(|e| {
         ApiError::internal(format!(
             "invalid fundamentals timestamp instrument_id={id}: {e}"
@@ -38,9 +42,12 @@ pub(super) async fn load_inputs(
         (link, state)
     };
     let awaiting = stored.is_empty()
-        && state
+        && !state
             .as_ref()
-            .is_some_and(|s| s.last_attempt_status.is_none())
+            .is_some_and(|s| s.status == LinkStatus::NotApplicable)
+        && state.as_ref().is_none_or(|s| {
+            s.last_attempt_status.is_none() || s.last_attempt_status == Some(AttemptStatus::Failed)
+        })
         && fundamental_values::has_set_aside_values(pool, id).await?;
     let mut source = SourceState {
         classification: state

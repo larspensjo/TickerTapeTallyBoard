@@ -12,6 +12,8 @@ import type {
   Conviction,
   CreateInstrumentInput,
   DateRange,
+  FundamentalsCorrection,
+  FundamentalsPreview,
   GainsPeriod,
   GainsResponse,
   HealthResponse,
@@ -20,6 +22,7 @@ import type {
   ImportResult,
   ImportSource,
   Instrument,
+  InstrumentFundamentals,
   InstrumentLookupResponse,
   OpportunitiesResponse,
   OpportunityWindow,
@@ -470,5 +473,41 @@ export function useRollbackImport() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["data-version"] });
     },
+  });
+}
+
+export function useInstrumentFundamentals(id: number | null) {
+  return useVersionedQuery<InstrumentFundamentals>(
+    ["instrument-fundamentals", id],
+    `/api/instruments/${id}/fundamentals`,
+    { enabled: id !== null, keepPreviousData: false },
+  );
+}
+export function useCorrectFundamentalsSource(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      automatic,
+      input,
+    }: {
+      automatic: boolean;
+      input: FundamentalsCorrection;
+    }) =>
+      apiSend<void>(
+        automatic ? "DELETE" : "PUT",
+        `/api/instruments/${id}/fundamentals-source${automatic && input.previous_link ? `?${new URLSearchParams({ previous_link: input.previous_link })}` : ""}`,
+        automatic ? undefined : input,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["data-version"] });
+    },
+  });
+}
+export function usePreviewFundamentalsSource(id: number) {
+  return useMutation({
+    mutationFn: (symbol: string) =>
+      apiGet<FundamentalsPreview>(
+        `/api/instruments/${id}/fundamentals-source/preview?${new URLSearchParams({ symbol })}`,
+      ),
   });
 }

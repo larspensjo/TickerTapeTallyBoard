@@ -1,5 +1,7 @@
 pub mod effective_prices;
+mod fundamentals_preview;
 mod fundamentals_refresh;
+pub use fundamentals_preview::FundamentalsPreview;
 mod fundamentals_source_discovery;
 mod fx_refresh;
 mod price_source_refresh;

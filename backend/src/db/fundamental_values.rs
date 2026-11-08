@@ -70,6 +70,13 @@ pub async fn active_values(
     Ok(winners.into_values().collect())
 }
 
+pub async fn has_active_values<'e, E>(executor: E, instrument_id: i64) -> Result<bool, RepoError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM fundamental_values WHERE instrument_id=? AND set_aside_at IS NULL)").bind(instrument_id).fetch_one(executor).await?)
+}
+
 pub async fn has_set_aside_values(
     pool: &SqlitePool,
     instrument_id: i64,
@@ -167,6 +174,7 @@ pub struct FetchWrite {
     pub instrument_id: i64,
     pub expected: Option<LinkToken>,
     pub discovery: Option<LinkDefinition>,
+    pub verified: Option<LinkDefinition>,
     pub values: Vec<FundamentalValue>,
     pub splits: Vec<SplitEvent>,
     pub at: String,
@@ -199,6 +207,21 @@ pub async fn write_fetch(
         old.clone()
             .ok_or_else(|| RepoError::Decode("fetch without a link".to_owned()))?
     };
+    // Verification may enrich an existing link, but must never replace its identity.
+    if let Some(verified) = &write.verified {
+        if verified.source != link.definition.source
+            || verified.symbol != link.definition.symbol
+            || verified.origin != link.definition.origin
+        {
+            return Err(RepoError::Decode(
+                "verification changed link identity".to_owned(),
+            ));
+        }
+        if verified != &link.definition {
+            sqlx::query("UPDATE instrument_fundamentals_sources SET security_type=?, classification=?, status=?, generation=generation+1 WHERE instrument_id=?")
+                .bind(&verified.security_type).bind(verified.classification.as_str()).bind(verified.status.as_str()).bind(write.instrument_id).execute(&mut *conn).await?;
+        }
+    }
     let symbol = link.definition.symbol.as_deref();
     if let (Some(symbol), Some(source)) = (symbol, link.definition.source) {
         let day = write.seen_on.to_string();

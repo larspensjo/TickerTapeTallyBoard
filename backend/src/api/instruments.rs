@@ -585,6 +585,7 @@ mod tests {
                 instrument_id: id,
                 expected: Some(link.token),
                 discovery: None,
+                verified: None,
                 values: vec![crate::domain::fundamentals::FundamentalValue {
                     period_type: crate::domain::fundamentals::PeriodType::Quarter,
                     period_end: "2026-09-30".parse().expect("date"),

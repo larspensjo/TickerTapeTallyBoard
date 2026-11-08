@@ -339,6 +339,19 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
         result.sales_growth = figure;
         return result;
     }
+    if result.quarters.is_empty() {
+        let figure = Figure::missing(
+            input
+                .source
+                .outage_reason(input.today, false)
+                .unwrap_or_else(|| Reason::new("too_few_quarters")),
+        );
+        result.pe = figure.clone();
+        result.ps = figure.clone();
+        result.profit_margin = figure.clone();
+        result.sales_growth = figure;
+        return result;
+    }
     let grid = &result.quarters;
     let window = &grid[grid.len().saturating_sub(4)..];
     let revenue = quarters::ttm(window.iter().map(|q| &q.sales));

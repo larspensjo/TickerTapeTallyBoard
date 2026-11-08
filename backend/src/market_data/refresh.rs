@@ -129,6 +129,15 @@ fn process_owner() -> &'static str {
 }
 
 impl MarketDataService {
+    pub async fn preview_fundamentals(
+        &self,
+        id: i64,
+        symbol: String,
+        today: NaiveDate,
+    ) -> super::FundamentalsPreview {
+        super::fundamentals_preview::preview(&self.inner.providers, id, symbol, today).await
+    }
+
     /// Nasdaq Nordic is registered unconditionally: there is no feature flag,
     /// so the default configuration exercises the multi-source path.
     pub fn live() -> Self {
