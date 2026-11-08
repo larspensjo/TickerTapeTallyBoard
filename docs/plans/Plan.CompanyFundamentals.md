@@ -1209,7 +1209,36 @@ Phase 1. Each is a commitment, not a work summary.
 
 ## Open Questions
 
-None. The three items below were settled by Claude after review (cheap to change; Lars
+**Open for Lars (raised by the 2026-11-08 end-to-end check): scale of the consistency
+check.**
+
+- *What happened.* One real holding alternates between profit and loss. Its four
+  quarterly EPS values (−0.50, −0.99, +2.11, −0.68) sum to about −0.06. The rule divides
+  the gap between reported TTM EPS and the per-quarter net income ÷ shares sum by
+  |TTM EPS|. Here the gap is 0.17, almost all of it from ordinary 5–8% differences in
+  two quarters. Divided by that near-zero sum, it reads as 66%, so the holding's P/S is
+  hidden as `figures_inconsistent`. The result fails safe: a dash with a reason, never a
+  wrong number. It is not a regression from the review fixes; the earlier, looser
+  allowance gave the same outcome.
+- *Root cause.* The scale is wrong, not the tolerance. When profit and loss quarters
+  cancel, |sum of quarterly EPS| can be near zero while every quarter is large.
+- *Proposed rule.* Keep the numerator (|reported TTM EPS − derived TTM EPS| minus the
+  0.02 allowance), and divide by the sum of the absolute quarterly EPS values,
+  Σ|EPS_q|, instead of |TTM EPS|.
+  - For a company that is profitable every quarter, Σ|EPS_q| equals |TTM EPS|, so the
+    S13 calibration and the 5% / 20% tolerances are unchanged.
+  - For this holding the gap becomes 0.15 / 4.28 ≈ 3.5%, so there is no effect and P/S
+    shows.
+  - No special case for "near zero" or "loss-making" is needed.
+  - Considered and not proposed: summing per-quarter absolute differences in the
+    numerator. It would be stricter than the calibrated rule for profitable companies,
+    so it would change their outcomes.
+- *Cost.* A one-line change in the consistency check, plus a regression test using a
+  constructed profit/loss alternating case. It refines the 2026-11-08 certainty-rules
+  decision-log entry, so it needs a short new entry.
+- *Recommendation:* adopt it, as a small fix before or alongside Phase 4.
+
+The three items below were settled by Claude after review (cheap to change; Lars
 may overturn any of them):
 
 1. **Holdings column order.** Use Instrument, Qty, Cost, Value, P&L, Target &
