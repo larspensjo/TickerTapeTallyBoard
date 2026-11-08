@@ -492,6 +492,37 @@ fn low_eps_consistency_has_one_rounding_allowance_for_the_whole_window() {
 }
 
 #[test]
+fn consistency_scales_by_quarter_size_when_profit_and_loss_quarters_cancel() {
+    let mut c = Case::new();
+    let set_eps = |c: &mut Case, profit: Decimal, loss: Decimal| {
+        for v in &mut c.values {
+            let loss_quarter = matches!(
+                v.input.period_end.to_string().as_str(),
+                "2026-03-31" | "2026-09-30"
+            );
+            match v.input.metric {
+                Metric::DilutedNetIncome if loss_quarter => v.input.value = dec!(-90),
+                Metric::DilutedEps => v.input.value = if loss_quarter { loss } else { profit },
+                _ => {}
+            }
+        }
+    };
+    // Derived quarters 1, -0.9, 1, -0.9 sum to 0.2 but have size 3.8. A routine
+    // per-quarter difference must not read as a large disagreement.
+    set_eps(&mut c, dec!(1.02), dec!(-0.88));
+    let f = c.run();
+    for figure in [&f.pe, &f.ps] {
+        assert_eq!(figure.certainty, Certainty::Complete, "{figure:?}");
+        assert!(figure.reasons.is_empty(), "{figure:?}");
+    }
+    // A real disagreement on the same company is still caught.
+    set_eps(&mut c, dec!(1.5), dec!(-0.9));
+    let f = c.run();
+    missing(&f.pe, "figures_inconsistent");
+    assert_eq!(f.pe.reasons[0].detail.as_deref(), Some("25.8%"));
+}
+
+#[test]
 fn reciprocal_share_ratios_have_bounded_precision() {
     let mut c = Case::new();
     c.values.last_mut().unwrap().input.value /= dec!(3);

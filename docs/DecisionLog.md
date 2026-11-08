@@ -778,3 +778,8 @@ Consequences: Some listings, such as depositary receipts with unverified units o
 Decision: The demo seed includes company figures, share-basis evidence and period observations that reach every certainty state: complete, a different report currency, approximate with a missing quarter and a derived EPS quarter, loss-making, not applicable, no source found, and a listing-unit mismatch. It also includes app-estimated report dates both in the future and already passed. These cases attach to the existing demo instruments, so the demo portfolio's totals and history do not change.
 Context: Company figures add user-visible states that are rare in any one real ledger, and the demo is where their display is checked.
 Consequences: Demo stays ephemeral, read-only and offline. Later report-date sources add their own demo cases in the same way.
+
+## 2026-11-08 - The EPS Consistency Check Scales By Quarter Size — refines 2026-11-08 Company Figures Follow Fixed Certainty Rules
+Decision: The consistency check between reported EPS and per-quarter net income ÷ shares divides the gap (after the 0.02 rounding allowance) by the sum of the absolute per-quarter values, not by the absolute trailing sum. The 5% and 20% tolerances are unchanged.
+Context: An end-to-end check on a real ledger found a company whose profit and loss quarters cancel. Its trailing EPS was near zero, so ordinary few-percent quarterly differences read as a 66% disagreement and hid its P/S.
+Consequences: Companies profitable in every quarter get exactly the same outcome as before. Companies that alternate between profit and loss are judged on the size of their quarters, so their ratios show unless the reported figures genuinely disagree.

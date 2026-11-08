@@ -1209,8 +1209,9 @@ Phase 1. Each is a commitment, not a work summary.
 
 ## Open Questions
 
-**Open for Lars (raised by the 2026-11-08 end-to-end check): scale of the consistency
-check.**
+**Resolved 2026-11-08 — Lars adopted the proposed rule; implemented with a regression
+test and recorded in the decision log (raised by the 2026-11-08 end-to-end check):
+scale of the consistency check.**
 
 - *What happened.* One real holding alternates between profit and loss. Its four
   quarterly EPS values (−0.50, −0.99, +2.11, −0.68) sum to about −0.06. The rule divides

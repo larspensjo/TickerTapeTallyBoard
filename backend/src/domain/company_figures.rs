@@ -429,7 +429,9 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
         }
     }
     // Compare each reported quarter on its own weighted-average share basis. Allow
-    // a single 0.02 per-share rounding allowance over the aggregate window.
+    // a single 0.02 per-share rounding allowance over the aggregate window. Scale by
+    // the summed size of the derived quarters, so profit and loss quarters that cancel
+    // do not shrink the denominator; for always-profitable companies this equals |TTM|.
     let pairs: Vec<_> = window
         .iter()
         .filter_map(|q| {
@@ -442,8 +444,9 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
     if pairs.len() >= 3 {
         let reported: Decimal = pairs.iter().map(|(e, _)| *e).sum();
         let derived: Decimal = pairs.iter().map(|(_, e)| *e).sum();
-        if derived.abs() > Decimal::ZERO {
-            let gap = ((reported - derived).abs() - dec!(0.02)).max(Decimal::ZERO) / derived.abs();
+        let scale: Decimal = pairs.iter().map(|(_, e)| e.abs()).sum();
+        if scale > Decimal::ZERO {
+            let gap = ((reported - derived).abs() - dec!(0.02)).max(Decimal::ZERO) / scale;
             if gap >= dec!(0.05) {
                 for f in [&mut result.pe, &mut result.ps] {
                     if f.value.is_none() {
