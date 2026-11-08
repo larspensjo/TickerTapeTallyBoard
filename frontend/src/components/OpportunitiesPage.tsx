@@ -212,8 +212,7 @@ export function OpportunitiesPage() {
                         <InstrumentCell
                           instrumentId={row.instrument.id}
                           name={row.instrument.name}
-                          symbol={row.instrument.symbol}
-                          exchange={row.instrument.exchange}
+                          ticker={row.instrument.ticker}
                         />
                       </td>
                       <td className="number">

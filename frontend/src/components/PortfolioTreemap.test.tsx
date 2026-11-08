@@ -14,6 +14,7 @@ function inst(symbol: string, exchange = "NYSE", name = symbol): Instrument {
   return {
     id: 1,
     symbol,
+    ticker: symbol,
     exchange,
     name,
     type: "Stock",

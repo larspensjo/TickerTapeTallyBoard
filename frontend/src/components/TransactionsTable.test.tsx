@@ -10,6 +10,7 @@ function instrument(id: number, name: string): Instrument {
   return {
     id,
     symbol: `TEST${id}`,
+    ticker: `TEST${id}`,
     exchange: "NYSE",
     name,
     type: "Stock",
@@ -44,6 +45,26 @@ afterEach(() => {
 });
 
 describe("transactions sorting", () => {
+  it("uses the instruments response ticker and omits the exchange and ISIN", () => {
+    const held = {
+      ...instrument(1, "Evolution"),
+      symbol: "SE0012673267",
+      exchange: "AVANZA",
+      ticker: "EVO",
+    };
+    render(
+      <MemoryRouter>
+        <TransactionsTable
+          transactions={[transaction(1, "100")]}
+          instruments={[held]}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "Evolution" })).toBeTruthy();
+    expect(screen.getByText("EVO")).toBeTruthy();
+    expect(screen.queryByText("AVANZA")).toBeNull();
+    expect(screen.queryByText("SE0012673267")).toBeNull();
+  });
   it("sorts exact price strings by numeric value", () => {
     const prices = ["1000.00", "123.45", "77.00", "9.50"];
     const instruments = prices.map((price, index) =>

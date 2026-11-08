@@ -6,6 +6,7 @@ pub mod fundamental_values;
 pub mod fundamentals_sources;
 pub mod fx_rates;
 pub mod import_batches;
+pub mod instrument_tickers;
 pub mod instruments;
 pub mod market_data_runs;
 pub mod prices;

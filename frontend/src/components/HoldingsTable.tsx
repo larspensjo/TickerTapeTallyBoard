@@ -21,13 +21,13 @@ import type {
   ConvictionTarget,
   Holding,
 } from "../api/types";
+import { CompanyFigureValue } from "./CompanyFigureValue";
 import {
   CONVICTION_OPTIONS,
   type ConvictionEditAction,
   type ConvictionEdits,
   convictionEditsReducer,
   convictionLabel,
-  convictionRank,
   effectiveConviction,
   holdingConvictionSearchText,
   holdingValueSortField,
@@ -36,6 +36,12 @@ import {
   targetGapPercentField,
   watchlistTargetsHint,
 } from "./holdingsConviction";
+import {
+  compareFundamentals,
+  holdingFundamentalsView,
+  holdingReportSortField,
+  holdingValuationSortField,
+} from "./holdingsFundamentals";
 import { InstrumentCell } from "./InstrumentCell";
 import { usePersistentSorting } from "./persistence";
 import { TargetGapBarView } from "./TargetGapBarView";
@@ -77,8 +83,9 @@ const SORTABLE_COLUMN_IDS = new Set([
   "cost",
   "value",
   "pnl",
-  "conviction",
   "target",
+  "valuation",
+  "report",
 ]);
 
 interface HoldingsColumnHeader {
@@ -89,7 +96,7 @@ interface HoldingsColumnHeader {
 const HOLDINGS_COLUMN_HEADERS: Record<string, HoldingsColumnHeader> = {
   instrument: {
     label: "Instrument",
-    description: "The instrument name, identifier, and trading venue.",
+    description: "The instrument name and display ticker.",
   },
   quantity: {
     label: "Qty",
@@ -110,15 +117,20 @@ const HOLDINGS_COLUMN_HEADERS: Record<string, HoldingsColumnHeader> = {
     description:
       "Unrealized profit or loss in SEK: current market value minus cost basis, including brokerage fees and currency effects (top), with the return on cost basis below.",
   },
-  conviction: {
-    label: "Conviction (SEK)",
-    description:
-      "Your relative target preference. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The derived target value in SEK appears below.",
-  },
   target: {
-    label: "Target gap",
+    label: "Target & conviction",
     description:
-      "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target.",
+      "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target. Sorts by signed gap percent. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The target value in SEK appears beneath the selector.",
+  },
+  valuation: {
+    label: "P/E·P/S",
+    description:
+      "Price to trailing earnings (top) and sales (bottom), shown to one decimal. Sorts by P/E. ~ means approximate, with the reason on hover; n/a means not applicable; — means unavailable, with the reason on hover. Missing values sort last.",
+  },
+  report: {
+    label: "Next report",
+    description:
+      "Next report date and days away, sorted soonest first. confirmed means company-announced; Nasdaq expected means Nasdaq's estimate; est. means the app's estimate. n/a means not applicable; — means unavailable, with the reason on hover. Dates without a day count sort last.",
   },
 };
 
@@ -252,7 +264,14 @@ function pnlCell(holding: Holding) {
   );
 }
 
-const numericColumns = new Set(["quantity", "cost", "value", "pnl", "target"]);
+const numericColumns = new Set([
+  "quantity",
+  "cost",
+  "value",
+  "pnl",
+  "target",
+  "valuation",
+]);
 
 function marketValueNumber(holding: Holding): number | null {
   const marketValue = holding.valuation?.market_value_base;
@@ -436,7 +455,7 @@ function convictionCell(holding: Holding, meta: HoldingsTableMeta) {
         className={dirty ? "conviction-select dirty" : "conviction-select"}
         value={value}
         disabled={!meta.canEditConviction}
-        aria-label={`Conviction for ${holding.instrument.symbol}`}
+        aria-label={`Conviction for ${holding.instrument.name.trim() || holding.instrument.ticker || "Unnamed instrument"}`}
         title={dirty ? `Unsaved change from ${saved}` : undefined}
         onChange={(event) =>
           meta.dispatchEdits({
@@ -478,16 +497,8 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       id: "instrument",
       header: HOLDINGS_COLUMN_HEADERS.instrument.label,
       cell: (info) => {
-        const { id, symbol, name, exchange } =
-          info.row.original.holding.instrument;
-        return (
-          <InstrumentCell
-            instrumentId={id}
-            name={name}
-            symbol={symbol}
-            exchange={exchange}
-          />
-        );
+        const { id, ticker, name } = info.row.original.holding.instrument;
+        return <InstrumentCell instrumentId={id} name={name} ticker={ticker} />;
       },
     }),
     columnHelper.accessor((row) => row.holding.quantity, {
@@ -524,26 +535,57 @@ function buildColumns(portfolioPercentages: Map<number, PortfolioPercentage>) {
       },
     ),
     columnHelper.accessor(
-      (row) => convictionRank(row.holding.instrument.conviction),
-      {
-        id: "conviction",
-        header: HOLDINGS_COLUMN_HEADERS.conviction.label,
-        cell: (info) =>
-          convictionCell(
-            info.row.original.holding,
-            info.table.options.meta as HoldingsTableMeta,
-          ),
-      },
-    ),
-    columnHelper.accessor(
       (row) => targetGapPercentField(row.holding.conviction_target),
       {
         id: "target",
         header: HOLDINGS_COLUMN_HEADERS.target.label,
         sortFn: availabilitySortRows,
-        cell: (info) => targetCell(info.row.original.holding.conviction_target),
+        cell: (info) => (
+          <div className="target-conviction">
+            <div className="holding-gap-slot">
+              {targetCell(info.row.original.holding.conviction_target)}
+            </div>
+            {convictionCell(
+              info.row.original.holding,
+              info.table.options.meta as HoldingsTableMeta,
+            )}
+          </div>
+        ),
       },
     ),
+    columnHelper.accessor((row) => holdingValuationSortField(row.holding), {
+      id: "valuation",
+      header: HOLDINGS_COLUMN_HEADERS.valuation.label,
+      sortUndefined: "last",
+      sortDescFirst: false,
+      sortFn: (left, right, id) =>
+        compareFundamentals(left.getValue(id), right.getValue(id)),
+      cell: (info) => {
+        const value = holdingFundamentalsView(info.row.original.holding);
+        return (
+          <div className="metric-stack">
+            <CompanyFigureValue value={value.pe} label="P/E" />
+            <span className="metric-subtle">
+              <CompanyFigureValue value={value.ps} label="P/S" />
+            </span>
+          </div>
+        );
+      },
+    }),
+    columnHelper.accessor((row) => holdingReportSortField(row.holding), {
+      id: "report",
+      header: HOLDINGS_COLUMN_HEADERS.report.label,
+      sortUndefined: "last",
+      sortDescFirst: false,
+      sortFn: (left, right, id) =>
+        compareFundamentals(left.getValue(id), right.getValue(id)),
+      cell: (info) => (
+        <CompanyFigureValue
+          value={holdingFundamentalsView(info.row.original.holding).report}
+          label="Next report"
+        />
+      ),
+    }),
   ]);
 }
 
@@ -551,6 +593,7 @@ function holdingSearchText(holding: Holding): string {
   const base = holding.base;
   return [
     holding.instrument.symbol,
+    holding.instrument.ticker ?? "",
     holding.instrument.name,
     holding.instrument.exchange,
     holding.instrument.currency,
@@ -855,7 +898,8 @@ export function HoldingsTable({
                 </div>
               </td>
               <td className="number">{holdingsSummaryPnlCell(summary)}</td>
-              {/* conviction, target: no totals */}
+              {/* Target, ratios and report dates have no totals. */}
+              <td />
               <td />
               <td />
             </tr>

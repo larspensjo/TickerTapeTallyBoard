@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reportDate } from "../test/companyFiguresFixtures";
 import { ApiError, apiGet, apiSend, apiSendWithStatus } from "./client";
+import type {
+  Figure,
+  HoldingsResponse,
+  Instrument,
+  ReportBasis,
+} from "./types";
 
 // The production parse() function only reads response.status, response.ok,
 // and response.text(), so a plain object satisfies its interface without
@@ -18,6 +25,97 @@ afterEach(() => {
 });
 
 describe("apiGet", () => {
+  it.each([
+    "complete",
+    "approximate",
+    "not_applicable",
+    "unavailable",
+  ] as const)(
+    "parses holdings %s figures without losing decimals, reasons or nulls",
+    async (certainty) => {
+      const figure: Figure = {
+        certainty,
+        value:
+          certainty === "complete" || certainty === "approximate"
+            ? "24.345678901234567890"
+            : null,
+        reasons:
+          certainty === "complete"
+            ? []
+            : [
+                {
+                  code:
+                    certainty === "not_applicable"
+                      ? "fund_or_etf"
+                      : "source_unreachable",
+                  detail: "2026-11-01",
+                },
+              ],
+      };
+      const body = {
+        data_revision: "test",
+        hidden_watchlist_pool_count: 0,
+        holdings: [
+          {
+            instrument: {
+              id: 1,
+              symbol: "SE0012673267",
+              ticker: "EVO",
+              exchange: "AVANZA",
+              name: "Evolution",
+              type: "Stock",
+              currency: "SEK",
+              conviction: "Other",
+            },
+            fundamentals: { pe: figure, ps: figure, next_report: reportDate() },
+          },
+        ],
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockResponse(200, body)),
+      );
+      const result = await apiGet<HoldingsResponse>("/api/holdings");
+      expect(result).toEqual(body);
+      expect(result.holdings[0].fundamentals.pe).toEqual(figure);
+      expect(result.holdings[0].instrument.ticker).toBe("EVO");
+    },
+  );
+  it.each([
+    "company_announced",
+    "nasdaq_expected",
+    "last_year_date",
+    "typical_gap",
+    null,
+  ] satisfies (ReportBasis | null)[])(
+    "preserves report basis %s and all serialized report fields",
+    async (basis) => {
+      const next_report = reportDate({
+        certainty: basis === "company_announced" ? "confirmed" : "estimated",
+        basis,
+        date: "2026-11-01",
+        days_until: -7,
+        period_end: "2026-09-30",
+        observed_between: ["2026-10-31", "2026-11-02"],
+        reasons: [{ code: "estimate_passed" }],
+      });
+      const body = { holdings: [{ fundamentals: { next_report } }] };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockResponse(200, body)),
+      );
+      const result = await apiGet<HoldingsResponse>("/api/holdings");
+      expect(result.holdings[0].fundamentals.next_report).toEqual(next_report);
+    },
+  );
+  it("preserves nullable ticker fields on the instruments response used by Transactions", async () => {
+    const body = [
+      { id: 1, ticker: null },
+      { id: 2, ticker: "MSFT" },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse(200, body)));
+    expect(await apiGet<Instrument[]>("/api/instruments")).toEqual(body);
+  });
   it("returns the parsed JSON body on a 200 response", async () => {
     vi.stubGlobal(
       "fetch",

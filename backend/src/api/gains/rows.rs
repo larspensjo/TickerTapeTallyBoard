@@ -47,6 +47,7 @@ fn merge_response_reasons(sources: &[Vec<ValuationReason>]) -> Vec<ValuationReas
 
 pub(super) fn open_gain_row(
     instrument: &instruments::InstrumentRow,
+    tickers: &crate::db::instrument_tickers::TickerMap,
     valued_holding: &ValuedHolding,
     realized: &RealizedGain,
     brokerage_total_base: Decimal,
@@ -67,7 +68,7 @@ pub(super) fn open_gain_row(
     let total_price_effect = add(&valued_holding.price_effect_base, &realized_price);
     let total_fx_effect = add(&valued_holding.fx_effect_base, &realized_fx);
     Ok(GainRow {
-        instrument: InstrumentResponse::from_row(instrument)?,
+        instrument: InstrumentResponse::from_row(instrument, tickers)?,
         quantity: valued_holding.quantity,
         cost_basis_native: money_string(valued_holding.cost_basis_native),
         cost_basis_base: serialize_availability(&valued_holding.cost_basis_base, |v| {
@@ -153,6 +154,7 @@ pub(super) fn open_gain_row(
 
 pub(super) fn closed_gain_row(
     instrument: &instruments::InstrumentRow,
+    tickers: &crate::db::instrument_tickers::TickerMap,
     realized: &RealizedGain,
     brokerage_total_base: Decimal,
     performance_start_date: Option<NaiveDate>,
@@ -181,7 +183,7 @@ pub(super) fn closed_gain_row(
     dedup_valuation_reasons(&mut reasons);
 
     Ok(GainRow {
-        instrument: InstrumentResponse::from_row(instrument)?,
+        instrument: InstrumentResponse::from_row(instrument, tickers)?,
         quantity: 0,
         cost_basis_native: money_string(realized.cost_basis_native),
         cost_basis_base: serialize_availability(&cost_basis_base, |v| money_string(*v)),

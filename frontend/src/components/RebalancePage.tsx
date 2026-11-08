@@ -401,8 +401,7 @@ export function RebalancePage() {
                             <InstrumentCell
                               instrumentId={row.instrument.id}
                               name={row.instrument.name}
-                              symbol={row.instrument.symbol}
-                              exchange={row.instrument.exchange}
+                              ticker={row.instrument.ticker}
                             />
                             {row.is_new ? (
                               <span className="status-chip compact rebalance-new-badge">
@@ -459,8 +458,7 @@ export function RebalancePage() {
                             <InstrumentCell
                               instrumentId={row.instrument.id}
                               name={row.instrument.name}
-                              symbol={row.instrument.symbol}
-                              exchange={row.instrument.exchange}
+                              ticker={row.instrument.ticker}
                             />
                             {row.is_new ? (
                               <span className="status-chip compact rebalance-new-badge">

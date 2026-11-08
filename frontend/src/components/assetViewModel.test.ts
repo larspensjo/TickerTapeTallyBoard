@@ -7,6 +7,7 @@ import type {
   PriceStatusInstrument,
   Transaction,
 } from "../api/types";
+import { holdingsFundamentals } from "../test/companyFiguresFixtures";
 import {
   canDeleteInstrument,
   convictionPanelView,
@@ -27,6 +28,7 @@ function makeInstrument(id: number): Instrument {
   return {
     id,
     symbol: `SYM${id}`,
+    ticker: `SYM${id}`,
     exchange: "NYSE",
     name: `Name ${id}`,
     type: "Stock",
@@ -121,6 +123,7 @@ function makeHolding(instrumentId: number): Holding {
       target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
     },
     row_kind: "open",
+    fundamentals: holdingsFundamentals(),
   };
 }
 
@@ -129,6 +132,7 @@ function makeWatchlistHolding(instrumentId: number, quantity: number): Holding {
     ...makeHolding(instrumentId),
     quantity,
     row_kind: "watchlist",
+    fundamentals: holdingsFundamentals(),
   };
 }
 

@@ -5,11 +5,11 @@ import type {
   ConvictionTarget,
   Holding,
 } from "../api/types";
+import { holdingsFundamentals } from "../test/companyFiguresFixtures";
 import {
   type ConvictionEdits,
   convictionEditsReducer,
   convictionEditsToChanges,
-  convictionRank,
   effectiveConviction,
   gapBarGeometry,
   hasConvictionEdits,
@@ -29,6 +29,7 @@ function holding(id: number, conviction: Conviction): Holding {
     instrument: {
       id,
       symbol: `S${id}`,
+      ticker: `S${id}`,
       exchange: "STO",
       name: `Name ${id}`,
       type: "Stock",
@@ -58,6 +59,7 @@ function holding(id: number, conviction: Conviction): Holding {
       target_gap_percent: { status: "available", value: "-10.00" },
     },
     row_kind: "open",
+    fundamentals: holdingsFundamentals(),
   };
 }
 
@@ -130,12 +132,6 @@ describe("effective conviction", () => {
 });
 
 describe("sort ranks and tones", () => {
-  it("orders convictions from Other to High", () => {
-    expect(convictionRank("Other")).toBeLessThan(convictionRank("Low"));
-    expect(convictionRank("Low")).toBeLessThan(convictionRank("Medium"));
-    expect(convictionRank("Medium")).toBeLessThan(convictionRank("High"));
-  });
-
   it("gives a stable rank to each target status", () => {
     expect(targetStatusRank("below")).toBeLessThan(targetStatusRank("above"));
     expect(targetStatusRank("above")).toBeLessThan(
@@ -248,6 +244,7 @@ describe("holdings value sort", () => {
         market_value_base: { status: "available", value: "0.00" },
       },
       row_kind: "watchlist",
+      fundamentals: holdingsFundamentals(),
     };
 
     expect(holdingValueSortField(open)).toEqual({

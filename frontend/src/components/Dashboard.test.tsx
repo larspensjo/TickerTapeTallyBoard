@@ -53,6 +53,7 @@ function inst(symbol: string): Instrument {
   return {
     id: 1,
     symbol,
+    ticker: symbol,
     exchange: "NYSE",
     name: symbol,
     type: "Stock",

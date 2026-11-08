@@ -61,6 +61,7 @@ pub async fn list(
     let end_date = resolved.end;
     let start_date = resolved.start;
 
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
     let instruments_list = instruments::list(&state.pool).await?;
     let transaction_rows = transactions::all_for_holdings(&state.pool).await?;
     let mut ledgers: BTreeMap<i64, Vec<_>> = BTreeMap::new();
@@ -155,6 +156,7 @@ pub async fn list(
             if query.include_closed && performance.realized.sold_quantity > 0 {
                 gain_rows.push(closed_gain_row(
                     instrument,
+                    &tickers,
                     &performance.realized,
                     performance.brokerage_total_base,
                     performance_start_date,
@@ -186,6 +188,7 @@ pub async fn list(
 
         gain_rows.push(open_gain_row(
             instrument,
+            &tickers,
             &valued_holding,
             &performance.realized,
             performance.brokerage_total_base,

@@ -13,6 +13,7 @@ function openGain(overrides: Partial<GainsRow> = {}): GainsRow {
     instrument: {
       id: 1,
       symbol: "ANET",
+      ticker: "ANET",
       exchange: "NYSE",
       name: "Arista",
       type: "Stock",

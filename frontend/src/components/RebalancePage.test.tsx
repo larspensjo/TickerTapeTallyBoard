@@ -42,6 +42,7 @@ function rebalanceResponse(): RebalanceResponse {
               instrument: {
                 id: 1,
                 symbol: "AAA",
+                ticker: "AAA",
                 name: "Alpha",
                 exchange: "STO",
                 type: "Stock",
@@ -62,6 +63,7 @@ function rebalanceResponse(): RebalanceResponse {
               instrument: {
                 id: 1,
                 symbol: "AAA",
+                ticker: "AAA",
                 name: "Alpha",
                 exchange: "STO",
                 type: "Stock",
@@ -80,6 +82,7 @@ function rebalanceResponse(): RebalanceResponse {
               instrument: {
                 id: 2,
                 symbol: "BBB",
+                ticker: "BBB",
                 name: "Beta",
                 exchange: "STO",
                 type: "Stock",
@@ -163,6 +166,8 @@ describe("RebalancePage", () => {
     const table = await screen.findByRole("table", {
       name: /post-trade balance/i,
     });
+    expect(within(table).getByText("AAA")).toBeTruthy();
+    expect(screen.queryByText("STO")).toBeNull();
     expect(within(table).getByText(/buy SEK 6,147.60/i)).toBeDefined();
     expect(within(table).getAllByText(/new/i).length).toBeGreaterThan(0);
     expect(within(table).getByText(/flips target band/i)).toBeDefined();

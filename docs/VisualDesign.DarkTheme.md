@@ -128,7 +128,7 @@ way to make a financial table look amateur.
 --radius-pill: 100px  buttons, badges, chips
 --radius-full: 9999px circular glyphs / avatars
 ```
-(`--radius-xs: 4px` exists for tiny tags like the exchange label.)
+(`--radius-xs: 4px` exists for tiny tags.)
 
 ## Elevation & Depth
 
@@ -150,7 +150,9 @@ The board's defining surface. Holdings and transactions share one table system.
 - Row divider: 1px `--hairline-soft`. Row hover: `--surface-2`.
 - Values in `--text-primary`; up/down columns in `--up`/`--down`; flat in
   `--text-secondary`.
-- Exchange tag: 10px mono in a `--radius-xs` outline chip, `--text-muted`.
+- Shared instrument cell: the name is a link, with the display ticker beneath in
+  12px mono `--text-muted`. With no ticker, show the name alone. ISINs and broker
+  or exchange tags do not appear in this cell.
 
 ## Components (notes)
 
@@ -166,6 +168,30 @@ transaction" is a secondary button in the Transactions panel header.
 **Holdings / transactions tables** — the density spec above. Transactions adds a
 filter input (`--surface-2`) and neutral type chips (Buy/Sell/Split use neutral
 chips, **not** semantic colors — a Sell is not "bad").
+
+Holdings columns are Instrument, Qty, Cost, Value, P&L, Target & conviction,
+P/E·P/S, and Next report. Target & conviction puts a fixed-width diverging gap bar
+first and the conviction selector beside it, with its target value in SEK beneath
+the selector. Reserve the bar's space even when there is no target so the bars and
+selectors align down the table. The column sorts by signed gap percent; conviction
+rank has no separate sort. Gap semantics and plain-sign colouring are unchanged.
+The ratios stack P/E above P/S and sort by P/E. Ratios show one decimal;
+percentages retain two decimals.
+
+Company figures use certainty markers as text: approximate values have an amber
+"~" prefix and `--warning` text, with the explanation in the title and accessible
+label. An unavailable figure is a muted dash (—) with its reason on hover;
+its accessible label says "unavailable". Not applicable is muted, italic "n/a",
+visually distinct from the dash, with "not applicable" in its accessible label. Complete
+figures have no marker. Missing figures sort after available values in either
+direction. Header descriptions explain these markers.
+
+Next report stacks the date, its small muted label, and a days-away hint supplied
+by the backend. The labels are "confirmed" for a company-announced date, "Nasdaq
+expected" for Nasdaq's estimate, and "est." for the app's estimate. A passed date
+with an unresolved-report reason reads "expected <date>" and keeps its label,
+with the visible hint "figures not seen yet" instead of a days-ago count. This column
+sorts by the backend's days-until count, soonest first, with no-date rows last.
 
 **Opportunities table** — the density spec above, read-only, no column-header
 sorting. The panel header carries two segmented controls: the window ("1 week",

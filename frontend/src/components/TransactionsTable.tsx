@@ -20,7 +20,7 @@ interface Row {
   transaction: Transaction;
   name: string;
   symbol: string;
-  exchange: string;
+  ticker: string | null;
   search: string;
 }
 
@@ -85,12 +85,13 @@ export function TransactionsTable({
           transaction,
           name,
           symbol,
-          exchange,
+          ticker: instrument?.ticker ?? null,
           search: [
             transaction.trade_date,
             transaction.type,
             name,
             symbol,
+            instrument?.ticker ?? "",
             exchange,
             transaction.quantity.toString(),
             transaction.price ?? "",
@@ -125,8 +126,7 @@ export function TransactionsTable({
             <InstrumentCell
               instrumentId={info.row.original.transaction.instrument_id}
               name={info.row.original.name}
-              symbol={info.row.original.symbol}
-              exchange={info.row.original.exchange}
+              ticker={info.row.original.ticker}
             />
           ),
         }),

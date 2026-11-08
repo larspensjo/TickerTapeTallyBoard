@@ -36,6 +36,7 @@ function opportunityRow(
     instrument: {
       id,
       symbol: name.slice(0, 3).toUpperCase(),
+      ticker: name.slice(0, 3).toUpperCase(),
       exchange: "STO",
       name,
       type: "Stock",
@@ -134,6 +135,9 @@ describe("OpportunitiesPage", () => {
     );
 
     renderPage();
+
+    expect(screen.getByText("RIS")).toBeTruthy();
+    expect(screen.queryByText("STO")).toBeNull();
 
     const week = screen.getByRole("button", { name: "1 week" });
     const month = screen.getByRole("button", { name: "30 days" });

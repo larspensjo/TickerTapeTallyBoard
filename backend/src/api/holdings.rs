@@ -80,6 +80,7 @@ impl HoldingResponse {
         valuation: Option<ValuationField>,
         conviction_target: ConvictionTargetResponse,
         fundamentals: super::fundamentals::HoldingsFundamentals,
+        tickers: &crate::db::instrument_tickers::TickerMap,
     ) -> Result<Self, ApiError> {
         let (cost_basis_native, average_cost_native, base, row_kind) = if position.quantity == 0 {
             (None, None, None, HoldingRowKind::Watchlist)
@@ -122,7 +123,7 @@ impl HoldingResponse {
         };
 
         Ok(Self {
-            instrument: InstrumentResponse::from_row(instrument)?,
+            instrument: InstrumentResponse::from_row(instrument, tickers)?,
             quantity: position.quantity,
             cost_basis_native,
             average_cost_native,
@@ -165,6 +166,7 @@ pub(super) async fn build_holdings(
     valued_holdings: Vec<ValuedOpenHolding>,
     include_watchlist: bool,
 ) -> Result<(Vec<HoldingResponse>, usize), ApiError> {
+    let tickers = crate::db::instrument_tickers::list(pool).await?;
     let target_inputs: Vec<_> = valued_holdings
         .iter()
         .map(ValuedOpenHolding::conviction_target_input)
@@ -204,6 +206,7 @@ pub(super) async fn build_holdings(
             valuation,
             build_conviction_target(output, &holding.market_value_reasons()),
             fundamentals,
+            &tickers,
         )?);
     }
 

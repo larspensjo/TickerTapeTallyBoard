@@ -26,11 +26,6 @@ export function convictionLabel(conviction: Conviction): string {
   return conviction;
 }
 
-/** Sort rank so Other < Low < Medium < High. */
-export function convictionRank(conviction: Conviction): number {
-  return CONVICTION_OPTIONS.indexOf(conviction);
-}
-
 const TARGET_STATUS_LABELS: Record<TargetStatus, string> = {
   below: "Below",
   on_target: "On target",

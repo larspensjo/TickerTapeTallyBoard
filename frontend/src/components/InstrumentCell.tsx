@@ -1,30 +1,23 @@
 import { Link } from "react-router-dom";
+import type { Ticker } from "../api/types";
 
 interface InstrumentCellProps {
   instrumentId: number;
   name: string;
-  symbol: string;
-  exchange: string;
+  ticker: Ticker;
 }
 
 export function InstrumentCell({
   instrumentId,
   name,
-  symbol,
-  exchange,
+  ticker,
 }: InstrumentCellProps) {
-  const trimmedName = name.trim();
-  const trimmedSymbol = symbol.trim();
-  const primary = trimmedName || trimmedSymbol;
-  const showSymbol = trimmedSymbol.length > 0 && trimmedSymbol !== primary;
-
   return (
     <div className="instrument-cell">
       <Link className="instrument-link" to={`/asset/${instrumentId}`}>
-        {primary}
+        {name.trim() || ticker || "Unnamed instrument"}
       </Link>
-      {showSymbol ? <span>{trimmedSymbol}</span> : null}
-      {exchange ? <em>{exchange}</em> : null}
+      {ticker ? <span>{ticker}</span> : null}
     </div>
   );
 }

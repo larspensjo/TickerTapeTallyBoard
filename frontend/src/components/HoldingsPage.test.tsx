@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdingsFundamentals } from "../test/companyFiguresFixtures";
 import { HoldingsPage } from "./HoldingsPage";
 
 const useHoldings = vi.fn();
@@ -26,6 +27,7 @@ function openHolding() {
     instrument: {
       id: 1,
       symbol: "OPEN",
+      ticker: "OPEN",
       exchange: "STO",
       name: "Open Corp",
       type: "Stock",
@@ -55,6 +57,7 @@ function openHolding() {
       target_gap_percent: { status: "available", value: "33.33" },
     },
     row_kind: "open",
+    fundamentals: holdingsFundamentals(),
   } as const;
 }
 
@@ -63,6 +66,7 @@ function watchlistHolding() {
     instrument: {
       id: 2,
       symbol: "WATCH",
+      ticker: "WATCH",
       exchange: "STO",
       name: "Watch Co",
       type: "Stock",
@@ -82,6 +86,7 @@ function watchlistHolding() {
       target_gap_percent: { status: "available", value: "0.00" },
     },
     row_kind: "watchlist",
+    fundamentals: holdingsFundamentals(),
   } as const;
 }
 

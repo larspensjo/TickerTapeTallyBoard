@@ -1239,6 +1239,15 @@ scale of the consistency check.**
   decision-log entry, so it needs a short new entry.
 - *Recommendation:* adopt it, as a small fix before or alongside Phase 4.
 
+**Follow-up after Phase 4 (deferred by Lars, 2026-11-08): a committed browser-level
+style guard.** Phase 4's by-eye check found a general number colour overriding the
+certainty tones: approximate figures showed white instead of amber, and n/a and the
+dash were not dimmed. Phase 4 verification checks computed colours with an ad-hoc
+headless-Chrome script. A committed browser test that asserts the computed colour of
+one demo cell per state (complete, approximate "~", n/a, dash) would catch this kind
+of cascade regression automatically. It is new test infrastructure, so it waits until
+after Phase 4. Carry it to a TODO or a new plan before this plan is retired.
+
 The three items below were settled by Claude after review (cheap to change; Lars
 may overturn any of them):
 

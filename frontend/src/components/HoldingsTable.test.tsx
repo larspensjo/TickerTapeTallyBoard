@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Holding, Instrument } from "../api/types";
+import { holdingsFundamentals } from "../test/companyFiguresFixtures";
 import { HoldingsTable } from "./HoldingsTable";
 
 const HOLDINGS_SORTING_KEY = "holdings.sorting";
@@ -16,6 +23,7 @@ function instrument(id: number, name: string, symbol: string): Instrument {
   return {
     id,
     symbol,
+    ticker: symbol,
     exchange: "NYSE",
     name,
     type: "Stock",
@@ -56,6 +64,7 @@ function holding(
       target_gap_percent: { status: "unavailable", reasons: ["no_target"] },
     },
     row_kind: "open",
+    fundamentals: holdingsFundamentals(),
   };
 }
 
@@ -77,6 +86,16 @@ afterEach(() => {
 });
 
 describe("holdings sorting persistence", () => {
+  it("falls back to value descending when the stored sort names conviction", () => {
+    seedSorting([{ id: "conviction", desc: false }]);
+    renderHoldingsTable([
+      holding(1, "Small", "SML", "100"),
+      holding(2, "Large", "LRG", "200"),
+    ]);
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Large", "Small"],
+    );
+  });
   it("applies saved sorting when the table mounts", () => {
     seedSorting([{ id: "instrument", desc: false }]);
 
@@ -155,8 +174,191 @@ describe("holdings sorting persistence", () => {
   });
 });
 
+describe("holdings company figures", () => {
+  it("shows the display ticker without the exchange or private instrument symbol", () => {
+    const held = holding(1, "Evolution", "SE0012673267", "100");
+    held.instrument.ticker = "EVO";
+    held.instrument.exchange = "AVANZA";
+    renderHoldingsTable([held]);
+    expect(screen.getByRole("link", { name: "Evolution" })).toHaveAttribute(
+      "href",
+      "/asset/1",
+    );
+    expect(screen.getByText("EVO")).toBeTruthy();
+    expect(screen.queryByText("AVANZA")).toBeNull();
+    expect(screen.queryByText("SE0012673267")).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Conviction for Evolution" }),
+    ).toBeTruthy();
+  });
+  it.each([
+    ["  Evolution  ", "EVO", "Evolution"],
+    ["   ", "EVO", "EVO"],
+    ["   ", null, "Unnamed instrument"],
+  ])(
+    "names the instrument link and conviction control for %s / %s",
+    (name, ticker, label) => {
+      const held = holding(1, name, "SE0012673267", "100");
+      held.instrument.ticker = ticker;
+      renderHoldingsTable([held]);
+      expect(screen.getByRole("link", { name: label })).toHaveTextContent(
+        label,
+      );
+      expect(
+        screen.getByRole("combobox", { name: `Conviction for ${label}` }),
+      ).toBeTruthy();
+      expect(screen.queryByText("SE0012673267")).toBeNull();
+    },
+  );
+  it("shows only the name when a ticker is unavailable and can filter on a ticker", () => {
+    const held = holding(1, "Evolution", "SE0012673267", "100");
+    held.instrument.ticker = null;
+    const view = renderHoldingsTable([held]);
+    expect(screen.getByRole("link", { name: "Evolution" })).toBeTruthy();
+    expect(screen.queryByText("SE0012673267")).toBeNull();
+    held.instrument.ticker = "EVO";
+    view.rerender(
+      <MemoryRouter>
+        <HoldingsTable
+          holdings={[held]}
+          filter="EVO"
+          onFilterChange={() => undefined}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "Evolution" })).toBeTruthy();
+  });
+  it("exposes approximation and distinguishes n/a from unavailable by visible text", () => {
+    const approximate = holding(1, "Approximate", "APP", "300");
+    approximate.fundamentals.pe = {
+      certainty: "approximate",
+      value: "24.34",
+      reasons: [{ code: "ttm_from_three_quarters" }],
+    };
+    const fund = holding(2, "Fund", "ETF", "200");
+    fund.fundamentals.pe = {
+      certainty: "not_applicable",
+      value: null,
+      reasons: [{ code: "fund_or_etf" }],
+    };
+    const missing = holding(3, "Missing", "MISS", "100");
+    renderHoldingsTable([approximate, fund, missing]);
+    expect(screen.getByText("~24.3")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "P/E: approximately 24.3; Built from three of four quarters",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByTitle("Built from three of four quarters"),
+    ).toHaveTextContent("~24.3");
+    expect(screen.getByText("n/a")).toBeTruthy();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByTitle("No company figures source found").length,
+    ).toBeGreaterThan(0);
+  });
+  it.each(["valuation", "report"])(
+    "keeps missing rows last in both sort directions for %s",
+    (column) => {
+      const missing = holding(1, "Missing", "MISS", "500");
+      const first = holding(2, "First", "ONE", "200");
+      const second = holding(3, "Second", "TWO", "300");
+      const na = holding(4, "Not applicable", "NA", "400");
+      first.fundamentals.pe = {
+        certainty: "approximate",
+        value: "9.5",
+        reasons: [{ code: "price_stale" }],
+      };
+      second.fundamentals.pe = {
+        certainty: "complete",
+        value: "100",
+        reasons: [],
+      };
+      na.fundamentals.pe = {
+        certainty: "not_applicable",
+        value: null,
+        reasons: [{ code: "fund_or_etf" }],
+      };
+      first.fundamentals.next_report = {
+        ...first.fundamentals.next_report,
+        certainty: "estimated",
+        date: "2026-11-01",
+        basis: "nasdaq_expected",
+        days_until: -1,
+        reasons: [],
+      };
+      second.fundamentals.next_report = {
+        ...second.fundamentals.next_report,
+        certainty: "confirmed",
+        date: "2026-11-10",
+        basis: "company_announced",
+        days_until: 8,
+        reasons: [],
+      };
+      seedSorting([{ id: column, desc: false }]);
+      renderHoldingsTable([missing, first, second, na]);
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["First", "Second", "Missing", "Not applicable"]);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: column === "valuation" ? "P/E·P/S" : "Next report",
+        }),
+      );
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Second", "First", "Missing", "Not applicable"]);
+      if (column === "report") {
+        expect(screen.getByText("Nasdaq expected")).toBeTruthy();
+        expect(screen.getByText("confirmed")).toBeTruthy();
+        expect(screen.getByText("1 day ago")).toBeTruthy();
+      }
+    },
+  );
+  it("keeps the target column sorted by signed gap and the filter matches conviction", () => {
+    const below = holding(1, "Below", "BLW", "100");
+    const above = holding(2, "Above", "ABV", "200");
+    for (const [held, gap, conviction] of [
+      [below, "-20", "High"],
+      [above, "20", "Low"],
+    ] as const) {
+      held.instrument.conviction = conviction;
+      held.conviction_target = {
+        conviction,
+        status: gap === "-20" ? "below" : "above",
+        target_value_base: { status: "available", value: "100" },
+        target_gap_base: { status: "available", value: gap },
+        target_gap_percent: { status: "available", value: gap },
+      };
+    }
+    seedSorting([{ id: "target", desc: false }]);
+    const view = renderHoldingsTable([above, below]);
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Below", "Above"],
+    );
+    const row = screen.getByRole("row", { name: /Below/ });
+    expect(within(row).getByRole("img", { name: /Gap SEK -20/ })).toBeTruthy();
+    expect(
+      within(row).getByRole("combobox", { name: "Conviction for Below" }),
+    ).toBeTruthy();
+    view.rerender(
+      <MemoryRouter>
+        <HoldingsTable
+          holdings={[above, below]}
+          filter="High"
+          onFilterChange={() => undefined}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
+      ["Below"],
+    );
+  });
+});
+
 describe("holdings consolidated columns", () => {
-  it("renders the seven consolidated column headers", () => {
+  it("renders the eight consolidated column headers", () => {
     renderHoldingsTable([holding(1, "Alpha Corp", "ALPHA", "100.00")]);
 
     for (const name of [
@@ -165,8 +367,9 @@ describe("holdings consolidated columns", () => {
       "Cost",
       "Value (SEK)",
       "P&L (SEK)",
-      "Conviction (SEK)",
-      "Target gap",
+      "Target & conviction",
+      "P/E·P/S",
+      "Next report",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
@@ -187,7 +390,7 @@ describe("holdings consolidated columns", () => {
     renderHoldingsTable([holding(1, "Alpha Corp", "ALPHA", "100.00")]);
 
     const descriptions = new Map([
-      ["Instrument", "The instrument name, identifier, and trading venue."],
+      ["Instrument", "The instrument name and display ticker."],
       ["Qty", "The number of shares or units currently held."],
       [
         "Cost",
@@ -202,12 +405,16 @@ describe("holdings consolidated columns", () => {
         "Unrealized profit or loss in SEK: current market value minus cost basis, including brokerage fees and currency effects (top), with the return on cost basis below.",
       ],
       [
-        "Conviction (SEK)",
-        "Your relative target preference. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The derived target value in SEK appears below.",
+        "Target & conviction",
+        "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target. Sorts by signed gap percent. Low, Medium, and High use 1x, 2x, and 4x target weights; Other has no target. The target value in SEK appears beneath the selector.",
       ],
       [
-        "Target gap",
-        "Current value minus the conviction target, as a percentage of the target. Green/right is above target; red/left is below target.",
+        "P/E·P/S",
+        "Price to trailing earnings (top) and sales (bottom), shown to one decimal. Sorts by P/E. ~ means approximate, with the reason on hover; n/a means not applicable; — means unavailable, with the reason on hover. Missing values sort last.",
+      ],
+      [
+        "Next report",
+        "Next report date and days away, sorted soonest first. confirmed means company-announced; Nasdaq expected means Nasdaq's estimate; est. means the app's estimate. n/a means not applicable; — means unavailable, with the reason on hover. Dates without a day count sort last.",
       ],
     ]);
 

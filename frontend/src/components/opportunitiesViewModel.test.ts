@@ -33,6 +33,7 @@ function opportunityRow(
     instrument: {
       id,
       symbol,
+      ticker: symbol,
       exchange: options.exchange ?? "STO",
       name: `${symbol} AB`,
       type: "Stock",

@@ -131,7 +131,8 @@ pub async fn handler(
         }
     };
 
-    let plan = serialize_available_plan(&prepared, ladder)?;
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
+    let plan = serialize_available_plan(&prepared, ladder, &tickers)?;
 
     Ok(Json(RebalanceResponse {
         amount_base: money_string(amount),
@@ -243,6 +244,7 @@ fn log_internal_inconsistency(holding: &ValuedOpenHolding, reason: &str) -> ApiE
 fn serialize_available_plan(
     prepared: &[PreparedCandidate],
     ladder: RebalanceLadder,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<RebalancePlanResponse, ApiError> {
     let prepared_by_id: BTreeMap<i64, &PreparedCandidate> = prepared
         .iter()
@@ -252,7 +254,7 @@ fn serialize_available_plan(
     let rungs = ladder
         .rungs
         .iter()
-        .map(|rung| serialize_rung(rung, &prepared_by_id))
+        .map(|rung| serialize_rung(rung, &prepared_by_id, tickers))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(RebalancePlanResponse::Available {
@@ -265,21 +267,22 @@ fn serialize_available_plan(
 fn serialize_rung(
     rung: &RebalanceRung,
     prepared_by_id: &BTreeMap<i64, &PreparedCandidate>,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<RebalanceRungResponse, ApiError> {
     let trades = rung
         .trades
         .iter()
-        .map(|trade| serialize_trade(trade, prepared_by_id))
+        .map(|trade| serialize_trade(trade, prepared_by_id, tickers))
         .collect::<Result<Vec<_>, _>>()?;
     let untraded = rung
         .untraded
         .iter()
-        .map(|candidate| serialize_untraded(candidate, prepared_by_id))
+        .map(|candidate| serialize_untraded(candidate, prepared_by_id, tickers))
         .collect::<Result<Vec<_>, _>>()?;
     let balance = rung
         .balance
         .iter()
-        .map(|entry| serialize_balance(entry, prepared_by_id))
+        .map(|entry| serialize_balance(entry, prepared_by_id, tickers))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(RebalanceRungResponse {
@@ -299,6 +302,7 @@ fn serialize_rung(
 fn serialize_trade(
     trade: &PlannedTrade,
     prepared_by_id: &BTreeMap<i64, &PreparedCandidate>,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<RebalanceTradeResponse, ApiError> {
     let prepared = lookup_prepared(prepared_by_id, trade.instrument_id)?;
     let freshness = serialize_freshness(staler_freshness(
@@ -307,7 +311,7 @@ fn serialize_trade(
     ));
 
     Ok(RebalanceTradeResponse {
-        instrument: InstrumentResponse::from_row(&prepared.instrument)?,
+        instrument: InstrumentResponse::from_row(&prepared.instrument, tickers)?,
         side: trade.side.into(),
         shares: trade.shares,
         price_base: money_string(trade.price_base),
@@ -320,10 +324,11 @@ fn serialize_trade(
 fn serialize_untraded(
     untraded: &UntradedCandidate,
     prepared_by_id: &BTreeMap<i64, &PreparedCandidate>,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<RebalanceUntradedResponse, ApiError> {
     let prepared = lookup_prepared(prepared_by_id, untraded.instrument_id)?;
     Ok(RebalanceUntradedResponse {
-        instrument: InstrumentResponse::from_row(&prepared.instrument)?,
+        instrument: InstrumentResponse::from_row(&prepared.instrument, tickers)?,
         reason: untraded.reason.as_str().to_owned(),
     })
 }
@@ -331,10 +336,11 @@ fn serialize_untraded(
 fn serialize_balance(
     entry: &CandidateBalance,
     prepared_by_id: &BTreeMap<i64, &PreparedCandidate>,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<RebalanceBalanceResponse, ApiError> {
     let prepared = lookup_prepared(prepared_by_id, entry.instrument_id)?;
     Ok(RebalanceBalanceResponse {
-        instrument: InstrumentResponse::from_row(&prepared.instrument)?,
+        instrument: InstrumentResponse::from_row(&prepared.instrument, tickers)?,
         gap_before_base: money_string(entry.gap_before_base),
         gap_after_base: money_string(entry.gap_after_base),
         gap_before_percent: entry.gap_before_percent.map(|value| format!("{value:.2}")),

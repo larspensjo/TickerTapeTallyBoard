@@ -160,6 +160,27 @@ export function formatExchangeRate(value: string | number): string {
   return formatGroupedNumber(roundDecimal(value, 4));
 }
 
+/** Ratios are fixed to one decimal; percentage inputs are fractions from the API. */
+export type FigurePrecision = "ratio" | "percentage";
+export function formatFigureNumber(
+  value: string,
+  precision: FigurePrecision,
+): string {
+  let decimal = value;
+  if (precision === "percentage") {
+    const match = value.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+    if (!match) return value;
+    const [, sign, whole, fraction = ""] = match;
+    const digits = whole + fraction.padEnd(2, "0");
+    const split = whole.length + 2;
+    decimal = `${sign}${digits.slice(0, split).replace(/^0+(?=\d)/, "")}.${digits.slice(split) || "0"}`;
+  }
+  const digits = precision === "ratio" ? 1 : 2;
+  const rounded = roundDecimal(decimal, digits);
+  const [whole, fraction = ""] = rounded.split(".");
+  return `${formatGroupedNumber(whole)}.${fraction.padEnd(digits, "0")}${precision === "percentage" ? "%" : ""}`;
+}
+
 export function FormattedNumber({
   value,
   prefix = "",

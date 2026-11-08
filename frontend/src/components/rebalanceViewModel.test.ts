@@ -25,6 +25,7 @@ function instrument(
   return {
     id,
     symbol,
+    ticker: symbol,
     name,
     exchange,
     type: "Stock",

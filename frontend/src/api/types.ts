@@ -25,7 +25,80 @@ export type AvailabilityValue<T> =
 export type MoneyValue = AvailabilityValue<string>;
 export type PercentValue = AvailabilityValue<string>;
 
+export type Ticker = string | null;
+export type FigureCertainty =
+  | "complete"
+  | "approximate"
+  | "not_applicable"
+  | "unavailable";
+export type FigureReasonCode =
+  | "fund_or_etf"
+  | "not_a_company"
+  | "certificate"
+  | "no_fundamentals_source"
+  | "source_ambiguous"
+  | "source_unreachable"
+  | "security_type_unknown"
+  | "awaiting_figures"
+  | "too_few_quarters"
+  | "year_ago_quarter_missing"
+  | "latest_quarter_too_old"
+  | "report_currency_changed"
+  | "loss_making"
+  | "non_positive_revenue"
+  | "price_unavailable"
+  | "fx_unavailable"
+  | "share_basis_unverified"
+  | "listing_unit_mismatch"
+  | "split_since_report"
+  | "figures_inconsistent"
+  | "implausible_ratio"
+  | "ttm_from_three_quarters"
+  | "eps_derived_from_net_income"
+  | "price_stale"
+  | "newer_report_expected"
+  | "figures_disagree"
+  | "estimate_passed"
+  | "report_date_passed"
+  | "quarter_missing";
+export interface FigureReason {
+  code: FigureReasonCode;
+  detail?: string;
+}
+export interface Figure {
+  certainty: FigureCertainty;
+  value: string | null;
+  reasons: FigureReason[];
+}
+export type ReportCertainty =
+  | "confirmed"
+  | "estimated"
+  | "observed"
+  | "period_only"
+  | "not_applicable"
+  | "unavailable";
+export type ReportBasis =
+  | "company_announced"
+  | "nasdaq_expected"
+  | "last_year_date"
+  | "typical_gap";
+export interface ReportDate {
+  certainty: ReportCertainty;
+  basis: ReportBasis | null;
+  date: string | null;
+  days_until: number | null;
+  period_end: string | null;
+  observed_between: [string, string] | null;
+  reasons: FigureReason[];
+}
+export interface HoldingsFundamentals {
+  pe: Figure;
+  ps: Figure;
+  next_report: ReportDate;
+}
+
 export interface Instrument {
+  ticker: Ticker;
   id: number;
   symbol: string;
   exchange: string;
@@ -83,6 +156,7 @@ export type HoldingBase =
     };
 
 export interface Holding {
+  fundamentals: HoldingsFundamentals;
   instrument: Instrument;
   quantity: number;
   cost_basis_native: string | null;

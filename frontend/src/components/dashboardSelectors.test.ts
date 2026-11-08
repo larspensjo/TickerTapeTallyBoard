@@ -6,6 +6,7 @@ function inst(id: number, symbol: string, name = symbol): Instrument {
   return {
     id,
     symbol,
+    ticker: symbol,
     exchange: "STO",
     name,
     type: "Stock",

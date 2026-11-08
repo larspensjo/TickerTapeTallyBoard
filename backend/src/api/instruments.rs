@@ -92,6 +92,7 @@ pub struct CreateInstrument {
 pub struct InstrumentResponse {
     pub id: i64,
     pub symbol: String,
+    pub ticker: Option<String>,
     pub exchange: String,
     pub name: String,
     #[serde(rename = "type")]
@@ -101,7 +102,10 @@ pub struct InstrumentResponse {
 }
 
 impl InstrumentResponse {
-    pub fn from_row(row: &InstrumentRow) -> Result<Self, ApiError> {
+    pub fn from_row(
+        row: &InstrumentRow,
+        tickers: &crate::db::instrument_tickers::TickerMap,
+    ) -> Result<Self, ApiError> {
         let kind = InstrumentKindDto::from_db_str(&row.kind).ok_or_else(|| {
             ApiError::internal(format!("stored unknown instrument type {:?}", row.kind))
         })?;
@@ -111,6 +115,7 @@ impl InstrumentResponse {
         Ok(Self {
             id: row.id,
             symbol: row.symbol.clone(),
+            ticker: tickers.get(&row.id).cloned(),
             exchange: row.exchange.clone(),
             name: row.name.clone(),
             kind,
@@ -124,9 +129,10 @@ pub async fn list(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<InstrumentResponse>>, ApiError> {
     let rows = instruments::list(&state.pool).await?;
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
     let body = rows
         .iter()
-        .map(InstrumentResponse::from_row)
+        .map(|row| InstrumentResponse::from_row(row, &tickers))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(body))
 }
@@ -162,7 +168,8 @@ pub async fn create(
     } else {
         StatusCode::OK
     };
-    Ok((status, Json(InstrumentResponse::from_row(&row)?)))
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
+    Ok((status, Json(InstrumentResponse::from_row(&row, &tickers)?)))
 }
 
 pub async fn remove(
@@ -273,7 +280,8 @@ pub async fn update_conviction(
     let row = instruments::update_conviction(&state.pool, id, body.conviction.db_str())
         .await?
         .ok_or_else(|| ApiError::not_found("instrument", id))?;
-    Ok(Json(InstrumentResponse::from_row(&row)?))
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
+    Ok(Json(InstrumentResponse::from_row(&row, &tickers)?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,9 +319,10 @@ pub async fn update_convictions(
                 "one or more instrument ids in the batch do not exist",
             )
         })?;
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
     let body = rows
         .iter()
-        .map(InstrumentResponse::from_row)
+        .map(|row| InstrumentResponse::from_row(row, &tickers))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(body))
 }
@@ -664,3 +673,7 @@ mod tests {
             .is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "instruments/ticker_tests.rs"]
+mod ticker_tests;

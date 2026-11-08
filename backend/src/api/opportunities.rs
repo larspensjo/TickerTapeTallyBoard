@@ -105,6 +105,7 @@ pub async fn handler(
     };
     let today = state.clock.today();
     let start_date = window.start_date(today);
+    let tickers = crate::db::instrument_tickers::list(&state.pool).await?;
     let holdings = load_valued_holdings(&state.pool, today).await?;
     let inputs: Vec<_> = holdings
         .iter()
@@ -142,7 +143,7 @@ pub async fn handler(
             RecentPriceChange::Unavailable(vec![RecentChangeReason::NoPriceSource])
         };
         rows.push(build_opportunity_row(
-            holding, target, change, window, start_date,
+            holding, target, change, window, start_date, &tickers,
         )?);
     }
 
@@ -165,6 +166,7 @@ fn build_opportunity_row(
     change: RecentPriceChange,
     window: RecentWindow,
     start_date: NaiveDate,
+    tickers: &crate::db::instrument_tickers::TickerMap,
 ) -> Result<OpportunityRow, ApiError> {
     let average = holding.position.average_cost_native().ok_or_else(|| {
         log_internal_inconsistency(
@@ -212,14 +214,16 @@ fn build_opportunity_row(
         .zip(holding.latest_fx_snapshot())
         .map(|(price, fx)| serialize_freshness(staler_freshness(price.freshness, fx.freshness)));
     Ok(OpportunityRow {
-        instrument: InstrumentResponse::from_row(&holding.instrument).map_err(|error| {
-            log_internal_inconsistency(
-                holding,
-                window,
-                start_date,
-                &format!("invalid instrument response: {error:?}"),
-            )
-        })?,
+        instrument: InstrumentResponse::from_row(&holding.instrument, tickers).map_err(
+            |error| {
+                log_internal_inconsistency(
+                    holding,
+                    window,
+                    start_date,
+                    &format!("invalid instrument response: {error:?}"),
+                )
+            },
+        )?,
         quantity: holding.position.quantity,
         latest_close: end.map(|snapshot| PriceSnapshotResponse {
             date: snapshot.date.to_string(),

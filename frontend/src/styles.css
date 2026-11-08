@@ -514,17 +514,32 @@ table {
 }
 
 .holdings-table table {
-  /* Budget for 7 consolidated columns. Horizontal scroll in `.table-wrap`
-     absorbs any residual overflow instead of compressing the Instrument
-     name. */
-  min-width: 980px;
+  /* Fit the 1180px workspace, including panel borders and a vertical scrollbar.
+     Instrument takes the remaining width; long names use the shared ellipsis. */
+  min-width: 1160px;
+  table-layout: fixed;
 }
 
-/* Keep the Instrument identifier wide enough for full names; the numeric
-   columns share the remaining width. */
-.holdings-table th:first-child,
-.holdings-table td:first-child {
-  min-width: 220px;
+.holdings-table th:nth-child(2) {
+  width: 70px;
+}
+.holdings-table th:nth-child(3) {
+  width: 110px;
+}
+.holdings-table th:nth-child(4) {
+  width: 116px;
+}
+.holdings-table th:nth-child(5) {
+  width: 110px;
+}
+.holdings-table th:nth-child(6) {
+  width: 196px;
+}
+.holdings-table th:nth-child(7) {
+  width: 88px;
+}
+.holdings-table th:nth-child(8) {
+  width: 190px;
 }
 
 .gains-table table {
@@ -896,8 +911,8 @@ tbody tr:last-child td {
 
 .instrument-cell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-1) var(--space-2);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
   align-items: center;
   min-width: 0;
 }
@@ -927,19 +942,6 @@ tbody tr:last-child td {
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.instrument-cell em {
-  width: fit-content;
-  padding: 1px var(--space-1);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.625rem;
-  font-style: normal;
-  font-weight: 500;
-  grid-column: 1 / -1;
 }
 
 .metric-stack {
@@ -2732,4 +2734,42 @@ th.number-head .sort-button {
 .treemap-tile--small .treemap-tile-label,
 .treemap-tile--small .treemap-tile-pct {
   display: none;
+}
+
+/* Reserve the gap slot even when no target exists, keeping selectors aligned. */
+.target-conviction {
+  display: grid;
+  grid-template-columns: 80px 80px;
+  align-items: center;
+  gap: var(--space-2);
+}
+.holding-gap-slot,
+.holding-gap-slot .target-gap-track {
+  width: 80px;
+}
+.company-figure {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: inherit;
+  gap: 2px;
+}
+.number.approximate {
+  color: var(--warning);
+}
+.number.muted {
+  color: var(--text-muted);
+}
+.number.not-applicable {
+  font-style: italic;
+}
+.report-tag,
+.report-hint {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+
+.report-hint {
+  font-family: var(--font-mono);
 }

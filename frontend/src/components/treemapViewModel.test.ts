@@ -6,6 +6,7 @@ function inst(symbol: string, exchange = "NASDAQ"): Instrument {
   return {
     id: 1,
     symbol,
+    ticker: symbol,
     exchange,
     name: symbol,
     type: "Stock",
@@ -135,6 +136,7 @@ describe("treemapViewModel", () => {
         {
           id: 1,
           symbol: "MSFT",
+          ticker: "MSFT",
           exchange: "NYSE",
           name: "Microsoft Corporation",
           type: "Stock",
