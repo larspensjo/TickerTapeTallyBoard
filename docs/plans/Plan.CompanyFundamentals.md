@@ -1252,8 +1252,9 @@ The three items below were settled by Claude after review (cheap to change; Lars
 may overturn any of them):
 
 1. **Holdings column order.** Use Instrument, Qty, Cost, Value, P&L, Target &
-   conviction, P/E·P/S, Next report, which matches the agreed mockup. Lars checks it
-   by eye in Phase 4's human testing.
+   conviction, P/E·P/S, Next report, which matches the agreed mockup. Confirmed by
+   Lars in Phase 4's human testing (2026-11-08), which passed: layout, hover
+   reasons, date labels and sorting all approved.
 2. **Yahoo's market value as share-basis evidence.** It is allowed as evidence only.
    It is never displayed, and it is checked against the app's price × shares × FX,
    provided S7 shows it is in a known currency and stays consistent on the fixtures.
