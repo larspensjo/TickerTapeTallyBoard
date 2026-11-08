@@ -162,6 +162,59 @@ async fn revisions_retain_first_seen_and_latest_active_symbol_wins() {
     assert_eq!(count, 3);
     assert_eq!(active_observations(&pool, id).await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn report_estimate_history_uses_only_narrow_active_first_observations() {
+    let (pool, id) = setup().await;
+    let GenerationWrite::Applied(link) = write(
+        &pool,
+        id,
+        None,
+        Some(definition("TEST")),
+        "2026-10-01T12:00:00Z",
+        vec![value("2026-06-30", dec!(10))],
+    )
+    .await
+    else {
+        panic!()
+    };
+    let GenerationWrite::Applied(link) = write(
+        &pool,
+        id,
+        Some(link.token),
+        None,
+        "2026-10-05T12:00:00Z",
+        vec![value("2026-09-30", dec!(10))],
+    )
+    .await
+    else {
+        panic!()
+    };
+    assert_eq!(
+        active_report_history(&pool, id).await.unwrap(),
+        vec![("2026-09-30".parse().unwrap(), "2026-10-03".parse().unwrap())]
+    );
+    write(
+        &pool,
+        id,
+        Some(link.token),
+        None,
+        "2027-01-31T12:00:00Z",
+        vec![value("2026-12-31", dec!(10))],
+    )
+    .await;
+    assert_eq!(active_report_history(&pool, id).await.unwrap().len(), 1);
+    fundamentals_sources::correct(
+        &pool,
+        id,
+        Some(definition("RIGHT")),
+        Some(PreviousLink::WrongCompany),
+        "2027-02-01T12:00:00Z",
+    )
+    .await
+    .unwrap();
+    assert!(active_report_history(&pool, id).await.unwrap().is_empty());
+}
 #[tokio::test]
 async fn wrong_company_correction_is_atomic_and_all_active_reads_exclude_old_rows() {
     let (pool, id) = setup().await;

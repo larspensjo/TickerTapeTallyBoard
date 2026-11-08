@@ -3,6 +3,13 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// Verified ECB reference currencies; unsupported report currencies stay explicit gaps.
+pub const ECB_CURRENCIES: &[&str] = &[
+    "AUD", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF", "IDR", "ILS",
+    "INR", "ISK", "JPY", "KRW", "MXN", "MYR", "NOK", "NZD", "PHP", "PLN", "RON", "SEK", "SGD",
+    "THB", "TRY", "USD", "ZAR",
+];
+
 macro_rules! codes {
     ($(#[$attr:meta])* $name:ident { $($(#[$variant_attr:meta])* $variant:ident => $code:literal),+ $(,)? }) => {
         $(#[$attr])*

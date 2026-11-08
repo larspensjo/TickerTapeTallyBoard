@@ -49,6 +49,42 @@ pub struct SourceLink {
     pub consecutive_empty: i64,
 }
 
+/// Calculation inputs exclude provider identity, discovery candidates and the
+/// other metadata that only the source panel displays.
+#[derive(Clone, Debug)]
+pub struct FiguresState {
+    pub classification: Classification,
+    pub status: LinkStatus,
+    pub last_attempt_status: Option<AttemptStatus>,
+    pub last_success_at: Option<String>,
+}
+impl From<&SourceLink> for FiguresState {
+    fn from(link: &SourceLink) -> Self {
+        Self {
+            classification: link.definition.classification,
+            status: link.definition.status,
+            last_attempt_status: link.last_attempt_status,
+            last_success_at: link.last_success_at.clone(),
+        }
+    }
+}
+
+pub async fn figures_state(
+    pool: &SqlitePool,
+    instrument_id: i64,
+) -> Result<Option<FiguresState>, RepoError> {
+    sqlx::query("SELECT classification, status, last_attempt_status, last_success_at FROM instrument_fundamentals_sources WHERE instrument_id=?")
+        .bind(instrument_id).fetch_optional(pool).await?.map(|row| {
+            Ok(FiguresState {
+                classification: code(&row.try_get::<String, _>("classification")?, Classification::from_db_str)?,
+                status: code(&row.try_get::<String, _>("status")?, LinkStatus::from_db_str)?,
+                last_attempt_status: row.try_get::<Option<String>, _>("last_attempt_status")?
+                    .map(|s| code(&s, AttemptStatus::from_db_str)).transpose()?,
+                last_success_at: row.try_get("last_success_at")?,
+            })
+        }).transpose()
+}
+
 pub(super) fn code<T>(raw: &str, parse: impl FnOnce(&str) -> Option<T>) -> Result<T, RepoError> {
     parse(raw).ok_or_else(|| RepoError::Decode(format!("unknown fundamentals code {raw:?}")))
 }

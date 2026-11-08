@@ -69,6 +69,15 @@ pub async fn active_values(
     }
     Ok(winners.into_values().collect())
 }
+
+pub async fn has_set_aside_values(
+    pool: &SqlitePool,
+    instrument_id: i64,
+) -> Result<bool, RepoError> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM fundamental_values WHERE instrument_id=? AND set_aside_at IS NOT NULL)")
+        .bind(instrument_id).fetch_one(pool).await?)
+}
+
 pub async fn active_observations(
     pool: &SqlitePool,
     instrument_id: i64,
@@ -95,6 +104,26 @@ pub async fn active_observations(
         });
     }
     Ok(result)
+}
+
+/// Only the narrow, first observations that can inform an app report estimate.
+/// Holdings does not need the full observation history used by the source panel.
+pub async fn active_report_history(
+    pool: &SqlitePool,
+    instrument_id: i64,
+) -> Result<Vec<(NaiveDate, NaiveDate)>, RepoError> {
+    let rows = sqlx::query("WITH first_observations AS (SELECT period_end, first_seen_on, absent_fetch_on, ROW_NUMBER() OVER (PARTITION BY period_end ORDER BY first_seen_on, id) AS ordinal FROM fundamental_period_observations WHERE instrument_id=? AND set_aside_at IS NULL AND period_type='QUARTER') SELECT period_end, first_seen_on, absent_fetch_on FROM first_observations WHERE ordinal=1 AND julianday(first_seen_on)-julianday(absent_fetch_on) BETWEEN 0 AND 7 ORDER BY first_seen_on, period_end")
+        .bind(instrument_id).fetch_all(pool).await?;
+    rows.into_iter()
+        .map(|row| {
+            let end = date(&row.try_get::<String, _>("period_end")?)?;
+            let first = date(&row.try_get::<String, _>("first_seen_on")?)?;
+            let absent = date(&row.try_get::<String, _>("absent_fetch_on")?)?;
+            let observed = crate::domain::report_dates::observed_report(first, Some(absent))
+                .expect("query limits observations to narrow windows");
+            Ok((end, observed))
+        })
+        .collect()
 }
 pub async fn report_currencies(
     pool: &SqlitePool,

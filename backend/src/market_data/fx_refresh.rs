@@ -123,11 +123,7 @@ fn target_currencies(targets: &[RefreshTarget]) -> BTreeSet<String> {
 
 /// Verified ECB reference currencies. Unsupported report currencies remain an
 /// explicit FX gap and are never sent to the provider.
-pub const ECB_CURRENCIES: &[&str] = &[
-    "AUD", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF", "IDR", "ILS",
-    "INR", "ISK", "JPY", "KRW", "MXN", "MYR", "NOK", "NZD", "PHP", "PLN", "RON", "SEK", "SGD",
-    "THB", "TRY", "USD", "ZAR",
-];
+pub use crate::domain::fundamentals::ECB_CURRENCIES;
 
 pub(super) async fn complete_report_fx(
     providers: &ProviderSet,

@@ -130,6 +130,50 @@ TODO: Avanza import rows already parse and count dividends, but dividend rows ar
 ### API surface (v1 sketch)
 REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/opportunities?window=7d|14d|30d` (held assets' recent share-price change over a backend-resolved window), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices` (price history, plus the instrument's running average cost segments over its whole ledger and the open position's current native average), `POST /api/import/sharesight`, `POST /api/prices/refresh`.
 
+Each Holdings row includes an additive `fundamentals` block with `pe`, `ps`, and
+`next_report`. Its calculations reuse that row's already loaded effective close
+and FX inputs, including the already loaded ledger for split checks. Its lighter
+read path loads only the report observations needed for estimates and assembles
+only the trailing calculation quarters; it does not decode source-panel candidates or assemble
+historical display quarters. `GET /api/instruments/:id/fundamentals` returns `pe`, `ps`,
+`profit_margin`, `sales_growth`, the FX conversion and share-basis state, next and
+last report dates, a quarter grid with explicit missing slots between stored
+quarters (never before the earliest stored quarter), and source-panel
+status and attempt history. Unknown instruments return 404. The response carries
+`data_revision` as a cache token; it does not promise a cross-query snapshot.
+
+Figures contain `certainty`, a decimal-string `value` or null, and stable reason
+codes with optional detail. Complete inputs yield `complete`; three-quarter
+scaling, derived EPS, warning-stale prices, stale source outages, moderate
+consistency gaps, or an overdue report yield `approximate`. A failed source
+attempt downgrades retained figures only when the last success is older than
+seven calendar days; recent failures remain visible in the source panel. A
+`source_unreachable` reason names the last success as a date. App-estimated
+reports have a 21-day overdue grace period; company-announced and Nasdaq-derived
+dates have seven days.
+Positively identified funds, certificates and non-companies are `not_applicable`;
+unknown classification, missing inputs, unsupported currency, unresolved share
+basis, inconsistent figures and invalid denominators are `unavailable`. Missing
+figures never use zero as a sentinel. Quarterly revenue and common-stockholder
+net income can be reconstructed from matching annual measures; EPS cannot.
+Per-share slots fetched before a subsequent split are excluded until restated.
+Margin uses matching revenue/income slots, and consistency compares each quarter
+on its own diluted-average share basis, with one absolute 0.02 EPS rounding
+allowance across the whole window. Consistency reason details are percentages
+with one decimal and a percent sign; share-basis ratios and their reason details
+are decimal strings rounded to at most four decimal places. Period ends less
+than 80 days apart count only the later quarter. Domain certainty and share-basis
+states are enums, mapped to the JSON contract by API response types.
+
+Report dates currently use app estimates (`last_year_date` or `typical_gap`), with
+`days_until` computed by the backend clock. Passed estimates remain in place with
+`estimate_passed`. Last reports are `observed` only with an absence/first-seen
+window of at most seven days, otherwise `period_only`. Company-announced and
+Nasdaq-expected dates will extend these inputs separately. Active-only reads
+exclude wrong-company history from figures, charts, observations and estimates;
+an empty replacement history is explicitly `awaiting_figures` until an attempt
+under the current link generation completes, including an empty result.
+
 `POST /api/prices/refresh` includes an additive `fundamentals` block with `status`
 (`not_run`, `succeeded`, `partial`, `failed`), instrument counts (`fetched`, `skipped`,
 `superseded`, `failed`) and detailed `items` (instrument, symbol, status, reason and

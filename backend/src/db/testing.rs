@@ -11,6 +11,33 @@ pub async fn memory_pool() -> SqlitePool {
 }
 
 #[cfg(test)]
+pub(crate) async fn set_query_only(pool: &SqlitePool) {
+    sqlx::query("PRAGMA query_only = ON")
+        .execute(pool)
+        .await
+        .expect("query-only demo");
+}
+
+#[cfg(test)]
+pub(crate) async fn corrupt_fundamentals_panel_data(pool: &SqlitePool, id: i64) {
+    sqlx::query("UPDATE instrument_fundamentals_sources SET candidates='malformed JSON', origin='INVALID', source='INVALID' WHERE instrument_id=?")
+        .bind(id).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO fundamental_period_observations (instrument_id, period_type, period_end, provider_symbol, first_seen_on) VALUES (?, 'ANNUAL', 'invalid date', 'NOVA', 'invalid date')")
+        .bind(id).execute(pool).await.unwrap();
+}
+
+#[cfg(test)]
+pub(crate) async fn corrupt_ledger_price(pool: &SqlitePool, id: i64) {
+    sqlx::query(
+        "UPDATE transactions SET price='invalid decimal' WHERE instrument_id=? AND type='BUY'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
 mod tests {
     use super::memory_pool;
 

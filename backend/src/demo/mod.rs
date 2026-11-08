@@ -6,6 +6,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
 use crate::domain::TransactionKind;
 use crate::providers::{FxProvider, MarketDataProvider, BASE_FX_PROVIDER};
+mod company_figures;
 
 pub const BASE_CURRENCY: &str = "SEK";
 
@@ -189,6 +190,8 @@ async fn seed_for_date(
         )
         .await?;
     }
+
+    company_figures::seed(pool, today, &data, &instrument_ids).await?;
 
     for instrument_id in instrument_ids {
         let ledger = transactions::ledger_for_instrument(pool, instrument_id).await?;

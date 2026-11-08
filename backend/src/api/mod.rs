@@ -4,6 +4,7 @@ mod cors;
 mod data_version;
 mod error;
 pub mod extract;
+mod fundamentals;
 mod gains;
 mod health;
 mod holdings;
@@ -128,6 +129,7 @@ fn api_router() -> Router<AppState> {
             put(instruments::update_conviction),
         )
         .route("/instruments/{id}/prices", get(instrument_prices::list))
+        .route("/instruments/{id}/fundamentals", get(fundamentals::get))
         .route(
             "/instruments/{id}/provider-symbols/{provider}",
             put(provider_symbols::update),

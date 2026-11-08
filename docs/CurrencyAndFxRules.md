@@ -47,6 +47,28 @@ tax calculation.
   Report-currency completion outcomes belong to the fundamentals summary and do
   not change the price/FX run status.
 
+## Company Figures At The Price Date
+
+P/E converts the reported TTM diluted EPS into the listing currency. P/S converts
+TTM revenue in the same way before dividing by the latest diluted average share
+count. The entire TTM sum uses one conversion resolved at the effective close's
+date, rather than quarter-specific exchange rates:
+
+```text
+rate(report -> listing) = fx(report -> SEK) / fx(listing -> SEK)
+```
+
+Each component is the stored rate on or before that price date, carried forward
+when necessary; SEK is exactly 1. When report and listing currencies match,
+P/E and P/S need no conversion or ECB support. The fundamentals response names
+the conversion rate, price date, and both component rate dates only when a
+conversion is needed and at least one of P/E or P/S remains available (complete
+or approximate). Holdings supplies its already loaded close and listing FX
+explicitly; a cached listing FX newer than the price
+date cannot be used for this conversion. Missing FX, including any required
+currency outside the ECB set, makes the dependent price ratios unavailable with
+`fx_unavailable`. Unit-free profit margin and sales growth remain usable.
+
 ## Sharesight Import Rules
 
 Sharesight's `Exchange Rate` in the All Trades CSV is interpreted as instrument

@@ -23,6 +23,7 @@ pub struct HoldingResponse {
     pub valuation: Option<ValuationField>,
     pub conviction_target: ConvictionTargetResponse,
     pub row_kind: HoldingRowKind,
+    pub fundamentals: super::fundamentals::HoldingsFundamentals,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +79,7 @@ impl HoldingResponse {
         position: &Position,
         valuation: Option<ValuationField>,
         conviction_target: ConvictionTargetResponse,
+        fundamentals: super::fundamentals::HoldingsFundamentals,
     ) -> Result<Self, ApiError> {
         let (cost_basis_native, average_cost_native, base, row_kind) = if position.quantity == 0 {
             (None, None, None, HoldingRowKind::Watchlist)
@@ -128,6 +130,7 @@ impl HoldingResponse {
             valuation,
             conviction_target,
             row_kind,
+            fundamentals,
         })
     }
 }
@@ -138,6 +141,30 @@ pub async fn list(
 ) -> Result<Json<HoldingsResponse>, ApiError> {
     let valuation_date = state.clock.today();
     let valued_holdings = load_valued_holdings(&state.pool, valuation_date).await?;
+    let (holdings, hidden_watchlist_pool_count) = build_holdings(
+        &state.pool,
+        &state.clock,
+        valuation_date,
+        valued_holdings,
+        query.include_watchlist,
+    )
+    .await?;
+    Ok(Json(HoldingsResponse {
+        holdings,
+        hidden_watchlist_pool_count,
+        data_revision: state.revision.current().await.map_err(|error| {
+            ApiError::internal(format!("could not read data revision: {error}"))
+        })?,
+    }))
+}
+
+pub(super) async fn build_holdings(
+    pool: &sqlx::SqlitePool,
+    clock: &crate::clock::Clock,
+    valuation_date: chrono::NaiveDate,
+    valued_holdings: Vec<ValuedOpenHolding>,
+    include_watchlist: bool,
+) -> Result<(Vec<HoldingResponse>, usize), ApiError> {
     let target_inputs: Vec<_> = valued_holdings
         .iter()
         .map(ValuedOpenHolding::conviction_target_input)
@@ -145,7 +172,7 @@ pub async fn list(
 
     // Derive targets once for the whole eligible pool, then attach in order.
     let targets = derive_targets(&target_inputs);
-    let hidden_watchlist_pool_count = if query.include_watchlist {
+    let hidden_watchlist_pool_count = if include_watchlist {
         0
     } else {
         valued_holdings
@@ -162,28 +189,25 @@ pub async fn list(
             })
             .count()
     };
-    let holdings = valued_holdings
+    let mut holdings = Vec::new();
+    for (holding, output) in valued_holdings
         .into_iter()
         .zip(targets.iter())
-        .filter(|(holding, _)| query.include_watchlist || holding.position.quantity > 0)
-        .map(|(holding, output)| {
-            let valuation = holding.valuation.as_ref().map(valuation_field_from_holding);
-            HoldingResponse::build(
-                &holding.instrument,
-                &holding.position,
-                valuation,
-                build_conviction_target(output, &holding.market_value_reasons()),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter(|(holding, _)| include_watchlist || holding.position.quantity > 0)
+    {
+        let fundamentals =
+            super::fundamentals::load_holdings(pool, &holding, valuation_date, clock).await?;
+        let valuation = holding.valuation.as_ref().map(valuation_field_from_holding);
+        holdings.push(HoldingResponse::build(
+            &holding.instrument,
+            &holding.position,
+            valuation,
+            build_conviction_target(output, &holding.market_value_reasons()),
+            fundamentals,
+        )?);
+    }
 
-    Ok(Json(HoldingsResponse {
-        holdings,
-        hidden_watchlist_pool_count,
-        data_revision: state.revision.current().await.map_err(|error| {
-            ApiError::internal(format!("could not read data revision: {error}"))
-        })?,
-    }))
+    Ok((holdings, hidden_watchlist_pool_count))
 }
 
 fn valuation_field_from_holding(valued_holding: &crate::domain::ValuedHolding) -> ValuationField {

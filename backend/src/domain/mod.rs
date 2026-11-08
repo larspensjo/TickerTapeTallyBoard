@@ -5,6 +5,7 @@
 
 mod attribution;
 mod availability;
+pub(crate) mod calendar;
 mod cash_flow;
 mod conviction;
 mod day_change;
@@ -71,5 +72,7 @@ pub use valuation::{
     ValuationSummary, ValuedHolding,
 };
 pub use value_history::{build_value_history, ValueHistoryInstrument, ValueHistoryPoint};
+pub mod company_figures;
 pub mod fundamentals;
+pub(crate) use market_snapshot::data_freshness;
 pub mod report_dates;
