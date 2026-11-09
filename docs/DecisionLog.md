@@ -793,3 +793,8 @@ Consequences: Conviction remains editable and searchable within the merged colum
 Decision: Ratios, including P/E and P/S, use a dedicated display precision class with exactly one decimal. Percentages retain two decimals. Stored and serialized decimals retain their original precision, and sorting uses their numeric values before display rounding.
 Context: This refines the 2026-07-15 Numeric display precision decision. Ratios need a stable, readable precision distinct from prices, money amounts, and percentages.
 Consequences: Every company-figure surface uses the same pure formatting rule. Approximate ratios retain the leading amber ~ and their reason independently of rounding.
+
+## 2026-11-09 - Each Instrument Has Its Own Company-Figures Source Link, Discovered Automatically And Correctable By Hand — refines 2026-11-04 Company Figures Come From Free Sources
+Decision: Each instrument has its own company-figures source link. Discovery sets it automatically, and the owner can correct it by hand; discovery never overwrites a link once it has been set by hand. Each correction states whether the new link is the same company, which keeps the stored figures, or whether the old link was the wrong company, which sets the old figures aside without deleting them.
+Context: Automatic discovery can pick the wrong listing or company, and the owner needs a way to fix it without losing figures that may not be retrievable again.
+Consequences: A hand correction is final until the owner changes it again. No correction deletes figures; set-aside figures are not used.
