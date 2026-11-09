@@ -137,6 +137,75 @@ pub(super) async fn seed(
             fundamental_values::write_fetch(&mut tx, &write).await?;
             tx.commit().await?;
         }
+        seed_report_dates(pool, ids[index], symbol, today, latest).await?;
     }
+    Ok(())
+}
+
+/// Synthetic scheduling examples reuse the existing demo companies and leave
+/// prices, transactions and totals untouched. No external source is contacted.
+async fn seed_report_dates(
+    pool: &SqlitePool,
+    id: i64,
+    symbol: &str,
+    today: NaiveDate,
+    latest: NaiveDate,
+) -> Result<(), crate::db::RepoError> {
+    use crate::{db::report_announcements as repo, domain::report_dates::*};
+    let (offset, kind) = match symbol {
+        "NOVA" => (12, AnnouncementKind::CompanyAnnounced),
+        "HARV" => (18, AnnouncementKind::Expected),
+        "NORD" => (-3, AnnouncementKind::CompanyAnnounced),
+        _ => return Ok(()),
+    };
+    let ticker = repo::UsTicker {
+        symbol: symbol.into(),
+        link_generation: None,
+    };
+    let mut tx = pool.begin().await?;
+    let report = AnnouncementDate {
+        date: today + Duration::days(offset),
+        kind,
+        fiscal_quarter: month_end(latest.checked_add_months(Months::new(3)).unwrap()),
+        session: (kind == AnnouncementKind::CompanyAnnounced)
+            .then_some(ReportSession::AfterMarketClose),
+    };
+    repo::apply(
+        &mut tx,
+        id,
+        &ticker,
+        today,
+        &[AnnouncementChange::Insert(report)],
+    )
+    .await?;
+    if symbol == "NOVA" {
+        // The latest quarter was first seen ten days ago. This schedule was
+        // announced earlier and resolved when that quarter actually appeared.
+        let report = AnnouncementDate {
+            date: today - Duration::days(11),
+            kind: AnnouncementKind::CompanyAnnounced,
+            fiscal_quarter: Some(latest),
+            session: Some(ReportSession::AfterMarketClose),
+        };
+        repo::apply(
+            &mut tx,
+            id,
+            &ticker,
+            today - Duration::days(20),
+            &[AnnouncementChange::Insert(report)],
+        )
+        .await?;
+        let entries = repo::for_ticker(&mut *tx, id, &ticker).await?;
+        let observations = repo::observations(&mut *tx, id).await?;
+        repo::apply(
+            &mut tx,
+            id,
+            &ticker,
+            today,
+            &resolve_announcements(&entries, &observations),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }

@@ -79,6 +79,17 @@ fundamental_period_observations
 fundamental_split_events
                  id, instrument_id, provider_symbol, split_date, numerator,
                  denominator, updated_at, set_aside_at, set_aside_reason
+report_announcements
+                 id, instrument_id, source, provider_symbol, scheduled_date,
+                 kind, fiscal_quarter_ending, session, first_seen_on, last_seen_on,
+                 baseline_period_end, state, resolved_period_end, superseded_by,
+                 set_aside_at
+report_calendar_scans
+                 source, calendar_date, scanned_at, scanned_on, outcome,
+                 last_success_at, last_success_on
+report_date_lookups
+                 instrument_id, source, provider_symbol, last_lookup_day,
+                 last_success_on, last_outcome
 market_data_refresh_runs
                  id, trigger, started_at, finished_at, status, message,
                  prices_written, fx_rates_written, unmapped_instruments,
@@ -118,9 +129,18 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
   The app-bar **Refresh** button (accessible name "Refresh prices") sends `mode: "latest"` and fills only the 37-calendar-day window ending today, which covers the Opportunities page's longest period (30 days) plus its start-close tolerance; the length is that period plus a fixed margin kept wider than the tolerance.
 - Fetched data is cached in SQLite and valuation reads the stored rows; refreshes fetch each enabled provider mapping and upsert its returned rows. Refresh runs as a background job at application launch and on demand from the manual refresh action; there is no scheduled fetch.
 - **Company figures:** Each instrument has a company-figures source link separate from its price mappings. Discovery verifies an enabled Yahoo listing first, then searches by ISIN or symbol when needed, preferring the same exchange for Nordic listings. Classification distinguishes companies, funds and certificates; uncertain or missing data remains explicit. Yahoo's fundamentals-timeseries endpoint supplies quarterly, annual, trailing and market-value evidence; its chart endpoint supplies classification and split events. Calls happen outside database transactions. Latest-mode refreshes fetch company figures after prices and FX; backfills do not fetch them, and demo mode remains offline.
-- **Link generations and retained history:** Every company-figures write verifies both the refresh lease and the expected source-link generation and symbol in one transaction; a changed link supersedes an in-flight result. Quarters belong to the instrument. A same-company correction retains active history across symbols, while a wrong-company correction sets aside values, observations and split events so active reads exclude them. Whole-instrument deletion removes its stored company figures with it.
-- **Fetch timing:** The application clock supplies calendar dates. An instrument is attempted at most once per day under its current link. A never-fetched link is due immediately; estimated report dates trigger daily fetching through 21 days afterwards, with a backstop after more than seven days without success and next-day retries for rate limits or provider outages. The first rate limit skips later instrument fetches for that run. Repository failures are reported per instrument and later instruments continue; lease loss or cancellation stops the work.
+- **US report dates:** Nasdaq's per-symbol `api/analyst/{SYMBOL}/earnings-date` supplies dates for refresh targets matched by a suffix-free enabled Yahoo price symbol, or a suffix-free company-figures symbol for a USD listing. Only the report text is interpreted; analyst figures are ignored. The company-announced text form, including session and fiscal quarter, gives a confirmed date. Algorithmic dates are labelled **Nasdaq expected**, ahead of the app's estimate. Lookups use concurrency four and run at most once per local day: when there is no unresolved announcement, an unresolved date is within seven days or has passed, or the last successful lookup is over three days old. Confirmed dates continue to be checked for moves. A rate limit stops new Nasdaq requests for the rest of that run; remaining work reports `skipped_rate_limited`.
+- **Schedule reconciliation:** A different dated answer for the same explicit or baseline-implied fiscal quarter supersedes the old announcement and records its successor; a dated symbol answer also supersedes future or same-day entries with no explicit quarter; another quarter creates a separate announcement. Missing, unknown and failed per-symbol answers never withdraw dates. The by-day calendar is only a fallback presence check of a stored unresolved announcement's own day, after a missing or unknown answer or once the day arrives. Each day is attempted at most once per local day, including failures; last-success timestamps survive later failed attempts, and successful empty results withdraw missing entries. Report-day, past-day and results-layout rows prove presence without changing the recorded kind, while filling a missing fiscal quarter. There is no horizon scan or backfill. All refresh writes verify the lease and re-derive the US ticker; figures-link identities also check link generation.
+- **Report selection and history:** The earliest active unresolved schedule stays next even after it passes, with `report_date_passed` for confirmed dates or `estimate_passed` for estimates. It keeps daily figures fetching due until closed. Resolution matches explicit or baseline-implied fiscal year and month; a later stored quarter supersedes a skipped-quarter announcement without confirming history. With no quarter baseline, resolution uses the first new quarter seen on or after the scheduled day when the fiscal quarter is absent. Confirmed last reports require a company-announced kind at resolution and figures first seen on or after the scheduled date. Nasdaq-expected schedules never become confirmed history. App estimates use resolved company-announced reports and observation windows of seven days or less. Announcement rows are retained through state changes. Offline demo data adds synthetic future, expected, overdue and resolved schedules to existing companies without changing portfolio totals.
+- **Link generations and retained history:** Every company-figures write verifies both the refresh lease and the expected source-link generation and symbol in one transaction; a changed link supersedes an in-flight result. Quarters belong to the instrument. A same-company correction retains active history across symbols, while a wrong-company correction sets aside values, observations, split events and announcement history so active reads exclude them. Whole-instrument deletion removes its stored company figures with it.
+- **Fetch timing:** The application clock supplies calendar dates. An instrument is attempted at most once per day under its current link. A never-fetched link is due immediately; app-estimated report dates trigger daily fetching through 21 days afterwards, while active Nasdaq announcements keep it due until closed, with a backstop after more than seven days without success and next-day retries for rate limits or provider outages. The first rate limit skips later instrument fetches for that run. Repository failures are reported per instrument and later instruments continue; lease loss or cancellation stops the work.
 - **Separate outcome and FX completion:** The response and refresh-run record carry a fundamentals outcome separately from the price/FX status and counts. Its fetched, skipped, superseded and failed counts count instruments only; report-currency FX items remain in the response's fundamentals items. Stored and newly discovered report currencies in the verified ECB set receive same-run FX completion, once per currency per run, with lease and link-generation checks. Unsupported currencies remain explicit FX gaps. Fundamentals and completion failures never degrade the price/FX run status. Latest refreshes publish a data revision after price/FX work commits and again at finish, so prices become visible while figures are still updating; a failed finish gets a best-effort revision bump.
+
+  Nasdaq lookup and fallback failures also appear in that fundamentals outcome;
+  the response's additive `report_dates` items retain their specific result separately
+  from the figures fetch. Persisted counts still describe instruments, with a failed
+  date operation counted once even when its figures fetch succeeds. A successful
+  figures fetch alongside a date failure gives a partial fundamentals outcome.
 
 ### Sharesight import
 Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date, type (buy/sell/adjustment), quantity, price, fees, exchange rate, and trade value. Importer parses the export (convert XLS→CSV or parse XLS directly via `calamine` crate), maps rows to ledger transactions, matches/creates instruments, and tags everything with an `import_batch_id` so a bad import can be rolled back atomically. Dividends may need a second report (Taxable Income / dividend report) or manual entry — verify during Phase 0 spike.
@@ -197,12 +217,27 @@ are decimal strings rounded to at most four decimal places. Period ends less
 than 80 days apart count only the later quarter. Domain certainty and share-basis
 states are enums, mapped to the JSON contract by API response types.
 
-Report dates currently use app estimates (`last_year_date` or `typical_gap`), with
-`days_until` computed by the backend clock. Passed estimates remain in place with
-`estimate_passed`. Last reports are `observed` only with an absence/first-seen
-window of at most seven days, otherwise `period_only`. Company-announced and
-Nasdaq-expected dates will extend these inputs separately. Active-only reads
-exclude wrong-company history from figures, charts, observations and estimates;
+US next-report dates use the earliest active announcement for the current ticker:
+company-announced dates are `confirmed`, algorithmic dates are Nasdaq estimates
+(`nasdaq_expected`), and otherwise the app estimates (`last_year_date` or
+`typical_gap`). The backend clock computes `days_until`. Passed unresolved dates
+stay next and keep the daily due fetch alive. Calendar scans only check stored
+unresolved dates, at most once per local day per date; there is no backfill or
+horizon scan. Report-day, past-day and results-layout sightings preserve the stored
+kind while supplying a missing fiscal quarter. A different dated answer for the
+same explicit or implied fiscal quarter supersedes the prior entry; a fresh
+successful calendar scan without the entry withdraws it. None, unknown and failed
+symbol lookups retain stored dates. A later stored quarter closes a skipped
+quarter's announcement without claiming a confirmed last report.
+
+Last reports are `confirmed` only from resolved company-announced entries;
+Nasdaq-expected dates never confirm last reports. An absence/first-seen window of
+at most seven days gives `observed`, otherwise `period_only`. Real report history
+uses resolved company-announced dates and these narrow observed windows. Reads,
+resolution and scan planning use the current ticker, obsolete-symbol active entries
+are superseded inside the refresh fence, and wrong-company corrections set aside
+announcement history alongside figures. Set-aside history is retained but excluded
+from figures, charts, observations, estimates and confirmed last reports;
 an empty replacement history is `awaiting_figures` while no attempt in the current
 link generation has completed or the last attempt failed. A completed attempt,
 including empty, no-match or ambiguous, ends awaiting and exposes the actual reason.
@@ -212,7 +247,9 @@ established link's status and observation baseline; only rediscovery replaces it
 `POST /api/prices/refresh` includes an additive `fundamentals` block with `status`
 (`not_run`, `succeeded`, `partial`, `failed`), instrument counts (`fetched`, `skipped`,
 `superseded`, `failed`) and detailed `items` (instrument, symbol, status, reason and
-optional `fx_pair`). `GET /api/prices/status` exposes the same block on `latest_run`,
+optional `fx_pair`). Figures outcomes stay in `items`, while Nasdaq outcomes are
+reported separately in `report_dates`; per-instrument counts use the worse outcome.
+`GET /api/prices/status` exposes the same block on `latest_run`,
 using the five persisted fundamentals columns; its `items` is empty because item
 details are not persisted. Backfills report `not_run`. This block never changes the
 existing price/FX status or counts.
@@ -271,6 +308,7 @@ Dividend tracking & reinvestment view · performance metrics (TWR/MWR, vs. index
 | 4 | Corporate actions (splits) silently corrupt derived positions if ignored | SPLIT transaction type exists in schema from day one; handling can ship post-v1 |
 | 5 | Scope creep toward realtime data | Explicit non-goal; EOD only in v1 |
 | 6 | `/api/health` exposes the absolute ledger path, including the Windows user name | Loopback-only binding limits the audience to processes on the host; revisit this before the mobile work lifts the boundary and adds authentication |
+| 7 | Unofficial Yahoo company figures and Nasdaq report-date sources can rate-limit, fail or change shape | Retain stored evidence and show stated figures/date reasons; use the app date estimate when no active Nasdaq date exists. Price/FX status is unaffected. Re-check source terms before any distributed installer. |
 
 ## 5. Acceptance criteria (v1)
 

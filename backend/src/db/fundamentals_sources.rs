@@ -218,6 +218,7 @@ pub async fn correct(
     let link = replace(&mut tx, instrument_id, &definition).await?;
     if previous == Some(PreviousLink::WrongCompany) {
         super::fundamental_values::set_aside(&mut tx, instrument_id, at).await?;
+        super::report_announcements::set_aside(&mut tx, instrument_id, at).await?;
     }
     tx.commit().await?;
     Ok(link)

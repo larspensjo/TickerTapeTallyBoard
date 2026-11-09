@@ -51,33 +51,62 @@ pub struct FundamentalsSummary {
     pub superseded: usize,
     pub failed: usize,
     pub items: Vec<FundamentalsItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub report_dates: Vec<FundamentalsItem>,
 }
 impl FundamentalsSummary {
     pub(super) fn push(&mut self, item: FundamentalsItem) {
-        if item.fx_pair.is_none() {
-            match item.status {
+        self.items.push(item);
+        self.recount();
+    }
+
+    fn merge_report_dates(&mut self, outcomes: Vec<FundamentalsItem>) {
+        self.report_dates = outcomes;
+        self.recount();
+    }
+
+    fn recount(&mut self) {
+        let mut statuses = std::collections::BTreeMap::<i64, FundamentalsItemStatus>::new();
+        for item in self
+            .items
+            .iter()
+            .chain(&self.report_dates)
+            .filter(|i| i.fx_pair.is_none())
+        {
+            let status = statuses.entry(item.instrument_id).or_insert(item.status);
+            if severity(item.status) > severity(*status) {
+                *status = item.status;
+            }
+        }
+        self.fetched = 0;
+        self.skipped = 0;
+        self.superseded = 0;
+        self.failed = 0;
+        for status in statuses.values() {
+            match status {
                 FundamentalsItemStatus::Fetched => self.fetched += 1,
                 FundamentalsItemStatus::Skipped => self.skipped += 1,
                 FundamentalsItemStatus::Superseded => self.superseded += 1,
                 FundamentalsItemStatus::Failed => self.failed += 1,
             }
         }
-        self.items.push(item);
-        self.status = if !self
-            .items
-            .iter()
-            .any(|item| item.status == FundamentalsItemStatus::Failed)
-        {
+        let all = || self.items.iter().chain(&self.report_dates);
+        self.status = if !all().any(|i| i.status == FundamentalsItemStatus::Failed) {
             FundamentalsStatus::Succeeded
-        } else if !self
-            .items
-            .iter()
-            .any(|item| item.status == FundamentalsItemStatus::Fetched)
-        {
-            FundamentalsStatus::Failed
-        } else {
+        } else if all().any(|i| i.status == FundamentalsItemStatus::Fetched) {
             FundamentalsStatus::Partial
+        } else {
+            FundamentalsStatus::Failed
         };
+    }
+}
+
+fn severity(status: FundamentalsItemStatus) -> u8 {
+    match status {
+        FundamentalsItemStatus::Skipped => 0,
+        FundamentalsItemStatus::Fetched => 1,
+        FundamentalsItemStatus::Superseded => 2,
+        FundamentalsItemStatus::Failed => 3,
     }
 }
 
@@ -105,6 +134,29 @@ pub(super) async fn run(
         .await,
     )?;
     super::refresh::MarketDataService::publish_prices(pool, lease).await?;
+    // Lookup schedules first so a newly learned due date can trigger this run's
+    // figures fetch. Presence checks wait until arrived figures have resolved
+    // their announcements; discovery may also have found new US identities.
+    let mut calendar_run = super::report_calendar_refresh::CalendarRun::default();
+    let mut calendar = match super::report_calendar_refresh::refresh(
+        providers,
+        pool,
+        targets,
+        clock,
+        lease,
+        false,
+        &calendar_run,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(MarketDataError::LeaseLost) => return Err(MarketDataError::LeaseLost),
+        Err(error) => {
+            record_failure(&mut summary, lease, &error);
+            fx_failed = true;
+            vec![]
+        }
+    };
     match refresh(providers, pool, targets, clock, lease).await {
         Ok(result) => {
             let fx_items = std::mem::take(&mut summary.items);
@@ -114,8 +166,35 @@ pub(super) async fn run(
             }
         }
         Err(MarketDataError::LeaseLost) => return Err(MarketDataError::LeaseLost),
-        Err(error) => record_failure(&mut summary, lease, &error),
+        Err(error) => {
+            record_failure(&mut summary, lease, &error);
+            fx_failed = true;
+        }
     }
+    calendar_run.attempted_lookups = calendar.iter().map(|item| item.instrument_id).collect();
+    match super::report_calendar_refresh::refresh(
+        providers,
+        pool,
+        targets,
+        clock,
+        lease,
+        true,
+        &calendar_run,
+    )
+    .await
+    {
+        Ok(items) => calendar.extend(items),
+        Err(MarketDataError::LeaseLost) => return Err(MarketDataError::LeaseLost),
+        Err(error) => {
+            record_failure(&mut summary, lease, &error);
+            fx_failed = true;
+        }
+    }
+    let figures_fetched = summary
+        .items
+        .iter()
+        .any(|i| i.status == FundamentalsItemStatus::Fetched);
+    summary.merge_report_dates(calendar);
     fx_failed |= merge_fx(
         &mut summary,
         lease,
@@ -129,8 +208,8 @@ pub(super) async fn run(
         )
         .await,
     )?;
-    if fx_failed {
-        summary.status = if summary.fetched == 0 {
+    if fx_failed || summary.failed > 0 {
+        summary.status = if summary.fetched == 0 && !figures_fetched {
             FundamentalsStatus::Failed
         } else {
             FundamentalsStatus::Partial
@@ -257,7 +336,7 @@ pub(super) async fn refresh(
                 return Ok(());
             }
             let values = fundamental_values::active_values(pool, id).await?;
-            let observations = fundamental_values::active_observations(pool, id).await?;
+            let observed = crate::db::report_announcements::observations(pool, id).await?;
             let latest = values
                 .iter()
                 .filter(|v| v.input.period_type == PeriodType::Quarter)
@@ -268,14 +347,31 @@ pub(super) async fn refresh(
                 .filter(|v| v.input.period_type == PeriodType::Annual)
                 .map(|v| v.input.period_end)
                 .collect();
-            let real: Vec<_> = observations
-                .iter()
-                .filter_map(|o| {
-                    report_dates::observed_report(o.first_seen_on, o.absent_fetch_on)
-                        .map(|r| (o.period_end, r))
-                })
-                .collect();
-            let estimate = report_dates::app_estimate(latest, &annual, &real);
+            let announcements = crate::db::report_announcements::current(pool, id).await?;
+            let real = report_dates::real_report_history(&announcements, &observed);
+            let source = crate::domain::company_figures::SourceState {
+                classification: link
+                    .as_ref()
+                    .map_or(fundamentals_sources::Classification::Unknown, |s| {
+                        s.definition.classification
+                    }),
+                status: link
+                    .as_ref()
+                    .map_or(LinkStatus::Pending, |s| s.definition.status),
+                awaiting_figures: false,
+                unreachable: link
+                    .as_ref()
+                    .is_some_and(|s| s.last_attempt_status == Some(AttemptStatus::Failed)),
+                last_success: local_day(
+                    clock,
+                    link.as_ref().and_then(|s| s.last_success_at.as_deref()),
+                )?,
+            };
+            let next = report_dates::scheduled_next(
+                today,
+                report_dates::next_report(today, latest, &annual, &real, &source),
+                &announcements,
+            );
             let timing = FetchTiming {
                 last_attempt: local_day(
                     clock,
@@ -292,7 +388,14 @@ pub(super) async fn refresh(
                             Some("rate_limited" | "provider_unavailable")
                         )
                 }),
-                next_report: estimate.map(|e| e.date),
+                next_report: next.date,
+                unresolved_announcement: matches!(
+                    next.basis,
+                    Some(
+                        report_dates::EstimateBasis::CompanyAnnounced
+                            | report_dates::EstimateBasis::NasdaqExpected
+                    )
+                ),
                 newer_quarter_seen_on: None,
             };
             if report_dates::fetch_decision(today, &timing) == FetchDecision::NotDue {
@@ -492,4 +595,60 @@ async fn fetch_link(
         splits: listing.splits,
         reason,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn date_counts_preserve_figures_items_and_choose_the_worse_outcome() {
+        for (figures, dates, expected) in [
+            (
+                FundamentalsItemStatus::Failed,
+                FundamentalsItemStatus::Failed,
+                FundamentalsItemStatus::Failed,
+            ),
+            (
+                FundamentalsItemStatus::Fetched,
+                FundamentalsItemStatus::Superseded,
+                FundamentalsItemStatus::Superseded,
+            ),
+            (
+                FundamentalsItemStatus::Fetched,
+                FundamentalsItemStatus::Failed,
+                FundamentalsItemStatus::Failed,
+            ),
+        ] {
+            let item = |status, reason: &str| FundamentalsItem {
+                instrument_id: 7,
+                symbol: Some("TEST".into()),
+                status,
+                reason: Some(reason.into()),
+                fx_pair: None,
+            };
+            let mut summary = FundamentalsSummary::default();
+            summary.push(item(figures, "figures_reason"));
+            summary.merge_report_dates(vec![item(dates, "date_reason")]);
+            // Adding an FX result after merging must not change instrument counts.
+            summary.push(FundamentalsItem {
+                fx_pair: Some("USD/SEK".into()),
+                ..item(FundamentalsItemStatus::Fetched, "fx")
+            });
+            assert_eq!(summary.items[0].status, figures);
+            assert_eq!(summary.items[0].reason.as_deref(), Some("figures_reason"));
+            assert_eq!(summary.report_dates[0].status, dates);
+            assert_eq!(
+                summary.fetched + summary.skipped + summary.superseded + summary.failed,
+                1
+            );
+            assert_eq!(
+                summary.failed,
+                usize::from(expected == FundamentalsItemStatus::Failed)
+            );
+            assert_eq!(
+                summary.superseded,
+                usize::from(expected == FundamentalsItemStatus::Superseded)
+            );
+        }
+    }
 }

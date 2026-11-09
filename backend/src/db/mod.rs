@@ -11,6 +11,7 @@ pub mod instruments;
 pub mod market_data_runs;
 pub mod prices;
 pub mod provider_symbols;
+pub mod report_announcements;
 pub mod transactions;
 
 pub mod testing;

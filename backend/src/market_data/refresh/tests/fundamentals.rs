@@ -13,6 +13,7 @@ use crate::{
     providers::{yahoo_fundamentals::ListingDetails, FakeFundamentalsProvider},
 };
 use std::time::Duration as StdDuration;
+mod report_calendar;
 
 fn day() -> NaiveDate {
     "2026-11-07".parse().unwrap()
@@ -142,7 +143,7 @@ async fn latest_refresh_stores_figures_completes_new_eur_and_persists_separate_s
         1
     );
     assert_eq!(
-        fundamental_values::active_observations(&pool, id)
+        fundamental_values::active_observations(&pool, id, None)
             .await
             .unwrap()[0]
             .absent_fetch_on,
@@ -196,7 +197,7 @@ async fn latest_refresh_stores_figures_completes_new_eur_and_persists_separate_s
     assert_eq!(stored.fundamentals_fetched, 0);
     assert_eq!(stored.fundamentals_skipped, 1);
     assert_eq!(stored.fundamentals_failed, 0);
-    let observations = fundamental_values::active_observations(&pool, id)
+    let observations = fundamental_values::active_observations(&pool, id, None)
         .await
         .unwrap();
     assert_eq!(observations[0].first_seen_on, day());
@@ -709,7 +710,7 @@ async fn usable_discovered_link_preserves_generation_and_absence_across_empty_fe
         assert_eq!(link.definition, initial.definition);
         assert_eq!(link.consecutive_empty, if offset == 0 { 1 } else { 0 });
     }
-    let observations = fundamental_values::active_observations(&pool, id)
+    let observations = fundamental_values::active_observations(&pool, id, None)
         .await
         .unwrap();
     let new = observations
@@ -719,10 +720,13 @@ async fn usable_discovered_link_preserves_generation_and_absence_across_empty_fe
     assert_eq!(new.absent_fetch_on, Some(day()));
     assert_eq!(new.first_seen_on, day() + chrono::Duration::days(1));
     assert_eq!(
-        fundamental_values::active_report_history(&pool, id)
-            .await
-            .unwrap()
-            .len(),
+        crate::domain::report_dates::real_report_history(
+            &[],
+            &crate::db::report_announcements::observations(&pool, id)
+                .await
+                .unwrap()
+        )
+        .len(),
         1
     );
 }
@@ -846,7 +850,7 @@ async fn correction_during_io_supersedes_values_observations_and_bookkeeping() {
             .await
             .unwrap()
             .is_empty());
-        assert!(fundamental_values::active_observations(&second, id)
+        assert!(fundamental_values::active_observations(&second, id, None)
             .await
             .unwrap()
             .is_empty());

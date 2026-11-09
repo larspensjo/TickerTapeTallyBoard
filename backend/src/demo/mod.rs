@@ -238,7 +238,8 @@ fn instruments() -> Vec<DemoInstrument> {
             isin: None,
             provider: MarketDataProvider::Yahoo,
             asset_class: None,
-            provider_symbol: "NORD.ST",
+            // Synthetic suffix-free identity exercises the unresolved US date.
+            provider_symbol: "NORD",
             conviction: "MEDIUM",
         },
         DemoInstrument {

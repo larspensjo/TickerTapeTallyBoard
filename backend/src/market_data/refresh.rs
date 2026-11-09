@@ -160,7 +160,10 @@ impl MarketDataService {
                     crate::providers::NasdaqNordicClient::new(),
                 )
                 .with_fx_provider(crate::providers::FrankfurterClient::new())
-                .with_fundamentals_provider(crate::providers::YahooFundamentalsClient::new()),
+                .with_fundamentals_provider(crate::providers::YahooFundamentalsClient::new())
+                .with_earnings_calendar_provider(
+                    crate::providers::NasdaqEarningsCalendarClient::new(),
+                ),
         )
     }
 
@@ -516,6 +519,7 @@ pub(super) fn run_summary(row: market_data_runs::RefreshRunRow) -> RefreshRunSum
             superseded: row.fundamentals_superseded as usize,
             failed: row.fundamentals_failed as usize,
             items: Vec::new(),
+            report_dates: Vec::new(),
         },
         run_id: row.id,
         trigger: super::refresh_contract::refresh_trigger_from_db(&row.trigger),

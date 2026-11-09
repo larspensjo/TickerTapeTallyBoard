@@ -91,8 +91,14 @@ pub(super) async fn load_inputs(
         .filter(|v| v.input.period_type == PeriodType::Annual)
         .map(|v| v.input.period_end)
         .collect();
-    let history = fundamental_values::active_report_history(pool, id).await?;
-    let next_report = report_dates::next_report(today, latest, &annual, &history, &source);
+    let announcements = crate::db::report_announcements::current(pool, id).await?;
+    let observations = crate::db::report_announcements::observations(pool, id).await?;
+    let history = report_dates::real_report_history(&announcements, &observations);
+    let next_report = report_dates::scheduled_next(
+        today,
+        report_dates::next_report(today, latest, &annual, &history, &source),
+        &announcements,
+    );
     let price = loaded_price.map(|p| Price {
         date: p.date,
         close: p.close,

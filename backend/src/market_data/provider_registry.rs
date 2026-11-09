@@ -8,6 +8,7 @@ use crate::providers::{
 /// Registration surface for the multi-provider tests and for `live()`.
 #[derive(Default)]
 pub struct ProviderRegistry {
+    earnings_calendar_provider: Option<Arc<dyn crate::providers::EarningsCalendarProvider>>,
     fundamentals_provider: Option<Arc<dyn crate::providers::FundamentalsProvider>>,
     price_providers: Vec<(MarketDataProvider, Arc<dyn PriceProvider + Send + Sync>)>,
     symbol_search_providers: Vec<(
@@ -18,6 +19,15 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    pub fn with_earnings_calendar_provider<
+        P: crate::providers::EarningsCalendarProvider + 'static,
+    >(
+        mut self,
+        client: P,
+    ) -> Self {
+        self.earnings_calendar_provider = Some(Arc::new(client));
+        self
+    }
     pub fn with_fundamentals_provider<F: crate::providers::FundamentalsProvider + 'static>(
         mut self,
         client: F,
@@ -56,6 +66,7 @@ impl ProviderRegistry {
 }
 
 pub(crate) struct ProviderSet {
+    earnings_calendar_provider: Option<Arc<dyn crate::providers::EarningsCalendarProvider>>,
     fundamentals_provider: Option<Arc<dyn crate::providers::FundamentalsProvider>>,
     /// Both registries are ordered by `PRICE_PROVIDER_PRECEDENCE`, which stays
     /// the single source of truth for precedence; lookup is a linear scan over
@@ -71,6 +82,7 @@ pub(crate) struct ProviderSet {
 impl ProviderSet {
     pub(crate) fn from_registry(registry: ProviderRegistry) -> Self {
         let ProviderRegistry {
+            earnings_calendar_provider,
             fundamentals_provider,
             mut price_providers,
             mut symbol_search_providers,
@@ -80,6 +92,7 @@ impl ProviderSet {
         sort_by_precedence(&mut symbol_search_providers);
 
         Self {
+            earnings_calendar_provider,
             fundamentals_provider,
             price_providers,
             symbol_search_providers,
@@ -124,6 +137,11 @@ impl ProviderSet {
         &self,
     ) -> Option<&Arc<dyn crate::providers::FundamentalsProvider>> {
         self.fundamentals_provider.as_ref()
+    }
+    pub(crate) fn earnings_calendar_provider(
+        &self,
+    ) -> Option<&Arc<dyn crate::providers::EarningsCalendarProvider>> {
+        self.earnings_calendar_provider.as_ref()
     }
 }
 

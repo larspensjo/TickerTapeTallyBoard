@@ -10,7 +10,7 @@ use crate::{
             self, CompanyFigures, FxRate, Inputs, Price, ReportedValue, SourceState,
         },
         fundamentals::{AttemptStatus, Classification, LinkStatus, Metric, PeriodType},
-        report_dates::{self, Observation, ReportDate},
+        report_dates::{self, ReportDate},
         DataFreshness, FxSnapshot, PriceSnapshot, TransactionKind,
     },
     market_data::effective_prices,
@@ -128,18 +128,12 @@ pub(super) async fn load(
     .await?;
     let id = instrument.id;
     let awaiting = source.awaiting_figures;
-    let observations = fundamental_values::active_observations(pool, id)
-        .await?
-        .into_iter()
-        .filter(|o| o.period_type == PeriodType::Quarter)
-        .map(|o| Observation {
-            period_end: o.period_end,
-            first_seen: o.first_seen_on,
-            absent_on: o.absent_fetch_on,
-        })
-        .collect::<Vec<_>>();
+    let observations = crate::db::report_announcements::observations(pool, id).await?;
     let (_, last_report) =
         report_dates::report_dates(today, latest, &annual, &observations, &source);
+    let announcements = crate::db::report_announcements::current(pool, id).await?;
+    let last_report =
+        report_dates::confirmed_last(today, last_report, &announcements, &observations);
     let panel = SourcePanel {
         symbol: link.as_ref().and_then(|s| s.definition.symbol.clone()),
         origin: link.as_ref().map(|s| s.definition.origin),

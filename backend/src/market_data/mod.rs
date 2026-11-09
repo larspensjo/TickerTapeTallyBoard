@@ -10,6 +10,7 @@ mod provider_registry;
 pub mod refresh;
 mod refresh_contract;
 mod refresh_execution;
+mod report_calendar_refresh;
 pub mod symbol_matching;
 mod symbol_search_lookup;
 mod symbol_seeding;

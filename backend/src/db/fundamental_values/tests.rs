@@ -118,7 +118,7 @@ async fn revisions_retain_first_seen_and_latest_active_symbol_wins() {
         .unwrap();
     assert_eq!(revised.input.value, dec!(11));
     assert_eq!(revised.first_seen_at, "2026-10-01T12:00:00Z");
-    let observed = active_observations(&pool, id).await.unwrap();
+    let observed = active_observations(&pool, id, None).await.unwrap();
     assert_eq!(observed[0].absent_fetch_on, None);
     assert_eq!(
         observed[1].absent_fetch_on,
@@ -161,7 +161,7 @@ async fn revisions_retain_first_seen_and_latest_active_symbol_wins() {
             .await
             .unwrap();
     assert_eq!(count, 3);
-    assert_eq!(active_observations(&pool, id).await.unwrap().len(), 2);
+    assert_eq!(active_observations(&pool, id, None).await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -192,7 +192,7 @@ async fn report_estimate_history_uses_only_narrow_active_first_observations() {
         panic!()
     };
     assert_eq!(
-        active_report_history(&pool, id).await.unwrap(),
+        report_history(&pool, id).await,
         vec![("2026-09-30".parse().unwrap(), "2026-10-03".parse().unwrap())]
     );
     write(
@@ -204,7 +204,7 @@ async fn report_estimate_history_uses_only_narrow_active_first_observations() {
         vec![value("2026-12-31", dec!(10))],
     )
     .await;
-    assert_eq!(active_report_history(&pool, id).await.unwrap().len(), 1);
+    assert_eq!(report_history(&pool, id).await.len(), 1);
     fundamentals_sources::correct(
         &pool,
         id,
@@ -214,7 +214,7 @@ async fn report_estimate_history_uses_only_narrow_active_first_observations() {
     )
     .await
     .unwrap();
-    assert!(active_report_history(&pool, id).await.unwrap().is_empty());
+    assert!(report_history(&pool, id).await.is_empty());
 }
 #[tokio::test]
 async fn wrong_company_correction_is_atomic_and_all_active_reads_exclude_old_rows() {
@@ -260,7 +260,10 @@ async fn wrong_company_correction_is_atomic_and_all_active_reads_exclude_old_row
         revision_before
     );
     assert!(active_values(&pool, id).await.unwrap().is_empty());
-    assert!(active_observations(&pool, id).await.unwrap().is_empty());
+    assert!(active_observations(&pool, id, None)
+        .await
+        .unwrap()
+        .is_empty());
     assert!(report_currencies(&pool, id).await.unwrap().is_empty());
     assert!(active_splits(&pool, id).await.unwrap().is_empty());
     assert!(corrected.last_attempt_at.is_none());
@@ -292,7 +295,7 @@ async fn wrong_company_correction_is_atomic_and_all_active_reads_exclude_old_row
         dec!(20)
     );
     assert_eq!(
-        active_observations(&pool, id).await.unwrap()[0].absent_fetch_on,
+        active_observations(&pool, id, None).await.unwrap()[0].absent_fetch_on,
         None
     );
     let history: i64 = sqlx::query_scalar(
@@ -346,4 +349,12 @@ async fn manual_link_survives_discovery_and_symbol_mismatch_is_superseded() {
         fundamentals_sources::find(&pool, id).await,
         Err(RepoError::Decode(_))
     ));
+}
+
+async fn report_history(pool: &SqlitePool, id: i64) -> Vec<(NaiveDate, NaiveDate)> {
+    let observations =
+        crate::db::report_announcements::observations(&mut *pool.acquire().await.unwrap(), id)
+            .await
+            .unwrap();
+    crate::domain::report_dates::real_report_history(&[], &observations)
 }

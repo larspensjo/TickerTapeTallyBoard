@@ -1,6 +1,8 @@
-//! App estimates and fetch timing, using dates supplied by the application clock.
+//! Report selection and refresh planning, using the application clock.
+mod announcements;
 use super::calendar::month_end;
 use super::company_figures::{Reason, SourceState};
+pub use announcements::*;
 use chrono::{Datelike, Duration, Months, NaiveDate};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +19,7 @@ pub struct FetchTiming {
     pub last_success: Option<NaiveDate>,
     pub previous_failed: bool,
     pub next_report: Option<NaiveDate>,
+    pub unresolved_announcement: bool,
     pub newer_quarter_seen_on: Option<NaiveDate>,
 }
 
@@ -28,7 +31,7 @@ pub fn fetch_decision(today: NaiveDate, timing: &FetchTiming) -> FetchDecision {
         return FetchDecision::NeverFetched;
     };
     if timing.next_report.is_some_and(|due| {
-        (0..=21).contains(&(today - due).num_days())
+        (due <= today && (timing.unresolved_announcement || (today - due).num_days() <= 21))
             && !timing.newer_quarter_seen_on.is_some_and(|seen| seen >= due)
     }) {
         return FetchDecision::Due;
@@ -82,7 +85,7 @@ impl ReportExpectation {
     }
 }
 
-/// Calendar announcement inputs can later take precedence over app estimates.
+/// Source-neutral report date selected from schedules, observations or app estimates.
 #[derive(Clone, Debug)]
 pub struct ReportDate {
     pub certainty: ReportCertainty,
@@ -282,6 +285,7 @@ mod tests {
             last_success: None,
             previous_failed: false,
             next_report: None,
+            unresolved_announcement: false,
             newer_quarter_seen_on: None,
         };
         assert_eq!(fetch_decision(today, &t), FetchDecision::NeverFetched);

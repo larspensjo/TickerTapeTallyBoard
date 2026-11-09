@@ -11,7 +11,11 @@ use tokio::sync::Notify;
 
 pub mod frankfurter;
 pub(crate) mod http;
+pub mod nasdaq_earnings_calendar;
 pub mod nasdaq_nordic;
+pub use nasdaq_earnings_calendar::{
+    EarningsCalendarProvider, FakeEarningsCalendarProvider, NasdaqEarningsCalendarClient,
+};
 pub mod yahoo;
 pub mod yahoo_fundamentals;
 pub use yahoo_fundamentals::{

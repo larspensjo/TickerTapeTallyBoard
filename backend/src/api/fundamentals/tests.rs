@@ -106,10 +106,13 @@ async fn offline_query_only_demo_endpoints_expose_every_figure_state_and_source_
         match symbol {
             "NOVA" => {
                 assert_eq!(f["pe"]["certainty"], "complete");
-                assert_eq!(f["last_report"]["certainty"], "observed");
+                assert_eq!(f["last_report"]["certainty"], "confirmed");
+                assert_eq!(f["next_report"]["certainty"], "confirmed");
                 assert!(f["fx_conversion"].is_null());
             }
             "NORD" => {
+                assert_eq!(f["next_report"]["certainty"], "confirmed");
+                assert_eq!(f["next_report"]["reasons"][0]["code"], "report_date_passed");
                 assert_eq!(f["pe"]["certainty"], "complete");
                 assert_eq!(f["fx_conversion"]["from"], "EUR");
                 assert_eq!(f["fx_conversion"]["to"], "SEK");
@@ -147,6 +150,7 @@ async fn offline_query_only_demo_endpoints_expose_every_figure_state_and_source_
                 assert_eq!(f["pe"]["reasons"][0]["code"], "no_fundamentals_source");
             }
             "HARV" => {
+                assert_eq!(f["next_report"]["basis"], "nasdaq_expected");
                 assert_eq!(f["share_basis"]["state"], "listing_unit_mismatch");
                 assert_eq!(
                     f["share_basis"]["ratio"]
@@ -611,23 +615,118 @@ async fn holdings_ratios_reuse_loaded_listing_fx_after_the_rate_table_changes() 
 }
 
 #[tokio::test]
-async fn report_days_follow_the_backend_clock_and_passed_estimates_are_retained() {
+async fn report_days_follow_the_backend_clock_and_passed_dates_keep_their_source() {
     let state = demo().await;
-    let nova = instruments::list(&state.pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|i| i.symbol == "NOVA")
-        .unwrap();
-    let uri = format!("/api/instruments/{}/fundamentals", nova.id);
-    let first = get(&state, &uri).await;
-    let due = date(first["next_report"]["date"].as_str().unwrap());
-    let later = state.with_clock(Clock::fixed(due + Duration::days(2)));
-    let second = get(&later, &uri).await;
-    assert_eq!(second["next_report"]["date"], first["next_report"]["date"]);
-    assert_eq!(second["next_report"]["days_until"], -2);
-    assert_eq!(
-        second["next_report"]["reasons"][0]["code"],
-        "estimate_passed"
-    );
+    let instruments = instruments::list(&state.pool).await.unwrap();
+    for (symbol, reason) in [
+        ("NOVA", "report_date_passed"),
+        ("HARV", "estimate_passed"),
+        ("ALBA", "estimate_passed"),
+    ] {
+        let instrument = instruments.iter().find(|i| i.symbol == symbol).unwrap();
+        let uri = format!("/api/instruments/{}/fundamentals", instrument.id);
+        let first = get(&state, &uri).await;
+        let due = date(first["next_report"]["date"].as_str().unwrap());
+        let later = state
+            .clone()
+            .with_clock(Clock::fixed(due + Duration::days(2)));
+        let second = get(&later, &uri).await;
+        assert_eq!(second["next_report"]["date"], first["next_report"]["date"]);
+        assert_eq!(
+            second["next_report"]["basis"],
+            first["next_report"]["basis"]
+        );
+        assert_eq!(second["next_report"]["days_until"], -2);
+        assert_eq!(second["next_report"]["reasons"][0]["code"], reason);
+    }
+}
+
+#[tokio::test]
+async fn current_ticker_and_wrong_company_corrections_exclude_old_next_and_last_dates() {
+    use crate::db::{provider_symbols, report_announcements as repo};
+    for wrong_company in [false, true] {
+        let state = demo().await;
+        let nova = instruments::list(&state.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|i| i.symbol == "NOVA")
+            .unwrap();
+        let id = nova.id;
+        let uri = format!("/api/instruments/{id}/fundamentals");
+        let before = get(&state, &uri).await;
+        assert_eq!(before["next_report"]["certainty"], "confirmed");
+        assert_eq!(before["last_report"]["certainty"], "confirmed");
+        if wrong_company {
+            let link = fundamentals_sources::find(&state.pool, id)
+                .await
+                .unwrap()
+                .unwrap();
+            let corrected = fundamentals_sources::correct(
+                &state.pool,
+                id,
+                Some(link.definition),
+                Some(PreviousLink::WrongCompany),
+                "2026-11-07T14:00:00Z",
+            )
+            .await
+            .unwrap();
+            // Even if the replacement uses the same symbol and has already fetched
+            // the same quarter, set-aside announcement history cannot confirm it.
+            let mut tx = state.pool.begin().await.unwrap();
+            let mut write = FetchWrite {
+                instrument_id: id,
+                expected: Some(corrected.token),
+                discovery: None,
+                verified: None,
+                values: vec![],
+                splits: vec![],
+                at: "2026-11-07T15:00:00Z".into(),
+                seen_on: state.clock.today(),
+                previous_success_on: None,
+                status: AttemptStatus::Succeeded,
+                reason: None,
+            };
+            write.values.push(FundamentalValue {
+                period_type: PeriodType::Quarter,
+                period_end: date(before["last_report"]["period_end"].as_str().unwrap()),
+                metric: Metric::Revenue,
+                value: dec!(100),
+                currency: Some("USD".into()),
+            });
+            fundamental_values::write_fetch(&mut tx, &write)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        } else {
+            provider_symbols::upsert(
+                &state.pool,
+                &provider_symbols::NewProviderSymbol {
+                    instrument_id: id,
+                    provider: MarketDataProvider::Yahoo,
+                    provider_symbol: "RIGHT".into(),
+                    asset_class: None,
+                    currency: Some("USD".into()),
+                    enabled: true,
+                    created_at: "2026-11-07T14:00:00Z".into(),
+                    updated_at: "2026-11-07T14:00:00Z".into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let after = get(&state, &uri).await;
+        assert_ne!(after["next_report"]["certainty"], "confirmed");
+        assert_ne!(after["last_report"]["certainty"], "confirmed");
+        assert!(repo::current(&state.pool, id).await.unwrap().is_empty());
+        assert_eq!(repo::list(&state.pool, id).await.unwrap().len(), 2);
+        let holdings = get(&state, "/api/holdings").await;
+        let row = holdings["holdings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["instrument"]["id"] == id)
+            .unwrap();
+        assert_eq!(row["fundamentals"]["next_report"], after["next_report"]);
+    }
 }

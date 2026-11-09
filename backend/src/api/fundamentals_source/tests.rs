@@ -246,7 +246,7 @@ async fn corrections_require_choice_and_rejection_changes_nothing() {
             8
         );
         assert_eq!(
-            fundamental_values::active_observations(&state.pool, id)
+            fundamental_values::active_observations(&state.pool, id, None)
                 .await
                 .unwrap()
                 .len(),
@@ -292,10 +292,12 @@ async fn wrong_company_sets_aside_atomically_same_company_retains_and_refresh_me
             assert!(fundamental_values::has_set_aside_values(&state.pool, id)
                 .await
                 .unwrap());
-            assert!(fundamental_values::active_observations(&state.pool, id)
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                fundamental_values::active_observations(&state.pool, id, None)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
             assert_eq!(p["source"]["awaiting_figures"], true);
             assert_eq!(p["pe"]["reasons"][0]["code"], "awaiting_figures");
             assert!(p["quarters"].as_array().unwrap().is_empty());
@@ -368,7 +370,7 @@ async fn wrong_company_sets_aside_atomically_same_company_retains_and_refresh_me
         if previous == "same_company" {
             assert_eq!(p["quarters"][0]["sales"]["value"], "100");
         }
-        let observations = fundamental_values::active_observations(&state.pool, id)
+        let observations = fundamental_values::active_observations(&state.pool, id, None)
             .await
             .unwrap();
         assert_eq!(
