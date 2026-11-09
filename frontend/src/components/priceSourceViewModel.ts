@@ -76,6 +76,12 @@ export function effectivePriceSourceRow(
   );
 }
 
+// When the only configured source is the one in use, the provider list and the
+// effective source say the same thing and share one row.
+export function priceSourcesFitOneRow(rows: PriceSourceRow[]): boolean {
+  return rows.length === 0 || (rows.length === 1 && rows[0].effective);
+}
+
 export function priceAvailabilityLabel(
   priceStatus: null,
   gain: PriceSourceGain | null,

@@ -1,4 +1,4 @@
-import { useId, useReducer } from "react";
+import { useId, useReducer, useState } from "react";
 import {
   useCorrectFundamentalsSource,
   usePreviewFundamentalsSource,
@@ -21,35 +21,50 @@ export function CompanyFiguresSource({
   canMutate: boolean;
 }) {
   const view = fundamentalsSourceView(source);
+  // The correction form is for rare fixes, so it stays folded away until asked for.
+  const [correcting, setCorrecting] = useState(false);
+  const formId = useId();
   return (
     <section
       className="asset-panel-section"
       aria-label="Company figures source"
     >
       <h3>Company figures source</h3>
-      <p>
-        <span className="number">{view.symbol}</span> · {view.origin} ·{" "}
-        {view.securityType}
-      </p>
       <dl className="data-list">
         <div className="data-row">
-          <dt>Last successful update</dt>
-          <dd className="number">{source.last_success_on ?? "Never"}</dd>
-        </div>
-        <div className="data-row">
-          <dt>Last attempt</dt>
-          <dd>
-            {view.outcome}
-            {source.last_attempt_on ? (
-              <>
-                {" · "}
-                <span className="asset-subtle number">
-                  {source.last_attempt_on}
-                </span>
-              </>
+          <dt>Symbol</dt>
+          <dd className="data-value">
+            <span>
+              <span className="number">{view.symbol}</span> · {view.origin} ·{" "}
+              {view.securityType}
+            </span>
+            {canMutate ? (
+              <button
+                className="button outline compact"
+                type="button"
+                aria-expanded={correcting}
+                aria-controls={formId}
+                onClick={() => setCorrecting((open) => !open)}
+              >
+                {correcting ? "Close" : "Change source"}
+              </button>
             ) : null}
           </dd>
         </div>
+        {view.updateRows.map((row) => (
+          <div className="data-row" key={row.label}>
+            <dt>{row.label}</dt>
+            <dd className={row.numeric ? "number" : undefined}>
+              {row.value}
+              {row.date ? (
+                <>
+                  {" · "}
+                  <span className="asset-subtle number">{row.date}</span>
+                </>
+              ) : null}
+            </dd>
+          </div>
+        ))}
       </dl>
       {view.reason ? <p className="asset-subtle">{view.reason}</p> : null}
       {view.candidates.length ? (
@@ -62,10 +77,11 @@ export function CompanyFiguresSource({
       {source.pending_update ? (
         <p role="status">Figures load on the next refresh</p>
       ) : null}
-      {canMutate ? (
+      {canMutate && correcting ? (
         <FundamentalsCorrectionForm
           key={id}
           id={id}
+          formId={formId}
           hasFigures={source.has_active_figures}
         />
       ) : null}
@@ -75,9 +91,11 @@ export function CompanyFiguresSource({
 
 export function FundamentalsCorrectionForm({
   id,
+  formId,
   hasFigures,
 }: {
   id: number;
+  formId?: string;
   hasFigures: boolean;
 }) {
   const [state, dispatch] = useReducer(
@@ -120,6 +138,7 @@ export function FundamentalsCorrectionForm({
   }
   return (
     <form
+      id={formId}
       className="fundamentals-correction"
       aria-label="Correct company figures source"
       onSubmit={(event) => {

@@ -54,6 +54,7 @@ import {
   effectivePriceSourceRow,
   type PriceSourceRow,
   priceSourceRows,
+  priceSourcesFitOneRow,
 } from "./priceSourceViewModel";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { TransactionsTable } from "./TransactionsTable";
@@ -198,7 +199,6 @@ export function AssetView() {
             query={pricesQuery}
             transactions={data.transactions}
           />
-          <AssetCompanyFigures query={fundamentalsQuery} />
           <div className="asset-two-col">
             <GainsWaterfall
               view={waterfallView(data.gain)}
@@ -230,7 +230,6 @@ export function AssetView() {
             query={pricesQuery}
             transactions={data.transactions}
           />
-          <AssetCompanyFigures query={fundamentalsQuery} />
           <AssetDataMapping
             key={instrument.id}
             instrument={instrument}
@@ -251,6 +250,7 @@ export function AssetView() {
         </>
       )}
 
+      <AssetCompanyFigures query={fundamentalsQuery} />
       <AssetTransactions
         transactions={data.transactions}
         instruments={instruments}
@@ -348,10 +348,11 @@ function AssetConvictionSection({
     save.isPending && save.variables ? save.variables.conviction : conviction;
 
   return (
-    <>
-      <div className="conviction-controls">
-        <label className="conviction-field">
-          <span className="conviction-field-label">Conviction</span>
+    <div className="asset-panel-section">
+      {/* The heading names the dropdown, so it sits on the heading line. */}
+      <div className="asset-panel-section-header">
+        <h3>Conviction</h3>
+        <div className="conviction-controls">
           <select
             className="conviction-select"
             value={shownConviction}
@@ -370,22 +371,22 @@ function AssetConvictionSection({
               </option>
             ))}
           </select>
-        </label>
-        {showReset ? (
-          <button
-            type="button"
-            className="button secondary"
-            disabled={disabled}
-            onClick={() =>
-              save.mutate({
-                instrumentId: instrument.id,
-                conviction: baseline,
-              })
-            }
-          >
-            Reset
-          </button>
-        ) : null}
+          {showReset ? (
+            <button
+              type="button"
+              className="button secondary compact"
+              disabled={disabled}
+              onClick={() =>
+                save.mutate({
+                  instrumentId: instrument.id,
+                  conviction: baseline,
+                })
+              }
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
       </div>
       {save.isError ? (
         <p className="asset-subtle down" role="alert">
@@ -393,7 +394,7 @@ function AssetConvictionSection({
         </p>
       ) : null}
       <AssetConvictionTarget target={target} />
-    </>
+    </div>
   );
 }
 
@@ -440,23 +441,25 @@ function AssetConvictionTarget({
         />
       </DataRow>
       <DataRow label="Target gap">
-        {gap.status === "available" ? (
-          <span className="data-value">
-            <span className={`number ${gapTone}`}>
-              SEK {formatGroupedNumber(gap.value)}
-            </span>{" "}
-            {gapPercent.status === "available" ? (
+        <span className="data-value">
+          {gap.status === "available" ? (
+            <>
               <span className={`number ${gapTone}`}>
-                ({formatGroupedNumber(gapPercent.value)}%)
+                SEK {formatGroupedNumber(gap.value)}
               </span>
-            ) : null}
+              {gapPercent.status === "available" ? (
+                <span className={`number ${gapTone}`}>
+                  ({formatGroupedNumber(gapPercent.value)}%)
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="asset-subtle">—</span>
+          )}
+          <span className="status-chip compact">
+            {targetStatusLabel(target.status)}
           </span>
-        ) : (
-          <span className="asset-subtle">—</span>
-        )}
-      </DataRow>
-      <DataRow label="Status">
-        <span className="status-chip">{targetStatusLabel(target.status)}</span>
+        </span>
       </DataRow>
     </dl>
   );
@@ -713,17 +716,22 @@ function AssetDataMapping({
             <DataRow label="Latest FX">{latestFxContent(gain)}</DataRow>
           </>
         ) : null}
-        <DataRow label="Provider">
-          {providerContent(priceStatus, sourceRows)}
-        </DataRow>
-        <DataRow label="Price source">
-          {priceSourceContent(effectiveSource)}
-        </DataRow>
+        {priceSourcesFitOneRow(sourceRows) ? (
+          <DataRow label="Price source">
+            {providerContent(priceStatus, sourceRows)}
+          </DataRow>
+        ) : (
+          <>
+            <DataRow label="Provider">
+              {providerContent(priceStatus, sourceRows)}
+            </DataRow>
+            <DataRow label="Price source">
+              {priceSourceContent(effectiveSource)}
+            </DataRow>
+          </>
+        )}
       </dl>
-      <div className="asset-panel-section">
-        <h3>Conviction</h3>
-        <AssetConvictionSection instrument={instrument} holding={holding} />
-      </div>
+      <AssetConvictionSection instrument={instrument} holding={holding} />
       {companySource}
     </section>
   );

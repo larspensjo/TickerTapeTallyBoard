@@ -147,24 +147,80 @@ const SOURCE_REASONS: Record<string, string> = {
   not_a_company: "Marked as not a company",
   certificate: "Certificate",
 };
+const SECURITY_TYPES: Record<string, string> = {
+  EQUITY: "Equity",
+  ETF: "ETF",
+  MUTUALFUND: "Fund",
+};
+function securityTypeLabel(type: string | null) {
+  if (!type) return "type unknown";
+  return (
+    SECURITY_TYPES[type] ??
+    `${type.charAt(0).toUpperCase()}${type.slice(1).toLowerCase()}`
+  );
+}
+export interface SourceUpdateRow {
+  label: string;
+  value: string;
+  /** The value is a date (or "Never") and uses mono type. */
+  numeric: boolean;
+  date: string | null;
+}
+// A successful attempt on the day of the last success says the same thing
+// twice, so it collapses into one "Updated" row.
+function sourceUpdateRows(
+  source: FundamentalsSource,
+  outcome: string,
+): SourceUpdateRow[] {
+  if (
+    source.last_attempt_outcome === "SUCCEEDED" &&
+    source.last_success_on !== null &&
+    source.last_success_on === source.last_attempt_on
+  ) {
+    return [
+      {
+        label: "Updated",
+        value: source.last_success_on,
+        numeric: true,
+        date: null,
+      },
+    ];
+  }
+  return [
+    {
+      label: "Last successful update",
+      value: source.last_success_on ?? "Never",
+      numeric: true,
+      date: null,
+    },
+    {
+      label: "Last attempt",
+      value: outcome,
+      numeric: false,
+      date: source.last_attempt_on,
+    },
+  ];
+}
 export function fundamentalsSourceView(source: FundamentalsSource) {
   const reason = source.last_attempt_reason;
+  const outcome =
+    source.last_attempt_outcome === "SUCCEEDED"
+      ? "Figures updated"
+      : source.last_attempt_outcome === "EMPTY"
+        ? "No figures returned"
+        : source.last_attempt_outcome === "FAILED"
+          ? "Update failed"
+          : "Not attempted yet";
   return {
     symbol:
       source.symbol ??
       (source.classification === "NOT_COMPANY"
         ? "Not a company"
         : "No symbol selected"),
-    origin: source.origin === "MANUAL" ? "Set by hand" : "Found automatically",
-    securityType: source.security_type ?? "type unknown",
-    outcome:
-      source.last_attempt_outcome === "SUCCEEDED"
-        ? "Figures updated"
-        : source.last_attempt_outcome === "EMPTY"
-          ? "No figures returned"
-          : source.last_attempt_outcome === "FAILED"
-            ? "Update failed"
-            : "Not attempted yet",
+    origin: source.origin === "MANUAL" ? "set by hand" : "automatic",
+    securityType: securityTypeLabel(source.security_type),
+    outcome,
+    updateRows: sourceUpdateRows(source, outcome),
     reason: reason
       ? (SOURCE_REASONS[reason] ?? reason.replaceAll("_", " "))
       : source.status === "AMBIGUOUS"

@@ -28,7 +28,7 @@ function response(status: number, body?: unknown) {
     text: async () => (body === undefined ? "" : JSON.stringify(body)),
   } as Response;
 }
-function source(hasFigures = true, canMutate = true) {
+function source(hasFigures = true, canMutate = true, open = canMutate) {
   const data = instrumentFundamentals();
   data.source.has_active_figures = hasFigures;
   const client = new QueryClient({
@@ -42,6 +42,8 @@ function source(hasFigures = true, canMutate = true) {
       <CompanyFiguresSource id={1} source={data.source} canMutate={canMutate} />
     </QueryClientProvider>,
   );
+  if (open)
+    fireEvent.click(screen.getByRole("button", { name: "Change source" }));
   return { fetch, invalidate };
 }
 describe("company figures panel", () => {
@@ -228,9 +230,28 @@ describe("source correction visible states", () => {
     expect(
       screen.getByRole("heading", { name: "Company figures source" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Found automatically/)).toBeInTheDocument();
-    expect(screen.getByText("Last successful update")).toBeInTheDocument();
+    expect(screen.getByText(/automatic · Equity/)).toBeInTheDocument();
+    expect(screen.getByText("Updated")).toBeInTheDocument();
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Change source" }),
+    ).not.toBeInTheDocument();
+  });
+  it("keeps the correction form folded away until asked for", () => {
+    source(true, true, false);
+    expect(
+      screen.queryByRole("textbox", { name: "Company symbol (Yahoo)" }),
+    ).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Change source" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(
+      screen.getByRole("textbox", { name: "Company symbol (Yahoo)" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      screen.queryByRole("textbox", { name: "Company symbol (Yahoo)" }),
+    ).not.toBeInTheDocument();
   });
   it("displays backend local dates instead of timestamp text", () => {
     const data = instrumentFundamentals();

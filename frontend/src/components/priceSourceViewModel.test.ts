@@ -6,6 +6,7 @@ import {
   priceAvailabilityLabel,
   priceSourceLabel,
   priceSourceRows,
+  priceSourcesFitOneRow,
 } from "./priceSourceViewModel";
 
 function makePriceStatus(
@@ -187,5 +188,29 @@ describe("priceSourceRows", () => {
     expect(effectivePriceSourceRow(priceStatus, gain)?.provider).toBe(
       "NASDAQ_NORDIC",
     );
+  });
+});
+
+describe("priceSourcesFitOneRow", () => {
+  it("shares one row when the only source is the one in use", () => {
+    expect(
+      priceSourcesFitOneRow(
+        priceSourceRows(makePriceStatus([yahooSource], "YAHOO")),
+      ),
+    ).toBe(true);
+    expect(priceSourcesFitOneRow([])).toBe(true);
+  });
+
+  it("keeps separate rows for several sources or an unused one", () => {
+    expect(
+      priceSourcesFitOneRow(
+        priceSourceRows(makePriceStatus([yahooSource, nasdaqSource], "YAHOO")),
+      ),
+    ).toBe(false);
+    expect(
+      priceSourcesFitOneRow(
+        priceSourceRows(makePriceStatus([yahooSource], null)),
+      ),
+    ).toBe(false);
   });
 });

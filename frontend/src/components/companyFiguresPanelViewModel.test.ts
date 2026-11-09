@@ -175,12 +175,53 @@ describe("company figures panel", () => {
     source.last_attempt_reason = "source_ambiguous";
     source.candidates = [{ symbol: "A.ST", name: "Company A" }];
     expect(fundamentalsSourceView(source)).toMatchObject({
-      origin: "Found automatically",
+      origin: "automatic",
       securityType: "type unknown",
       outcome: "Update failed",
       reason: "More than one company matches",
       candidates: ["A.ST — Company A"],
     });
+  });
+  it("names security types in plain words", () => {
+    const source = instrumentFundamentals().source;
+    for (const [type, label] of [
+      ["EQUITY", "Equity"],
+      ["ETF", "ETF"],
+      ["MUTUALFUND", "Fund"],
+      ["CRYPTOCURRENCY", "Cryptocurrency"],
+    ]) {
+      source.security_type = type;
+      expect(fundamentalsSourceView(source).securityType).toBe(label);
+    }
+  });
+  it("collapses a same-day successful attempt into one update row", () => {
+    const source = instrumentFundamentals().source;
+    source.last_success_on = "2026-11-09";
+    source.last_attempt_on = "2026-11-09";
+    source.last_attempt_outcome = "SUCCEEDED";
+    expect(fundamentalsSourceView(source).updateRows).toEqual([
+      { label: "Updated", value: "2026-11-09", numeric: true, date: null },
+    ]);
+  });
+  it("keeps both update rows when the last attempt did not succeed", () => {
+    const source = instrumentFundamentals().source;
+    source.last_success_on = "2026-11-01";
+    source.last_attempt_on = "2026-11-09";
+    source.last_attempt_outcome = "EMPTY";
+    expect(fundamentalsSourceView(source).updateRows).toEqual([
+      {
+        label: "Last successful update",
+        value: "2026-11-01",
+        numeric: true,
+        date: null,
+      },
+      {
+        label: "Last attempt",
+        value: "No figures returned",
+        numeric: false,
+        date: "2026-11-09",
+      },
+    ]);
   });
 });
 

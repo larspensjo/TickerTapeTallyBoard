@@ -1225,12 +1225,6 @@ tbody tr:last-child td {
   margin-bottom: var(--space-3);
 }
 
-.conviction-field {
-  display: inline-flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
 .conviction-field-label {
   font-size: 0.6875rem;
   font-weight: 600;
@@ -2264,6 +2258,20 @@ th.number-head .sort-button {
 
 .asset-panel-section .conviction-controls {
   margin-bottom: 0;
+}
+
+.asset-panel-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Buttons and chips inside a data row stay at the row's text height. */
+.data-row .button.compact,
+.asset-panel-section-header .button.compact {
+  min-height: 26px;
 }
 
 .breakdown-list,

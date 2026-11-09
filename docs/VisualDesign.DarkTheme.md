@@ -193,8 +193,8 @@ with an unresolved-report reason reads "expected <date>" and keeps its label,
 with the visible hint "figures not seen yet" instead of a days-ago count. This column
 sorts by the backend's days-until count, soonest first, with no-date rows last.
 
-**Stock-page company figures** — "How the company is doing" sits directly under
-the price chart. Four labelled values (P/E, P/S, profit margin, sales growth) use
+**Stock-page company figures** — "How the company is doing" sits directly above
+the transaction list. Four labelled values (P/E, P/S, profit margin, sales growth) use
 the Holdings certainty markers and precision. Next and last report dates include
 the backend days-away label, observation window and quarter ending where known.
 A currency-crossing conversion note names the currencies, rate and price date.
@@ -220,12 +220,19 @@ Value labels hide below a 5rem slot width and dates below 3rem; full period-end
 dates and unabridged amounts remain in every bar's accessible label and title.
 Set-aside quarters are absent from the response and charts.
 
-The Data & mapping panel includes company-figures source details and a compact
-preview-then-save correction form. Existing figures require an explicit same-
-company or wrong-company choice; there is no default radio selection. Pending
-updates say "Figures load on the next refresh" while retained figures stay
-visible. Source update and attempt dates use backend local calendar dates.
-Demo shows source details with no correction controls.
+The Data & mapping panel is kept compact. Provider and price source share one
+"Price source" row when the only configured source is the effective one. The
+conviction dropdown sits on the Conviction heading line, and the target status
+chip rides on the Target gap row. Company-figures source details show a "Symbol"
+row (symbol · automatic or set by hand · security type in plain words) and one
+"Updated" row when the last attempt succeeded on the day of the last success;
+otherwise separate last-success and last-attempt rows. The preview-then-save
+correction form stays folded behind a "Change source" button on the Symbol row.
+Existing figures require an explicit same-company or wrong-company choice; there
+is no default radio selection. Pending updates say "Figures load on the next
+refresh" while retained figures stay visible. Source update and attempt dates
+use backend local calendar dates. Demo shows source details with no correction
+controls.
 
 **Opportunities table** — the density spec above, read-only, no column-header
 sorting. The panel header carries two segmented controls: the window ("1 week",
