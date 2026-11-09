@@ -1045,10 +1045,13 @@ Builds:
   - Re-scan a day when its last scan is older than R days, or when it falls within the
     next 7 days and was last scanned before today. Also re-scan the day of every
     active, unresolved announcement, even a passed one, until it resolves.
-  - If S5 shows past days are retrievable, also backfill past dates at no more than K
-    past days per refresh, until one year is covered. Past entries become `confirmed`
-    history only if they carry the company-announced mark, and otherwise only feed the
-    `last_year_date` estimate basis as Nasdaq-expected history.
+  - ~~If S5 shows past days are retrievable, also backfill past dates at no more than K
+    past days per refresh, until one year is covered.~~ **Decided by Lars 2026-11-09:
+    no backfill.** Past days are retrievable but lose the company-announced mark (S5),
+    and the per-symbol endpoint replaces day scanning. In the weeks after a report, US
+    holdings show the app's own estimate; `last_year_date` estimates arrive from the
+    app's own resolved history after a year. Backfill can be added later without a
+    schema change, because `report_calendar_scans` already has room for past days.
   - If S5 finds a per-symbol date endpoint that is cheaper, use it instead, reading
     date fields only. Reconciliation is the same.
 - **Announcement reconciliation** (pure planning in `report_dates.rs`, writes in the
