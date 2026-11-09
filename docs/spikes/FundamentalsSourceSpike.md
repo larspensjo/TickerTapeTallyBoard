@@ -13,22 +13,22 @@ The free sources are usable for company figures computed by the app.
 - The share-basis evidence check (S7) works on the data. Yahoo's latest trailing market
   value, divided by the listing close on its date times the latest diluted average
   share count, lands within 0.895-1.181 for every 1:1 listing. Ordinary-unit share
-  counts against receipt-unit market values show up as clean ratios. It does **not**
-  meet the plan's literal expectation that TSM shows as a 5:1 mismatch: Yahoo already
-  reports TSM per US receipt. See S7 and **Findings that change plan expectations**.
+  counts against receipt-unit market values show up as clean ratios. TSM is **not**
+  a 5:1 mismatch: Yahoo already reports it per US receipt. See S7 and
+  **Accepted source constraints**.
 - Nasdaq's US earnings data **has a confirmation signal**: a scheduled session time
   (before market open or after market close) marks a company-announced date, while
   "time not supplied" dates are explicitly described as algorithmic. The per-symbol
   endpoint drops the date on the report day itself, so a missing answer must never
   supersede a stored date.
-- Under the planned rules, of the 21 current refresh targets, P/E would be complete for
-  12, unavailable as loss-making for 5, and unavailable for 3 more (share basis
-  unverified for 2, FX outside the ECB set for 1); one target is a positively
-  identified certificate (not applicable). P/S would be complete for 15 and
-  approximate for 2.
+- Under the rules as of this spike (2026-11-04), of the 21 current refresh targets,
+  P/E would be complete for 12, unavailable as loss-making for 5, and unavailable
+  for 3 more (share basis unverified for 2, FX outside the ECB set for 1); one
+  target is a positively identified certificate (not applicable). P/S would be
+  complete for 15 and approximate for 2.
 
-Three findings change expectations written into the plan; see **Findings that change
-plan expectations**.
+The accepted implications of these findings are collected under **Accepted source
+constraints**.
 
 ## Method
 
@@ -41,8 +41,8 @@ plan expectations**.
   when known), two years of daily chart closes with split events, and, for suffix-free
   symbols, the Nasdaq per-symbol earnings-date endpoint. It also scanned 35 weekdays of
   the Nasdaq US calendar (2026-10-19 to 2026-12-04).
-- Ratios were computed by hand from the captured responses with the planned rules, FX
-  from Frankfurter's 2026-11-04 reference rates (TWD, which the ECB does not publish,
+- Ratios were computed by hand from the captured responses with the company-figure
+  rules, FX from Frankfurter's 2026-11-04 reference rates (TWD, which the ECB does not publish,
   from Yahoo's `TWDSEK=X` chart for reference only), and compared with Yahoo's own ratio
   series only as a cross-check.
 - Fixtures were recorded separately with `curl` using the reduced request described
@@ -123,7 +123,7 @@ common-stockholder measure for EPS derivation, the consistency check and profit 
   quarterly types are the same measure, when the annual period ends on a stored slot
   and its other three quarters are present.
 - Annual EPS differed from the sum of quarterly EPS (MSFT 17.95 versus 17.96; another
-  holding -1.2%). This confirms the plan's rule that EPS is never subtracted.
+  holding -1.2%). This confirms that EPS cannot be reconstructed by subtraction.
 - Trailing series are Yahoo's own TTM values at quarter ends and are used only as
   cross-checks.
 
@@ -167,13 +167,13 @@ was not tested; the Nasdaq client should send it.
   85% of next-day rows and about 5-10% of rows four weeks out, which fits companies
   announcing two to four weeks ahead. Algorithmic dates appeared up to about six weeks
   ahead.
-- **Confirmation signal (proposed).** A date is `confirmed` when the per-symbol text
-  uses the *company-announced* form (equivalently, a calendar row with a session time).
+- **Confirmation signal.** A date is `confirmed` when the per-symbol text
+  uses the *company-announced* form (or a future calendar row with a session time
+  outside the results layout).
   An *algorithmic* date is `nasdaq_expected`. Neither the asterisk nor any field says
   "confirmed" (the asterisk also appears in the algorithmic `announcement` field), so
   this rests on Nasdaq's own wording of the algorithmic form and the timing pattern.
-  The human check against investor-relations pages, planned for the US report-date
-  work, verifies it.
+  A human check against investor-relations pages remains recommended.
 - **A "none" answer never supersedes a stored date.** Only a different dated answer
   (another date or form) or a fresh calendar scan of that day without the entry
   counts as a move or withdrawal. Otherwise the report-day due fetch would discard the
@@ -181,15 +181,26 @@ was not tested; the Nasdaq client should send it.
 - **Past days remain retrievable, but the mark does not survive.** Once a day has
   passed, its rows switch to a results layout (`eps`, `surprise`; no `lastYearRptDt`),
   and most report `time-not-supplied`. The app must therefore record the mark at
-  scheduling time, as the plan requires. Backfilled past days can only feed
-  `nasdaq_expected` history.
+  scheduling time. Past calendar days are not backfilled
+  (implemented behaviour, 2026-11-09). Report-day, past-day and results-layout
+  sightings only check presence and fill a missing fiscal quarter; they preserve
+  the stored certainty kind. In the weeks after a report, the app uses
+  its own estimate when no unresolved Nasdaq date remains. Year-ago estimates use
+  its own resolved company-announced reports or narrow observed report windows,
+  never past-calendar dates.
 - Movement between scans (postponement or withdrawal) could not be observed in a
-  one-day spike. The reconciliation rules stay as planned.
+  one-day spike. Dated replacements and successful absence checks provide the
+  reconciliation evidence; a missing or failed symbol answer retains stored dates.
 - **Cost.** A calendar day takes about 2 s (up to 612 rows). The 25 weekdays in a
   five-week horizon cost about 50 s. The per-symbol endpoint costs about 2 s per US
-  target, and there are 19 US targets. **Use the per-symbol endpoint**, queried only
-  for US targets that need a date, as the plan's alternative allows. The response
-  contains analyst figures; only the date, session, fiscal quarter and form are parsed.
+  target, and there are 19 US targets. The app uses the **per-symbol endpoint**
+  (implemented behaviour, 2026-11-09), with at most one lookup per local day when no
+  unresolved date exists, one is within seven days or has passed, or the last
+  successful lookup is over three days old.
+  Confirmed dates are checked for moves too. Calendar requests only check stored
+  unresolved dates after a missing or unknown symbol answer or once their day arrives;
+  there is no horizon scan. The response contains analyst figures; only the date,
+  session, fiscal quarter and form are parsed.
 - Nasdaq lags from quarter end to report date in the scanned window: past reports had a
   median of 29 days (p90 35); upcoming company-announced dates 37; upcoming algorithmic
   dates 43. The scan began 19 days after the September quarter end, so the early tail
@@ -205,7 +216,7 @@ currency (TSM in TWD).
 Frankfurter's (ECB) currency list on 2026-11-04 is: AUD, BRL, CAD, CHF, CNY, CZK, DKK,
 EUR, GBP, HKD, HUF, IDR, ILS, INR, ISK, JPY, KRW, MXN, MYR, NOK, NZD, PHP, PLN, RON,
 SEK, SGD, THB, TRY, USD, ZAR. TWD is outside it, so TSM's P/E and P/S end as
-`fx_unavailable` under the plan's rule, while its margin and growth still show.
+`fx_unavailable` when conversion is required, while its margin and growth still show.
 
 ## S7 — Share basis (blocking criterion: evidence source found; TSM reinterpretation accepted by Lars)
 
@@ -216,9 +227,9 @@ currency of the queried symbol in every case where one was given. 12 of 48 lates
 entries had a null `currencyCode`, and a few earlier entries did too (for example
 ORLY's and ASML.AS's 2024-06-10). Every non-null entry equalled the listing currency.
 
-**Why it is independent of the figures it checks.** The plan warns that price cancels
-out of any check built only from price, EPS, net income and shares. Yahoo's market
-value is a company-level value, not the listing's price times Yahoo's diluted count:
+**Why it is independent of the figures it checks.** Price cancels out of any check
+built only from price, EPS, net income and shares. Yahoo's market value is a
+company-level value, not the listing's price times Yahoo's diluted count:
 
 - Volvo A and Volvo B carry the identical value (628,600,779,821 SEK) although their
   prices differ.
@@ -324,7 +335,7 @@ GOOGL and GOOG likewise (15.3 and 15.2).
   secondary German or Mexican listings, or only the London primary listing. One ETF
   ISIN returned another listing of the same ETF.
 - No ambiguous or classification-unknown results occurred.
-- Recommended order (refines plan step 1):
+- Discovery order:
   1. If an enabled Yahoo price mapping exists, verify that symbol directly with the
      timeseries call, classifying it by the chart `instrumentType`.
   2. Search only when there is no mapping or that check fails: by ISIN first, then by
@@ -339,7 +350,7 @@ GOOGL and GOOG likewise (15.3 and 15.2).
 
 Yahoo normalises 52/53-week fiscal calendars to month-end `asOfDate`s. For example, a
 late-January fiscal year end appears as 2026-01-31. Adjacent quarters were 89-92 days
-apart, and a whole missing quarter showed as 184 days (two missing as 274). The plan's
+apart, and a whole missing quarter showed as 184 days (two missing as 274). The
 80-100 day adjacency and the ~91-day multiple hold.
 
 **The expected next period end is the latest month-end plus three months.**
@@ -364,8 +375,8 @@ at 0.3 s spacing.
   19 Nasdaq per-symbol calls for US report dates adds about 45 s.
 - **Typical refresh:** only due instruments, usually a handful, a few seconds. A weekly
   backstop day refetches all 21 (about 10 s). Sequential Yahoo fetching is acceptable
-  (under the plan's 15 s threshold). Nasdaq calls should use bounded concurrency
-  (about 4) or be limited to instruments needing a date.
+  (under the 15 s latency threshold). Nasdaq lookups use bounded concurrency of
+  four and the due rules in S5 (implemented behaviour, 2026-11-09).
 
 ## S12 — Terms
 
@@ -406,7 +417,9 @@ only.
   Among positive-EPS holdings the per-quarter form's largest gap was 2.3% (EPS in cents
   near zero). Tolerances: under 5% no effect; 5-20% `figures_disagree`; over 20%
   `figures_inconsistent`. Allow an absolute 0.02 per-share rounding before applying the
-  percentage.
+  percentage. The denominator is the sum of the absolute derived per-quarter EPS
+  values, so profit and loss quarters that cancel do not inflate disagreement
+  (2026-11-08 decision-log refinement).
 - Implausible bounds: P/E below 1 or P/S below 0.05 never occurred; keep them.
 
 **Human check recommended.** Lars spot-checks the P/E and P/S of three or four of the
@@ -425,27 +438,22 @@ price move since the intraday fixture price:
 
 EVO's P/S shows no sign of the roughly 11× currency error.
 
-## Findings that change plan expectations
+## Accepted source constraints
 
 1. **TSM is not a unit-mismatch case.** Yahoo already reports its EPS and diluted shares
    per US receipt.
    - With the EPS-basis share series it is `established`, and in the app it ends as
      `fx_unavailable` (TWD) instead.
-   - The planned "TSM ends as `listing_unit_mismatch` with ratio 5" check, its test,
-     and the demo share-basis case need a constructed mismatch: a receipt-unit market
-     value against ordinary-unit diluted shares, as the ordinary-share series shows.
-   - This misses an acceptance expectation of the share-basis gate. Lars accepted the
-     reinterpretation on 2026-11-04: the share-basis rule stands unchanged, and the
-     mismatch branch is tested with constructed data.
+   - Tests and the demo use a constructed mismatch: a receipt-unit market value
+     against ordinary-unit diluted shares, as the ordinary-share series shows.
+   - Lars accepted this interpretation on 2026-11-04: the share-basis rule stands
+     unchanged, and the mismatch branch is tested with constructed data.
 2. **Per-share history is restated after splits.** This adds the S7 exclusion rule for
-   pre-split per-share values (cheap to change).
+   pre-split per-share values.
 3. **Discovery verifies an existing Yahoo price mapping before searching.** ISIN search
-   misses some large US listings. Use the S9 order (cheap to change).
+   misses some large US listings. Use the S9 order.
 4. **The per-symbol Nasdaq endpoint goes silent on report day.** A "none" answer must
    not supersede a stored date (S5).
-
-None of these reverses a decision listed in the plan. Item 1 changes an expected test
-outcome of the share-basis rule, not the rule itself.
 
 ## Parameters table
 
@@ -458,7 +466,7 @@ outcome of the share-basis rule, not the rule itself.
 | S3 | Exact subtraction | revenue, and the chosen net income measure where its annual type is the same measure; annual period ending on a stored slot with the other three quarters present; never EPS |
 | S3 | Trailing series | cross-check only |
 | S5 | US date source | Nasdaq per-symbol `earnings-date`; calendar only as fallback |
-| S5 | Confirmation signal | company-announced text form, or calendar session time present |
+| S5 | Confirmation signal | company-announced text form, or future non-results calendar row with session time; report-day, past-day and results rows preserve the stored kind |
 | S5 | Supersession | a per-symbol "none" never supersedes a stored date; only a different dated answer or a fresh calendar scan of that day without the entry |
 | S5 | Default report lag | 30 days; fiscal-year-end quarter 45 days (assumption, refined by each instrument's own history) |
 | S6 | ECB currency constant | AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR |
@@ -472,7 +480,7 @@ outcome of the share-basis rule, not the rule itself.
 | S8 | Nasdaq non-share classes | `TRACKER_CERTIFICATES` |
 | S10 | Grid | adjacency 80-100 days; missing quarters = round(gap ÷ 91.3) − 1; next period end = latest month-end + 3 months |
 | S11 | Fetching | sequential Yahoo; Nasdaq bounded concurrency about 4 |
-| S13 | Consistency | per-quarter form; 0.02 absolute allowance; under 5% none, 5-20% approximate, over 20% unavailable |
+| S13 | Consistency | per-quarter form; 0.02 absolute allowance; scale by the sum of absolute derived quarterly EPS; under 5% none, 5-20% approximate, over 20% unavailable |
 | S13 | Implausible bounds | P/E < 1, P/S < 0.05 |
 
 ## Fixtures
