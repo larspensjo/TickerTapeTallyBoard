@@ -58,6 +58,10 @@ investigation, implementation, and verification; explain observable outcomes.
   stays the default for backend-only work.
 - For frontend changes, run relevant tests, `npm run check`, and `npm run fmt`
   from `frontend/`. The check covers TypeScript and Biome lint.
+- When a change touches styles or how certainty states render, also run
+  `npm run test:browser` from `frontend/`. It checks computed colours in the
+  installed Chrome (no Playwright browser download). Run it from Claude, not
+  the Codex sandbox, which cannot launch a browser.
 - When launching npm through PowerShell `Start-Process`, use `npm.cmd` explicitly;
   bare `npm` can resolve to a script that opens in Notepad.
 - Add practical regression coverage for behavior fixes. Prefer reducer, selector,
