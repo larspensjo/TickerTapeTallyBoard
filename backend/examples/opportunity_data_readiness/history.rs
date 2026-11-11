@@ -205,7 +205,8 @@ pub async fn measure_history(
     {
         table.add("source_changes");
     }
-    if !unusual_short && !gap && !split_blocks {
+    if !unusual_short && lookback_series::internal_history_gaps(&dates).is_empty() && !split_blocks
+    {
         table.add("unusual_drop_history_ready");
     }
     if !range_short && !gap && !split_blocks {

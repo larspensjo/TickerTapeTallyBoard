@@ -457,13 +457,40 @@ async fn single_source_history_thresholds_do_not_borrow_other_currency_or_source
     .await
     .unwrap();
     let today = d("2026-11-11");
-    for count in [119, 120, 199, 200] {
+    for (count, leading_gap, internal_gap) in [
+        (119, true, false),
+        (120, true, false),
+        (199, false, false),
+        (200, false, false),
+        (200, true, false),
+        (220, true, false),
+        (260, false, true),
+    ] {
         sqlx::query("DELETE FROM prices")
             .execute(&pool)
             .await
             .unwrap();
-        for index in 0..count {
-            let date = today - Duration::days(365) + Duration::days(index * 365 / (count - 1));
+        let mut dates = if leading_gap {
+            use chrono::{Datelike, Weekday};
+            let mut dates = (0..365)
+                .map(|offset| today - Duration::days(offset))
+                .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+                .take(count as usize)
+                .collect::<Vec<_>>();
+            dates.reverse();
+            dates
+        } else {
+            (0..count)
+                .map(|index| {
+                    today - Duration::days(365) + Duration::days(index * 365 / (count - 1))
+                })
+                .collect()
+        };
+        if internal_gap {
+            dates.retain(|date| *date < d("2026-03-01") || *date > d("2026-03-16"));
+        }
+        let actual_count = dates.len();
+        for date in dates {
             prices::upsert(
                 &pool,
                 &prices::NewPrice {
@@ -507,14 +534,25 @@ async fn single_source_history_thresholds_do_not_borrow_other_currency_or_source
         .unwrap();
         assert_eq!(
             table.counts["unusual_drop_history_ready"],
-            usize::from(count >= 120)
+            usize::from(actual_count >= 120 && !internal_gap)
         );
         assert_eq!(
             table.counts["range_history_ready"],
-            usize::from(count >= 200)
+            usize::from(actual_count >= 200 && !leading_gap && !internal_gap)
         );
-        assert_eq!(table.counts["top_up_needed"], usize::from(count < 200));
-        if count == 200 {
+        assert_eq!(
+            table.counts["gap_over_limit"],
+            usize::from(leading_gap || internal_gap)
+        );
+        assert_eq!(
+            table.counts["at_least_200_with_gap"],
+            usize::from(actual_count >= 200 && (leading_gap || internal_gap))
+        );
+        assert_eq!(
+            table.counts["top_up_needed"],
+            usize::from(actual_count < 200 || leading_gap || internal_gap)
+        );
+        if count == 200 && !leading_gap && !internal_gap {
             // A differently denominated close is missing, even though it has the same provider.
             sqlx::query(
                 "UPDATE prices SET currency='USD' WHERE date=(SELECT MIN(date) FROM prices)",

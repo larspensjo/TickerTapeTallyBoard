@@ -110,6 +110,13 @@ pub fn history_gaps(start: NaiveDate, dates: &[NaiveDate]) -> Vec<NaiveDate> {
     gaps
 }
 
+/// Unusual-drop history needs continuity between closes, without a year-start boundary.
+pub fn internal_history_gaps(dates: &[NaiveDate]) -> Vec<NaiveDate> {
+    dates
+        .first()
+        .map_or_else(Vec::new, |first| history_gaps(*first, dates))
+}
+
 /// UTC fetch date must be strictly after every effective split date. Empty history
 /// is handled by the short-history rule, as in the readiness measurement.
 pub fn blocked_splits(
@@ -141,14 +148,29 @@ pub fn short_history_reason(closes: usize, required: usize) -> Option<EvidenceRe
 
 impl LookbackSeries {
     pub fn reasons(&self, minimum_closes: usize) -> Vec<EvidenceReason> {
+        self.history_reasons(minimum_closes, true)
+    }
+
+    pub(super) fn unusual_drop_reasons(&self) -> Vec<EvidenceReason> {
+        self.history_reasons(UNUSUAL_MIN_CLOSES, false)
+    }
+
+    fn history_reasons(&self, minimum_closes: usize, full_year: bool) -> Vec<EvidenceReason> {
         let mut reasons = Vec::new();
         if self.provider.is_none() || self.closes.last().map(|close| close.date) != self.latest_date
         {
             reasons.push(EvidenceReason::MissingLatestClose);
         }
+        // A short range is reported as too short; year-start coverage becomes
+        // meaningful only once its minimum number of closes is available.
+        let dates = self.dates();
+        let gaps = if full_year && self.closes.len() >= minimum_closes {
+            history_gaps(self.start, &dates)
+        } else {
+            internal_history_gaps(&dates)
+        };
         reasons.extend(
-            history_gaps(self.start, &self.dates())
-                .into_iter()
+            gaps.into_iter()
                 .map(|start| EvidenceReason::PriceHistoryGap { start }),
         );
         reasons.extend(

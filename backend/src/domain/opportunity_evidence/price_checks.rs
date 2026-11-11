@@ -33,7 +33,7 @@ pub fn unusual_drop(
 ) -> UnusualDropOutcome {
     let mut outcome = UnusualDropOutcome {
         state: YesNoUnknown::Unknown,
-        reasons: series.reasons(UNUSUAL_MIN_CLOSES),
+        reasons: series.unusual_drop_reasons(),
         change_percent,
         adjusted_change_percent: dividend_added_back_change,
         usual_move_percent: None,

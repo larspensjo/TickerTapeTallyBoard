@@ -44,40 +44,34 @@ fn unusual(series: &LookbackSeries) -> UnusualDropOutcome {
     )
 }
 
+fn dense_rows(count: usize) -> Vec<HistoryClose> {
+    let today = d("2026-11-11");
+    let mut dates = (0..365)
+        .map(|offset| today - Duration::days(offset))
+        .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+        .take(count)
+        .collect::<Vec<_>>();
+    dates.reverse();
+    dates
+        .into_iter()
+        .enumerate()
+        .map(|(index, date)| close(date, if index == 10 { dec!(101) } else { dec!(100) }))
+        .collect()
+}
+
 #[test]
-fn minimum_history_boundaries_are_shared_with_top_up_classification() {
-    for count in [119, 120, 199, 200] {
-        let mut data = rows(count);
-        data[10].close = dec!(101);
-        let series = prepare(&data, &[]);
+fn dense_119_and_120_closes_only_unlock_unusual_drop() {
+    for count in [119, 120] {
+        let series = prepare(&dense_rows(count), &[]);
         assert_eq!(
             unusual(&series).state,
-            if count >= 120 {
+            if count == 120 {
                 YesNoUnknown::Yes
             } else {
                 YesNoUnknown::Unknown
             }
         );
-        assert_eq!(
-            off_high(&series).state,
-            if count >= 200 {
-                OffHighState::NotDeep
-            } else {
-                OffHighState::Unknown
-            }
-        );
-        assert_eq!(
-            series.top_up_needs(),
-            if count < 200 {
-                vec![HistoryTopUpNeed::Short {
-                    closes: count,
-                    required: 200,
-                }]
-            } else {
-                vec![]
-            }
-        );
-        if count < 120 {
+        if count == 119 {
             assert_eq!(
                 unusual(&series).reasons,
                 vec![EvidenceReason::PriceHistoryTooShort {
@@ -85,16 +79,79 @@ fn minimum_history_boundaries_are_shared_with_top_up_classification() {
                     required: 120
                 }]
             );
+        } else {
+            assert!(unusual(&series).reasons.is_empty());
         }
-        if count < 200 {
-            assert_eq!(
-                off_high(&series).reasons,
+        assert_eq!(off_high(&series).state, OffHighState::Unknown);
+        assert_eq!(
+            off_high(&series).reasons,
+            vec![EvidenceReason::PriceHistoryTooShort {
+                closes: count,
+                required: 200
+            }]
+        );
+        assert!(series.top_up_needs().contains(&HistoryTopUpNeed::Short {
+            closes: count,
+            required: 200
+        }));
+        assert!(series.top_up_needs().contains(&HistoryTopUpNeed::Gap {
+            start: series.start
+        }));
+    }
+}
+
+#[test]
+fn range_requires_200_closes_and_full_year_coverage() {
+    for count in [199, 200] {
+        let series = prepare(&rows(count), &[]);
+        assert_eq!(
+            off_high(&series).state,
+            if count == 200 {
+                OffHighState::NotDeep
+            } else {
+                OffHighState::Unknown
+            }
+        );
+        assert_eq!(
+            off_high(&series).reasons,
+            if count == 200 {
+                vec![]
+            } else {
                 vec![EvidenceReason::PriceHistoryTooShort {
                     closes: count,
-                    required: 200
+                    required: 200,
                 }]
-            );
-        }
+            }
+        );
+        assert_eq!(
+            series.top_up_needs(),
+            if count == 200 {
+                vec![]
+            } else {
+                vec![HistoryTopUpNeed::Short {
+                    closes: count,
+                    required: 200,
+                }]
+            }
+        );
+    }
+    for count in [200, 220] {
+        let series = prepare(&dense_rows(count), &[]);
+        assert_eq!(unusual(&series).state, YesNoUnknown::Yes);
+        assert!(unusual(&series).reasons.is_empty());
+        assert_eq!(off_high(&series).state, OffHighState::Unknown);
+        assert_eq!(
+            off_high(&series).reasons,
+            vec![EvidenceReason::PriceHistoryGap {
+                start: series.start
+            }]
+        );
+        assert_eq!(
+            series.top_up_needs(),
+            vec![HistoryTopUpNeed::Gap {
+                start: series.start
+            }]
+        );
     }
 }
 
@@ -111,13 +168,15 @@ fn five_missing_weekdays_pass_six_fail_including_at_the_year_start() {
         assert_eq!(history_gaps(left, &[right]).is_empty(), pass);
         assert_eq!(history_gaps(left, &[left, right]).is_empty(), pass);
     }
-    let mut data = rows(200);
+    let mut data = rows(260);
+    data[10].close = dec!(101);
     data.retain(|close| close.date >= d("2025-11-24"));
     let series = prepare(&data, &[]);
     let reason = EvidenceReason::PriceHistoryGap {
         start: d("2025-11-11"),
     };
-    assert!(unusual(&series).reasons.contains(&reason));
+    assert_eq!(unusual(&series).state, YesNoUnknown::Yes);
+    assert!(unusual(&series).reasons.is_empty());
     assert!(off_high(&series).reasons.contains(&reason));
     assert!(series.top_up_needs().contains(&HistoryTopUpNeed::Gap {
         start: d("2025-11-11")
@@ -239,7 +298,10 @@ fn source_changes_and_wrong_currency_are_missing_never_borrowed() {
             series.excluded_source_closes,
             if wrong_currency { 0 } else { 50 }
         );
-        assert_eq!(unusual(&series).state, YesNoUnknown::Unknown);
+        assert!(!unusual(&series)
+            .reasons
+            .iter()
+            .any(|reason| matches!(reason, EvidenceReason::PriceHistoryGap { .. })));
         assert_eq!(off_high(&series).state, OffHighState::Unknown);
         assert!(series
             .reasons(200)
