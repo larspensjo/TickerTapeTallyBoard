@@ -2,9 +2,11 @@
 
 ## Data readiness
 
-Status: **NOT MEASURED ON A PRIVATE LEDGER**. Every result cell below is a
-placeholder for the session lead. Demo output verifies execution only and must not
-be substituted for private-ledger findings. No report rule has been selected.
+Status: **measured on 2026-11-11** on a scratch copy of the newest launch backup
+snapshot, deleted afterwards. The measurement date was the snapshot's last completed
+refresh, one day before the run. The evaluation was complete: no row failed. The
+relaxed "no report" rule is selected; whether a fifth verdict is added is an open
+owner decision (see the rule-selection finding).
 
 ### Safe execution
 
@@ -88,18 +90,18 @@ private, pure measurement helpers beside the example.
 
 | Measurement | Method and denominator | Interpretation after measurement |
 |---|---|---|
-| R1 classification | Count company (`Equity` or figures-bearing classification), fund/ETF, certificate, other positively identified non-company, and unknown/no-source rows. Preserve the application's certificate mapping override. Source availability remains visible in later reason counts. Denominator: held rows. | PENDING — establish the company and non-company evidence populations. |
-| R1 listing market | Enabled Yahoo mapping first: suffix maps to its listing market; no suffix means US. Otherwise use Nasdaq Nordic mapping currency, then instrument currency. EUR from a Nordic mapping maps to Helsinki; instrument EUR alone maps to other Europe. Unknown suffixes remain other/unknown. Never use the broker/exchange tag. | PENDING — establish the held listing markets. |
-| R2 last report | Companies, separately for US and non-US listing markets. Confirmed requires a resolved company-announced schedule. Otherwise use the latest quarter's full observation interval: at most seven days, wider, first fetch without baseline, other missing absence baseline, or unavailable. `first_fetch_without_baseline` means the latest quarter has no `absent_on` and its `first_seen` equals the instrument's earliest active observation (quarterly or annual) `first_seen`; the other no-baseline cases remain `figures_without_absence_baseline`. A wide observation remains an interval even though the application cannot use its midpoint as report history. | PENDING — assess report-history certainty and regional differences. |
-| R3 report in period | All held company rows, independently for 7d, 14d and 30d, each under strict and relaxed absence rules. Widen the period start by seven calendar days. A confirmed report before today, wholly contained observed interval, or passed company-announced/Nasdaq-expected schedule without new figures yields yes. A partly overlapping interval, first-seen bound without baseline inside the window, or passed app estimate yields unknown. A date today is not a past scheduled report. No requires a latest-report upper bound before the widened start and either an unended next quarter or a successful figures check today/yesterday. Relaxed additionally permits the app's own LastYearDate estimate at least fourteen days ahead. Split no-baseline unknowns by the same first-fetch definition as R2. Print yes/no/unknown, unknown reasons, and answered (yes + no) counts and shares. For 30d under each rule print answered shares twice: all held company rows, and that population excluding rows whose unknown reason is `first_fetch_without_baseline`; suppress each share independently below five denominator rows. | PENDING — report both bases before the session lead settles which real-number basis decides the two-thirds strict answered threshold and the relaxed more-than-half-unknown trigger. This document makes neither decision. |
-| R4 next report and fetch age | Held companies: selected next basis (company-announced, Nasdaq expected, report-history estimate, typical-gap estimate, unavailable); age of last successful figures fetch in the application's local calendar: 0–1, 2–7, over 7 days, never successful. A future timestamp is counted separately. | PENDING — distinguish missing history from stale checks. |
-| R5 business | Held companies: existing trailing margin and latest-quarter year-on-year sales growth plus latest/year-ago diluted EPS. Any missing sub-test, source blocker, currency change, too-old quarter, newer-report marker, or passed next expected report makes the result unknown. A sales decline or EPS below the prior EPS minus 10% of its magnitude (including profit to loss) is weakening; otherwise positive margin is intact, non-positive margin is loss-making only. Other approximations remain usable. | PENDING — loss-making only is distinct from weakening and intact. Unknown reasons can overlap. |
-| R5 EPS consistency | Cross-check only the compared two quarters. Sum reported EPS and income/share-derived EPS, subtract a single 0.02 rounding allowance from the absolute aggregate gap, divide by the sum of the absolute derived quarter values. At least 5% through 20% is approximate; over 20% makes business unknown. Missing income or positive diluted shares means not cross-checked, with reported EPS still usable. Existing derived-EPS approximation is retained on the grid. A zero derived scale follows the current company-figures evaluation (no disagreement downgrade). | PENDING — size the additional approximation and unknown buckets independently of P/E availability. |
-| R6 history | Held rows, trailing 365 calendar days, only the latest close's source and instrument currency. Count ≥200 closes without a gap, ≥200 with a gap, 120–199, under 120; also count >5 missing weekdays between closes and between look-back start and first close. Count ledger/provider splits, blocked split history, currency exclusions and changes in the effective enabled source. Yahoo closes must all have been fetched on a UTC date strictly after each split's effective date; Nordic history across a split is blocked. Unusual-drop history needs 120 closes; range history needs 200 with year-start coverage; both reject gaps and blocked splits. | PENDING — size history top-up demand. Readiness buckets overlap with gap/split/source counters. |
-| R6 top-up effect | Count rows needing top-up (under 200 closes, gap, or blocked split), those with no mapping, Nasdaq Nordic series across a split that a top-up cannot repair even when a Yahoo mapping exists, and other-source split cases, and those a top-up would repair **if the provider supplies a full valid year**. Repairability follows the latest close's series provider and requires an enabled mapping for that provider. This last count is a conditional upper bound, not verified provider availability: a read-only inventory cannot establish an IPO's missing past or a provider's response without fetching it. | PENDING — report conditional repairability and retain this limitation; do not claim a guaranteed repaired count. |
-| R7 dividend source | Held rows by actual latest pricing source: Yahoo-priced, Nasdaq-only, Nasdaq-priced with an enabled Yahoo mapping, other source (including manual and Twelve Data), no latest price. Yahoo capability is not evidence of captured dividend coverage; events and coverage are not yet stored. | PENDING — size potential dividend knowability. |
-| R8 change | Reuse `recent_price_change`, the effective latest/start closes and ledger split dates exactly as Opportunities does, for each window. Count available/unavailable; with six available held rows, every such row has at least five other rows and can use a median reference. No median value is printed. | PENDING — establish each window's usable peer population. |
-| R9 calibration sample | Historical buys up to the measurement date, including now-closed holdings: domain-derived position immediately before each `(trade_date, id)` buy determines buy-more status. Count by calendar year and in total, with buys as the share denominator. For instruments ever bought by that date, count stored provider closes up to that date whose `fetched_at` UTC date is later than the price date. Includes all stored sources so later replay can apply its own eligibility filters; excludes watchlist-only instruments. | PENDING — estimate sample size only; neither final-close share nor buy-more count establishes calibration sufficiency. |
+| R1 classification | Count company (`Equity` or figures-bearing classification), fund/ETF, certificate, other positively identified non-company, and unknown/no-source rows. Preserve the application's certificate mapping override. Source availability remains visible in later reason counts. Denominator: held rows. | 20 of 21 held rows are companies and one is a certificate. No fund, ETF or unknown row is held, so the company checks apply to nearly every row. |
+| R1 listing market | Enabled Yahoo mapping first: suffix maps to its listing market; no suffix means US. Otherwise use Nasdaq Nordic mapping currency, then instrument currency. EUR from a Nordic mapping maps to Helsinki; instrument EUR alone maps to other Europe. Unknown suffixes remain other/unknown. Never use the broker/exchange tag. | 19 rows are US-listed; Stockholm and the Netherlands have one row each. A market index matters first for the US. |
+| R2 last report | Companies, separately for US and non-US listing markets. Confirmed requires a resolved company-announced schedule. Otherwise use the latest quarter's full observation interval: at most seven days, wider, first fetch without baseline, other missing absence baseline, or unavailable. `first_fetch_without_baseline` means the latest quarter has no `absent_on` and its `first_seen` equals the instrument's earliest active observation (quarterly or annual) `first_seen`; the other no-baseline cases remain `figures_without_absence_baseline`. A wide observation remains an interval even though the application cannot use its midpoint as report history. | No last report is confirmed. 18 of 20 companies have only the first fetch's upper bound; two have an observed window of at most seven days. There are too few non-US rows to compare regions. |
+| R3 report in period | All held company rows, independently for 7d, 14d and 30d, each under strict and relaxed absence rules. Widen the period start by seven calendar days. A confirmed report before today, wholly contained observed interval, or passed company-announced/Nasdaq-expected schedule without new figures yields yes. A partly overlapping interval, first-seen bound without baseline inside the window, or passed app estimate yields unknown. A date today is not a past scheduled report. No requires a latest-report upper bound before the widened start and either an unended next quarter or a successful figures check today/yesterday. Relaxed additionally permits the app's own LastYearDate estimate at least fourteen days ahead. Split no-baseline unknowns by the same first-fetch definition as R2. Print yes/no/unknown, unknown reasons, and answered (yes + no) counts and shares. For 30d under each rule print answered shares twice: all held company rows, and that population excluding rows whose unknown reason is `first_fetch_without_baseline`; suppress each share independently below five denominator rows. | Both rules answer 2 of 20 companies in every window, both with yes; no row gets a no. 16 of the 18 unknowns are the start-up effect described below. See the rule-selection finding. |
+| R4 next report and fetch age | Held companies: selected next basis (company-announced, Nasdaq expected, report-history estimate, typical-gap estimate, unavailable); age of last successful figures fetch in the application's local calendar: 0–1, 2–7, over 7 days, never successful. A future timestamp is counted separately. | 15 of 20 next-report dates are typical-gap estimates and none rests on report history, so the relaxed rule cannot yet add an answer. 14 of 20 figures checks are 2–7 days old, so the strict rule's fresh-check condition holds for a minority of rows on a given day. |
+| R5 business | Held companies: existing trailing margin and latest-quarter year-on-year sales growth plus latest/year-ago diluted EPS. Any missing sub-test, source blocker, currency change, too-old quarter, newer-report marker, or passed next expected report makes the result unknown. A sales decline or EPS below the prior EPS minus 10% of its magnitude (including profit to loss) is weakening; otherwise positive margin is intact, non-positive margin is loss-making only. Other approximations remain usable. | 16 of 20 companies get a business result: 10 intact, 5 weakening, 1 loss-making only. 4 are unknown; their reasons can overlap. |
+| R5 EPS consistency | Cross-check only the compared two quarters. Sum reported EPS and income/share-derived EPS, subtract a single 0.02 rounding allowance from the absolute aggregate gap, divide by the sum of the absolute derived quarter values. At least 5% through 20% is approximate; over 20% makes business unknown. Missing income or positive diluted shares means not cross-checked, with reported EPS still usable. Existing derived-EPS approximation is retained on the grid. A zero derived scale follows the current company-figures evaluation (no disagreement downgrade). | The pair agrees for 18 of 20 companies. One disagrees severely, which makes its business check unknown, and one pair cannot be evaluated. No row falls in the approximate band. |
+| R6 history | Held rows, trailing 365 calendar days, only the latest close's source and instrument currency. Count ≥200 closes without a gap, ≥200 with a gap, 120–199, under 120; also count >5 missing weekdays between closes and between look-back start and first close. Count ledger/provider splits, blocked split history, currency exclusions and changes in the effective enabled source. Yahoo closes must all have been fetched on a UTC date strictly after each split's effective date; Nordic history across a split is blocked. Unusual-drop history needs 120 closes; range history needs 200 with year-start coverage; both reject gaps and blocked splits. | 18 of 21 rows already have a full, gap-free year. 3 rows need a top-up: each is short and has a gap over the limit. No split, source change or currency exclusion lies in any look-back. Readiness buckets overlap with the gap counter. |
+| R6 top-up effect | Count rows needing top-up (under 200 closes, gap, or blocked split), those with no mapping, Nasdaq Nordic series across a split that a top-up cannot repair even when a Yahoo mapping exists, and other-source split cases, and those a top-up would repair **if the provider supplies a full valid year**. Repairability follows the latest close's series provider and requires an enabled mapping for that provider. This last count is a conditional upper bound, not verified provider availability: a read-only inventory cannot establish an IPO's missing past or a provider's response without fetching it. | All 3 rows needing a top-up are repairable if the provider supplies a full valid year. This remains a conditional upper bound, not a guaranteed repaired count. |
+| R7 dividend source | Held rows by actual latest pricing source: Yahoo-priced, Nasdaq-only, Nasdaq-priced with an enabled Yahoo mapping, other source (including manual and Twelve Data), no latest price. Yahoo capability is not evidence of captured dividend coverage; events and coverage are not yet stored. | 20 of 21 rows are Yahoo-priced, so ex-dividend days can become knowable for all but one row once dividend events are captured. |
+| R8 change | Reuse `recent_price_change`, the effective latest/start closes and ledger split dates exactly as Opportunities does, for each window. Count available/unavailable; with six available held rows, every such row has at least five other rows and can use a median reference. No median value is printed. | Every held row has an available change in all three windows, and every row has at least five peers for the median reference. |
+| R9 calibration sample | Historical buys up to the measurement date, including now-closed holdings: domain-derived position immediately before each `(trade_date, id)` buy determines buy-more status. Count by calendar year and in total, with buys as the share denominator. For instruments ever bought by that date, count stored provider closes up to that date whose `fetched_at` UTC date is later than the price date. Includes all stored sources so later replay can apply its own eligibility filters; excludes watchlist-only instruments. | 123 of 162 buys were buy-more trades, and 99.78% of 10,707 stored closes are final. This sizes the sample only; neither number establishes calibration sufficiency. |
 
 Company figures and observations only began being recorded around the initial
 company-figures migration. Quarters already present at first fetch share that
@@ -113,148 +115,189 @@ history; provider historical calendar dates cannot supply that history.
 
 ### Result tables
 
-`PENDING` means **not measured**, never zero. Expand market, year and unknown-reason
-rows to match the aggregate output. Retain suppressed shares as `suppressed`; do not
-derive small-population shares for the committed findings.
+Counts are aggregate. A share shown as `suppressed` has a denominator population
+under five rows and is deliberately not derived here.
 
 | R1 classification | Count | Share of held rows |
 |---|---|---|
-| Company | PENDING | PENDING |
-| Fund/ETF | PENDING | PENDING |
-| Certificate | PENDING | PENDING |
-| Other non-company | PENDING | PENDING |
-| Unknown or no source | PENDING | PENDING |
-| Total held rows | PENDING | PENDING |
+| Company | 20 | 95.24% |
+| Fund/ETF | 0 | 0.00% |
+| Certificate | 1 | 4.76% |
+| Other non-company | 0 | 0.00% |
+| Unknown or no source | 0 | 0.00% |
+| Total held rows | 21 | 100.00% |
 
 | R1 listing market | Count | Share of held rows |
 |---|---|---|
-| Each fixed market category from output | PENDING | PENDING |
+| US | 19 | 90.48% |
+| Stockholm | 1 | 4.76% |
+| Netherlands | 1 | 4.76% |
+| Every other market category | 0 | 0.00% |
 
 | R2 last-report knowledge | US count / share | Non-US count / share |
 |---|---|---|
-| Confirmed | PENDING | PENDING |
-| Observed ≤7 days | PENDING | PENDING |
-| Observed wider | PENDING | PENDING |
-| First fetch without baseline | PENDING | PENDING |
-| Other figures without absence baseline | PENDING | PENDING |
-| Unavailable | PENDING | PENDING |
-| Company population | PENDING | PENDING |
+| Confirmed | 0 / 0.00% | 0 / suppressed |
+| Observed ≤7 days | 2 / 10.53% | 0 / suppressed |
+| Observed wider | 0 / 0.00% | 0 / suppressed |
+| First fetch without baseline | 17 / 89.47% | 1 / suppressed |
+| Other figures without absence baseline | 0 / 0.00% | 0 / suppressed |
+| Unavailable | 0 / 0.00% | 0 / suppressed |
+| Company population | 19 | 1 |
 
 | R3 window / rule | Yes count | No count | Unknown count | Answered count / share of companies |
 |---|---|---|---|---|
-| 7d strict | PENDING | PENDING | PENDING | PENDING |
-| 7d relaxed | PENDING | PENDING | PENDING | PENDING |
-| 14d strict | PENDING | PENDING | PENDING | PENDING |
-| 14d relaxed | PENDING | PENDING | PENDING | PENDING |
-| 30d strict | PENDING | PENDING | PENDING | PENDING |
-| 30d relaxed | PENDING | PENDING | PENDING | PENDING |
+| 7d strict | 2 | 0 | 18 | 2 / 10.00% |
+| 7d relaxed | 2 | 0 | 18 | 2 / 10.00% |
+| 14d strict | 2 | 0 | 18 | 2 / 10.00% |
+| 14d relaxed | 2 | 0 | 18 | 2 / 10.00% |
+| 30d strict | 2 | 0 | 18 | 2 / 10.00% |
+| 30d relaxed | 2 | 0 | 18 | 2 / 10.00% |
 
 | R3 30d answered basis / rule | Company population | Answered count | Answered share |
 |---|---|---|---|
-| All held companies / strict | PENDING | PENDING | PENDING |
-| Excluding first-fetch unknowns / strict | PENDING | PENDING | PENDING |
-| All held companies / relaxed | PENDING | PENDING | PENDING |
-| Excluding first-fetch unknowns / relaxed | PENDING | PENDING | PENDING |
+| All held companies / strict | 20 | 2 | 10.00% |
+| Excluding first-fetch unknowns / strict | 4 | 2 | suppressed |
+| All held companies / relaxed | 20 | 2 | 10.00% |
+| Excluding first-fetch unknowns / relaxed | 4 | 2 | suppressed |
 
-| R3 window / rule / unknown reason | Count | Share of unknown companies |
+The unknown reasons are identical for all six window and rule combinations.
+
+| R3 unknown reason (each window and rule) | Count | Share of unknown companies |
 |---|---|---|
-| First fetch without baseline, for each window/rule | PENDING | PENDING |
-| Other figures without absence baseline, for each window/rule | PENDING | PENDING |
-| Each remaining unknown reason for each of the six combinations | PENDING | PENDING |
+| First fetch without baseline | 16 | 88.89% |
+| Other figures without absence baseline | 0 | 0.00% |
+| App estimate passed inside the window, figures not seen | 2 | 11.11% |
 
-Rule-selection finding: **PENDING session-lead run and decision**. Denominator basis
-(all companies or excluding first-fetch unknowns): **PENDING real numbers**. The strict rule
-answers at least two thirds at 30d: **PENDING**. Relaxed leaves more than half unknown
-at 30d: **PENDING**. Owner question required: **PENDING**.
+**Rule-selection finding.**
+
+- The strict rule answers at least two thirds at 30d: **no**. It answers 2 of 20
+  companies (10.00%). Excluding first-fetch unknowns it answers 2 of 4, a population
+  too small for a share, and still under two thirds. Both bases agree, so the
+  **relaxed rule is selected**.
+- The relaxed rule leaves more than half unknown at 30d: **yes on all companies**
+  (18 of 20, 90.00%). Excluding first-fetch unknowns it leaves 2 of 4 unknown, which
+  is not more than half, but four rows cannot carry the decision.
+- Owner question required: **yes**. The two bases disagree on the trigger, so the
+  question of a fifth verdict for rows that would be candidates except for unknown
+  report timing was put to the owner on 2026-11-11. **Answer: pending.**
+
+Two effects lie behind the 90%:
+
+- **Start-up effect (temporary).** 16 of 18 unknowns exist only because the app first
+  fetched company figures inside the widened window. They clear once that first fetch
+  precedes the widened 30-day window, around mid-December 2026.
+- **Structural effect (about one year).** After a quarter ends and before its report
+  lands, a "no" needs either a figures check from today or yesterday (6 of 20 rows
+  had one) or a report-history estimate (0 of 20 rows have one; the app needs a year
+  of its own report history). In those weeks of each quarter, most company rows are
+  expected to have unknown report timing under either rule until that history exists.
 
 | R4 next-report basis | Count | Share of companies |
 |---|---|---|
-| Company-announced | PENDING | PENDING |
-| Nasdaq expected | PENDING | PENDING |
-| LastYearDate | PENDING | PENDING |
-| TypicalGap | PENDING | PENDING |
-| Unavailable | PENDING | PENDING |
+| Company-announced | 3 | 15.00% |
+| Nasdaq expected | 2 | 10.00% |
+| LastYearDate | 0 | 0.00% |
+| TypicalGap | 15 | 75.00% |
+| Unavailable | 0 | 0.00% |
 
 | R4 successful figures fetch age | Count | Share of companies |
 |---|---|---|
-| 0–1 days | PENDING | PENDING |
-| 2–7 days | PENDING | PENDING |
-| Over 7 days | PENDING | PENDING |
-| Never successful | PENDING | PENDING |
-| Future timestamp | PENDING | PENDING |
+| 0–1 days | 6 | 30.00% |
+| 2–7 days | 14 | 70.00% |
+| Over 7 days | 0 | 0.00% |
+| Never successful | 0 | 0.00% |
+| Future timestamp | 0 | 0.00% |
 
 | R5 business readiness | Count | Share of companies |
 |---|---|---|
-| Intact | PENDING | PENDING |
-| Weakening | PENDING | PENDING |
-| Loss-making only | PENDING | PENDING |
-| Unknown | PENDING | PENDING |
+| Intact | 10 | 50.00% |
+| Weakening | 5 | 25.00% |
+| Loss-making only | 1 | 5.00% |
+| Unknown | 4 | 20.00% |
 
-| R5 unknown reason | Count | Share of unknown companies |
+| R5 unknown reason (may overlap) | Count | Share of unknown companies |
 |---|---|---|
-| Each reason from output (may overlap) | PENDING | PENDING |
+| Expected report date passed | 2 | suppressed |
+| EPS inconsistent | 1 | suppressed |
+| Quarter missing | 1 | suppressed |
+| Too few quarters | 1 | suppressed |
 
 | R5 EPS pair consistency | Count | Share of companies |
 |---|---|---|
-| Consistent | PENDING | PENDING |
-| Approximate | PENDING | PENDING |
-| Unknown: inconsistent | PENDING | PENDING |
-| Not cross-checked | PENDING | PENDING |
-| Pair unavailable | PENDING | PENDING |
+| Consistent | 18 | 90.00% |
+| Approximate | 0 | 0.00% |
+| Unknown: inconsistent | 1 | 5.00% |
+| Not cross-checked | 0 | 0.00% |
+| Pair unavailable | 1 | 5.00% |
 
 | R6 history readiness | Count | Share of held rows |
 |---|---|---|
-| ≥200 closes, no gap | PENDING | PENDING |
-| ≥200 closes, gap | PENDING | PENDING |
-| 120–199 closes | PENDING | PENDING |
-| Under 120 closes | PENDING | PENDING |
-| Gap over limit | PENDING | PENDING |
-| Split in look-back | PENDING | PENDING |
-| Split blocks checks | PENDING | PENDING |
-| Effective source changes | PENDING | PENDING |
-| Currency exclusions | PENDING | PENDING |
-| No latest price | PENDING | PENDING |
-| Unusual-drop history ready | PENDING | PENDING |
-| Range history ready | PENDING | PENDING |
-| Top-up needed | PENDING | PENDING |
-| Conditional repairable upper bound | PENDING | PENDING |
-| Top-up cannot fix Nasdaq series split (even with Yahoo mapping) | PENDING | PENDING |
-| Top-up cannot fix other-source split | PENDING | PENDING |
-| Top-up has no mapping | PENDING | PENDING |
+| ≥200 closes, no gap | 18 | 85.71% |
+| ≥200 closes, gap | 0 | 0.00% |
+| 120–199 closes | 1 | 4.76% |
+| Under 120 closes | 2 | 9.52% |
+| Gap over limit | 3 | 14.29% |
+| Split in look-back | 0 | 0.00% |
+| Split blocks checks | 0 | 0.00% |
+| Effective source changes | 0 | 0.00% |
+| Currency exclusions | 0 | 0.00% |
+| No latest price | 0 | 0.00% |
+| Unusual-drop history ready | 18 | 85.71% |
+| Range history ready | 18 | 85.71% |
+| Top-up needed | 3 | 14.29% |
+| Conditional repairable upper bound | 3 | 14.29% |
+| Top-up cannot fix Nasdaq series split (even with Yahoo mapping) | 0 | 0.00% |
+| Top-up cannot fix other-source split | 0 | 0.00% |
+| Top-up has no mapping | 0 | 0.00% |
 
 | R7 ex-dividend source | Count | Share of held rows |
 |---|---|---|
-| Yahoo-priced | PENDING | PENDING |
-| Nasdaq-only | PENDING | PENDING |
-| Nasdaq-priced with Yahoo mapping | PENDING | PENDING |
-| Other source | PENDING | PENDING |
-| No latest price | PENDING | PENDING |
+| Yahoo-priced | 20 | 95.24% |
+| Nasdaq-only | 1 | 4.76% |
+| Nasdaq-priced with Yahoo mapping | 0 | 0.00% |
+| Other source | 0 | 0.00% |
+| No latest price | 0 | 0.00% |
 
 | R8 window | Available count / share | Unavailable count / share | Rows with five usable peers count / share |
 |---|---|---|---|
-| 7d | PENDING | PENDING | PENDING |
-| 14d | PENDING | PENDING | PENDING |
-| 30d | PENDING | PENDING | PENDING |
+| 7d | 21 / 100.00% | 0 / 0.00% | 21 / 100.00% |
+| 14d | 21 / 100.00% | 0 / 0.00% | 21 / 100.00% |
+| 30d | 21 / 100.00% | 0 / 0.00% | 21 / 100.00% |
 
 | R9 buy-more sample | Buy count | Buy-more count | Buy-more share of buys |
 |---|---|---|---|
-| Each year from output | PENDING | PENDING | PENDING |
-| All years | PENDING | PENDING | PENDING |
+| 2025 | 69 | 45 | 65.22% |
+| 2026 | 93 | 78 | 83.87% |
+| All years | 162 | 123 | 75.93% |
 
 | R9 stored-close finality | Count | Share of eligible stored closes |
 |---|---|---|
-| Final | PENDING | PENDING |
-| Non-final | PENDING | PENDING |
-| Evaluation failed | PENDING | PENDING |
-| Total | PENDING | PENDING |
+| Final | 10,683 | 99.78% |
+| Non-final | 24 | 0.22% |
+| Evaluation failed | 0 | 0.00% |
+| Total | 10,707 | 100.00% |
 
 | Evaluation completeness | Count / status |
 |---|---|
-| Clock today minus measurement date (days; dates omitted) | PENDING |
-| Overall evaluation status | PENDING |
-| Each fixed measurement/operation label with an evaluation_failed bucket | PENDING |
+| Clock today minus measurement date (days; dates omitted) | 1 |
+| Overall evaluation status | complete; no evaluation failed |
+| Measurement/operation labels with an evaluation_failed bucket | none |
 
-Overall implications and remaining gaps: **PENDING session-lead findings**.
+**Overall implications and remaining gaps.**
+
+- **Price evidence is nearly ready.** 18 of 21 rows have a usable year of history
+  today, the other 3 are within reach of a history top-up, and every row has a change
+  and a median reference in every window.
+- **The business check is knowable for most companies** (16 of 20). The two-quarter
+  EPS consistency rule costs one row and marks none approximate.
+- **Report timing is the bottleneck.** It is unknown for 18 of 20 companies today.
+  Most of that is the temporary start-up effect, but the weeks between a quarter's
+  end and its report stay largely unknown for about a year.
+- **Ex-dividend days** can become knowable for 20 of 21 rows once dividend events are
+  captured.
+- **Calibration sample.** 123 buy-more trades and 10,683 final closes are available.
+  Whether that is enough is decided by the replay's own sufficiency rule, not here.
+- **Market index.** US listings dominate, so the US index is the one that matters.
 
 ## Initial parameters
 
@@ -272,7 +315,7 @@ the later domain-parameter consistency test.
 | Deep below 1-year high | at least 20% below the highest close |
 | Near 1-year low | latest close within 5% above the lowest close |
 | Report window widening | 7 calendar days before the period start |
-| "No report" rule | strict, unless the readiness measurement shows it answers under two thirds of company rows (30d); then relaxed |
+| "No report" rule | relaxed, because the readiness measurement showed the strict rule answers under two thirds of company rows (30d) |
 | Relaxed "no report" horizon | estimate on report-history basis ≥ 14 days ahead |
 | Report coming soon | next report 0-7 days ahead (today included) |
 | Profitable | trailing profit margin > 0; otherwise loss-making (a caution, not a block) |
