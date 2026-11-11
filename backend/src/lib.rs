@@ -14,6 +14,7 @@ pub mod domain;
 pub mod engine_logging;
 pub mod import;
 pub mod ledger;
+pub mod ledger_analysis;
 pub mod market_data;
 mod mode;
 pub mod providers;

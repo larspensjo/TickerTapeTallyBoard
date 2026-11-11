@@ -1,4 +1,4 @@
-mod loading;
+pub(super) mod loading;
 mod response;
 use response::{CompanyFiguresResponse, FigureResponse, ReportDateResponse};
 

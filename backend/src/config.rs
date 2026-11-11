@@ -241,7 +241,7 @@ fn log_file_from_result(
     }
 }
 
-fn resolve_backup_dir(mode: Mode) -> BackupDirectory {
+pub(crate) fn resolve_backup_dir(mode: Mode) -> BackupDirectory {
     if mode.is_demo() {
         return BackupDirectory::Unresolved("demo mode does not use backups".to_owned());
     }
@@ -297,7 +297,7 @@ fn backup_directory_from_result(
     }
 }
 
-fn default_database_url(mode: Mode) -> Result<String, ConfigError> {
+pub(crate) fn default_database_url(mode: Mode) -> Result<String, ConfigError> {
     let root = read_optional(LOCAL_APP_DATA_ENV)?.ok_or_else(|| {
         ConfigError::value(
             LOCAL_APP_DATA_ENV,

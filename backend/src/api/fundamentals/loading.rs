@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::LedgerTransaction;
 
-pub(super) struct Loaded {
+pub struct Loaded {
     pub figures: CompanyFigures,
     pub next_report: ReportDate,
     pub source: SourceState,
@@ -23,7 +23,7 @@ pub(super) fn local_date(
     Ok(clock.local_date(timestamp.into()))
 }
 
-pub(super) async fn load_inputs(
+pub async fn load_inputs(
     pool: &SqlitePool,
     instrument: &instruments::InstrumentRow,
     today: NaiveDate,
