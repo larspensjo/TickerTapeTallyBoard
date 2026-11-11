@@ -7,6 +7,8 @@ use sqlx::{
     ConnectOptions, Row, SqlitePool,
 };
 
+pub mod replay_inputs;
+
 /// Resolve configuration only; do not open an application ledger or inspect backups.
 fn configured_paths() -> Vec<PathBuf> {
     use crate::config::{default_database_url, Mode, DATABASE_URL_ENV};
@@ -143,6 +145,12 @@ async fn exact_schema(pool: &SqlitePool) -> Result<(), ()> {
     Ok(())
 }
 
+/// Replay output requires both an event floor and an instrument floor.
+/// Counts remain printable even when statistics are suppressed.
+pub fn replay_statistics_allowed(events: usize, instruments: usize) -> bool {
+    events >= 5 && instruments >= 3
+}
+
 /// A share's group is its denominator population. Counts remain usable at any size.
 pub fn aggregate_share(count: usize, population: usize) -> String {
     if population < 5 {
@@ -160,14 +168,18 @@ pub fn aggregate_median(values: &[Decimal]) -> Option<Decimal> {
     if values.len() < 5 {
         return None;
     }
+    crate::domain::opportunity_evidence::replay_rules::median(values)
+}
+
+/// Nearest-rank tenth percentile: sorted observation ceil(n / 10), one-based.
+/// Suppression is applied before any value can reach the tool's renderer.
+pub fn aggregate_tenth_percentile(values: &[Decimal]) -> Option<Decimal> {
+    if values.len() < 5 {
+        return None;
+    }
     let mut sorted = values.to_vec();
     sorted.sort_unstable();
-    let middle = sorted.len() / 2;
-    Some(if sorted.len().is_multiple_of(2) {
-        (sorted[middle - 1] + sorted[middle]) / Decimal::from(2)
-    } else {
-        sorted[middle]
-    })
+    Some(sorted[sorted.len().div_ceil(10) - 1])
 }
 
 #[cfg(test)]

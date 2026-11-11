@@ -224,6 +224,12 @@ Two effects lie behind the 90%:
 | Quarter missing | 1 | suppressed |
 | Too few quarters | 1 | suppressed |
 
+**2026-11-11 — business rule changed after measurement.** A sub-test known to be
+negative now gives weakening while the figures are current, even if another
+sub-test is missing or inconsistent. Up to 2 of the 4 unknown companies could
+therefore count as weakening under the current rule. The recorded counts above
+are unchanged.
+
 | R5 EPS pair consistency | Count | Share of companies |
 |---|---|---|
 | Consistent | 18 | 90.00% |
@@ -300,6 +306,201 @@ Two effects lie behind the 90%:
 - **Calibration sample.** 123 buy-more trades and 10,683 final closes are available.
   Whether that is enough is decided by the replay's own sufficiency rule, not here.
 - **Market index.** US listings dominate, so the US index is the one that matters.
+
+## Calibration
+
+### Pre-registered method
+
+**Caveats, before any results.** Weekly sampling with a 20-trading-day forward horizon
+still overlaps approximately four-fold. Holdings are correlated across instruments,
+samples can be small, and no statistical significance is claimed. Instruments added
+later introduce survivor effects. Holdings on different markets can end the same horizon
+on calendar dates a day or two apart. Stored closes may have been restated since the
+replay date; this is a price-history replay, not a reconstruction of everything the
+application knew then. Company information is not point-in-time. No thresholds are
+selected from demo output.
+
+**Copy preparation and execution.** Before the first real replay, commit this method.
+The session lead copies a fresh launch snapshot outside all repository trees and
+configured ledger/backup directories, then duplicates it into a scratch working copy. In
+the development loop the session lead runs one live latest refresh against the working
+copy, filling history through the history top-up. After the development loop closes
+cleanly and its WAL is checkpointed, the replay opens that completed working copy
+read-only, through the existing scratch-ledger guards, with the exact schema of this
+build. Both copies are deleted afterwards. The owner may optionally backfill from the
+Import page beforehand to deepen the sample. The implementation task performs only
+offline demo and fixture runs (`--demo` and `--demo --truncated`); preparation and the
+real run belong to the session lead. No file-backed ledger is created or migrated by the
+replay. The real run requires `--as-of`, used only to fix the run date to the date of
+the preparation refresh, never to explore alternative cutoffs. Record exactly one run
+per prepared copy. A repeat is permitted only on a fresh copy after more history exists,
+and is recorded as a new replay. Demo runs cannot authorize either criterion.
+
+**Final closes only.** A stored close is final only if the UTC calendar date of its
+`fetched_at` is after its price date, using the policy in `parameters.rs`. All held
+listing markets end their session before midnight UTC on their own date. A later
+re-fetch only moves `fetched_at` later. This conservatively excludes even final closes
+fetched the same evening until a later refresh revisits them. Non-final closes are
+missing when building the check history, so the normal gap rule applies. Only closes
+whose price date is on or before a replay date influence checks; subsequent closes are
+used only for forward returns. Later re-fetch timestamps establish finality/restatement,
+not a historical knowledge claim.
+
+**Universe and per-check eligibility.** An instrument-date enters the universe when the
+ledger held the instrument after that date's transactions, its window change is
+available under the existing Opportunities rules computed from final closes as of that
+date, and at least one long-history price check is computable from those closes. Unusual
+drop needs 120 closes without an internal gap; only the 1-year range needs full-year
+coverage and 200 closes. Each single-check group uses only instrument-dates on which
+that check is computable. All dips are universe instrument-dates whose change is
+negative. Flagged dips are dips whose verdict price evidence is present: unusual drop =
+yes or off its high = deep. Unknown never counts as a pass. The unconditional group
+deliberately consists of universe instrument-dates, not all held instrument-dates, to
+keep populations comparable. Universe exclusions `change_unavailable` and
+`no_computable_long_history_check` mean, respectively, no available window change and
+both long-history checks unknown. For each group, `selected` counts its universe events
+before forward-outcome exclusions (buy-more groups count selected buy events).
+
+**Dates and close selection.** Replay 7d, 14d and 30d separately, on every fifth
+weekday, anchored at the first weekday on or after the earliest eligible ledger buy
+date, through the preparation-refresh date fixed by `--as-of` (demo defaults to the
+clock's run date). The replay date maps to the latest effective final close on or before
+that date, using existing provider precedence for ties. The start close and change use
+the existing recent-price-change computation and its tolerance and split rules. Provider
+mappings are the scratch copy's enabled mappings; historical mapping revisions are not
+available. Each replay date has equal weight per instrument. The period halves split
+only the scheduled replay dates having at least one universe instrument-date in any
+window into the first floor(n/2) such dates and the remaining such dates. The midpoint
+is the first date in the second half. This ignores forward outcomes and their
+exclusions, and is shared across all windows and grids; empty early history cannot
+consume the first half. If no date has a universe member, the run date is the fallback
+midpoint. Distinct weeks are ISO week-year pairs of replay dates.
+
+**Forward horizons.** From the replay date's selected close, the close h trading days
+later is the h-th stored session date after that close in the instrument's own stored
+closes, counted **before eligibility filtering**, for h = 5, 10 and 20. One effective
+bar per date is selected with the existing provider precedence; missing sessions are not
+invented. Both endpoints must be final, from the same source as the as-of look-back
+series, and in the instrument currency. Interior non-final, wrong-source or
+wrong-currency bars are missing for gap evaluation. No gap over five missing weekdays
+may lie inside the horizon. No ledger or provider split may fall after the start and on
+or before the end, unless every horizon close was fetched on a UTC date after that split
+from the same source whose provider capability verifies split adjustment at fetch. That
+capability is supplied per source by the loader, not inferred in domain rules. A horizon
+ending after the latest final close, or without an h-th stored session, is incomplete. A
+missing h-th stored session returns only `incomplete` and suppresses other reasons for
+that event/horizon. Count exclusions by reason: `non_final`, `source`, `currency`,
+`gap`, `split`, `incomplete`; exclusion reasons can overlap, so their counts do not sum
+to the number of excluded events. Non-positive endpoint closes and overflowing return
+arithmetic are additionally counted as `invalid_close_or_arithmetic`, never silently
+zeroed. Negative and zero returns remain valid.
+
+**Benchmark.** Subtract the same-replay-date median forward return of the other
+instruments held on that date, each using its own start close and h stored sessions
+under the same eligibility rules. Benchmark peers need not pass a long-history check.
+Exclude the subject; require at least five usable others. Otherwise count
+`benchmark_unavailable` and omit the excess return. Benchmark availability is counted
+only after the subject's own horizon is usable; failed own horizons retain their own
+exclusion reasons. Different markets may reach their h-th sessions on slightly different
+calendar dates.
+
+**Groups and statistics.** For each window and each horizon report unconditional (all
+universe instrument-dates, including rises), all dips, flagged dips, unusual drop alone,
+deep below high alone, and flagged dips split by stopped falling (yes/no/unknown).
+Single-check flagged groups contain negative changes only. Report usable count, distinct
+instruments, distinct weeks, median forward excess return in percentage points, share
+strictly positive, and tenth percentile. Twenty trading days is primary. The median
+sorts exact decimals and averages the middle two for even counts; the tenth percentile
+is nearest rank, observation ceil(n/10) in ascending order. Ties retain their full
+weight; zero is not positive. No float statistics are used. Round only displayed
+statistics to two decimals, midpoint to even. Every median, percentile, share and
+improvement is suppressed when its group has fewer than five usable events or fewer than
+three distinct instruments. An improvement requires both compared groups to pass these
+floors, including each half separately. Counts are always printable. Output contains no
+identities, individual dates, quantities, prices or amounts. Errors and panics must
+likewise disclose no ledger values.
+
+**Sufficiency and named outcomes.** Apply the floors only to events with a usable
+**20-day excess return**: per window at least 100 dips and at least 30 flagged dips,
+with those flagged dips spanning at least 8 instruments and 26 distinct ISO weeks. The
+5-day and 10-day results do not determine sufficiency. Print the counts and shortfalls
+for every floor per window. Overall **Calibrated** requires all three windows to meet
+every floor. Anything less, including an empty replay, is **Insufficient history**. That
+outcome does not satisfy the calibration prerequisite: keep initial thresholds, make no
+threshold changes, record the shortfall, and do not start verdict UI implementation. The
+session lead asks the owner to run a backfill and repeats the replay on a fresh copy. If
+still insufficient, ask the owner whether to keep waiting or ship visibly uncalibrated
+verdicts; the existing recommendation is to wait. Demo sufficiency proves only the
+runner's smoke paths.
+
+**Change criterion and grids.** Only after a real Calibrated outcome may a grid value
+qualify to replace the initial value in a window: its flagged group must contain at
+least 30 events from at least 8 instruments, its median 20-day excess return must exceed
+the initial group's median by at least one percentage point, and the median improvement
+must be positive in both period halves. Test unusual-drop deviations 1.0/1.5/2.0/2.5,
+deep-below-high thresholds 10/15/20/25/30%, and stopped-falling minimum ages 1/2/3
+trading days. Vary one input at a time, holding the others at their defaults; print the
+combined flagged group for the two price-evidence grids, each check's own flagged group
+for the drop criterion, and the stopped-yes subset of default flagged dips for the age
+grid. Print full-period and both-half statistics and counts, including all-dip
+references in both halves. Suppressed half medians cannot establish improvement. A value
+qualifies for a check only if that same value meets the criterion in all three windows.
+If multiple values qualify, choose the largest whole-period improvement of median 20-day
+excess return in the 30d window; break ties by distance to the initial value, then by
+the smaller value. Apply at most ONE threshold change per replay overall: among
+qualifying checks' chosen values, select the check with the largest such 30d
+improvement. Equal cross-check gains use the fixed grid order unusual drop, deep below
+high, stopped-falling age. Other qualifying checks are candidates for a later replay and
+are not applied. The tool prints per-window/value comparisons, one overall decision per
+grid, and one replay decision; it never edits parameters. A failed window makes a value
+not met; otherwise a suppressed comparison makes it undetermined. With no qualifying
+value a grid is undetermined if any value is undetermined, otherwise not met.
+
+**Drop criterion.** Only after a real Calibrated outcome, if a price check's own flagged
+group does no better than the dips on which THAT check is computable at every grid value
+in both halves, in every window, propose removing it from the verdict while keeping it
+displayed. This per-check baseline matches populations; it is not all universe dips. The
+all-windows criterion is met only when every window meets it; a failed window makes it
+not met, otherwise missing comparisons make it undetermined. Print per-window findings
+and one overall proposal per check. Compare primary median excess returns; missing or
+suppressed medians cannot establish this criterion. Any removal goes to the owner before
+application. Stopped falling remains display-only and its grid does not introduce it
+into verdict evidence.
+
+**Buy-more replay.** For each buy while already held, determine the pre-buy position by
+the domain ledger fold immediately before its `(trade_date, id)`. Include instruments
+later sold out. Evaluate the price side as of its trade date in each window, without
+weekly subsampling, and compare flagged and unflagged buy-mores' forward excess returns
+under the same horizons, benchmark and suppression rules. Report rises/non-negative
+changes separately as `buy_more_rose`; unflagged means fell with price evidence absent.
+If both long-history checks are unknown, the buy-more belongs to undetermined, not
+unavailable; unavailable means the window change itself cannot be computed. Forward
+returns start at the trade date's selected final close (on or before that date), never
+the trade price. Repeated buys remain individual events. Trade dates are never printed.
+For halves, buys before the weekly period's midpoint belong to the first half and the
+rest to the second.
+
+**Not replayable.** Report in the period lacks historical report dates; past Nasdaq
+calendar backfill was rejected. Company checks cannot be replayed: stored figures are
+not point-in-time and observations begin only with the application's first fetch in
+November 2026. Report the count of replay instrument-dates with a latest and year-ago
+quarterly EPS observation already seen by that date as a descriptive count. The latest
+quarter must be within 200 calendar days, and the year-ago quarter must end in the same
+month one year earlier. This is never a point-in-time company result. Ex-dividend
+evidence before event capture and intraday prices are not replayable. The replay's
+unusual-drop check never adds dividends back: no historical dividend evidence is
+supplied. This tool does not infer any of these checks or full candidate verdicts from
+price evidence.
+
+### Results — session lead placeholders
+
+- Preparation and real replay: **NOT RUN — session lead to fill in**.
+- Per-window/horizon/group results and exclusion counts: **PENDING**.
+- Primary sufficiency counts, floor shortfalls and overall outcome: **PENDING**.
+- Grid comparisons in the whole period and both halves: **PENDING**.
+- Drop-criterion findings and any owner decision: **PENDING**.
+- Buy-more aggregates and observed-company-pair count: **PENDING**.
+- Threshold decision or insufficient-history follow-up: **PENDING**.
 
 ## Initial parameters
 

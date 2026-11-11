@@ -7,6 +7,7 @@ pub mod lookback_series;
 pub mod market_reference;
 pub mod parameters;
 pub mod price_checks;
+pub mod replay_rules;
 pub mod report_timing;
 pub mod room_to_buy;
 pub mod verdict;

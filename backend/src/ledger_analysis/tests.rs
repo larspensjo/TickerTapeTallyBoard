@@ -49,6 +49,7 @@ fn small_groups_suppress_shares_and_medians() {
     for size in 0..5 {
         assert_eq!(aggregate_share(size, size), "suppressed");
         assert_eq!(aggregate_median(&vec![Decimal::ONE; size]), None);
+        assert_eq!(aggregate_tenth_percentile(&vec![Decimal::ONE; size]), None);
     }
     assert_eq!(aggregate_share(1, 5), "20.00%");
     assert_eq!(aggregate_share(1, 7), "14.29%");
@@ -60,6 +61,45 @@ fn small_groups_suppress_shares_and_medians() {
     assert_eq!(
         aggregate_median(&[6, 5, 1, 4, 2, 3].map(Decimal::from)),
         Some(Decimal::new(35, 1))
+    );
+}
+
+#[test]
+fn tenth_percentile_is_nearest_rank_for_odd_even_and_tied_samples() {
+    for count in [5usize, 6, 10, 11, 20, 21] {
+        let values: Vec<_> = (1..=count).rev().map(Decimal::from).collect();
+        assert_eq!(
+            aggregate_tenth_percentile(&values),
+            Some(Decimal::from(count.div_ceil(10)))
+        );
+    }
+    assert_eq!(
+        aggregate_tenth_percentile(&[Decimal::ONE; 6]),
+        Some(Decimal::ONE)
+    );
+    assert_eq!(aggregate_median(&[Decimal::MAX; 6]), Some(Decimal::MAX));
+    assert_eq!(aggregate_median(&[Decimal::MIN; 6]), Some(Decimal::MIN));
+    assert_eq!(
+        aggregate_median(&[
+            Decimal::MIN,
+            Decimal::MIN,
+            Decimal::MIN,
+            Decimal::MAX,
+            Decimal::MAX,
+            Decimal::MAX
+        ]),
+        Some(Decimal::ZERO)
+    );
+    assert_eq!(
+        aggregate_median(&[
+            Decimal::new(1, 28),
+            Decimal::new(1, 28),
+            Decimal::new(1, 28),
+            Decimal::new(2, 28),
+            Decimal::new(2, 28),
+            Decimal::new(2, 28)
+        ]),
+        Some(Decimal::new(2, 28))
     );
 }
 
@@ -191,4 +231,11 @@ async fn other_checkouts_and_backup_directories_are_refused_before_opening() {
         .await
         .unwrap();
     pool.close().await;
+}
+
+#[test]
+fn replay_statistics_require_both_event_and_instrument_floors() {
+    assert!(!replay_statistics_allowed(4, 3));
+    assert!(!replay_statistics_allowed(50, 2));
+    assert!(replay_statistics_allowed(5, 3));
 }

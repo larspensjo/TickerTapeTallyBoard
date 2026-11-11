@@ -31,6 +31,24 @@ pub fn unusual_drop(
     change_percent: Decimal,
     dividend_added_back_change: Option<Decimal>,
 ) -> UnusualDropOutcome {
+    unusual_drop_with_threshold(
+        series,
+        window,
+        start_close_date,
+        change_percent,
+        dividend_added_back_change,
+        UNUSUAL_DROP_DEVIATIONS,
+    )
+}
+
+pub fn unusual_drop_with_threshold(
+    series: &LookbackSeries,
+    window: RecentWindow,
+    start_close_date: NaiveDate,
+    change_percent: Decimal,
+    dividend_added_back_change: Option<Decimal>,
+    deviations: Decimal,
+) -> UnusualDropOutcome {
     let mut outcome = UnusualDropOutcome {
         state: YesNoUnknown::Unknown,
         reasons: series.unusual_drop_reasons(),
@@ -99,7 +117,7 @@ pub fn unusual_drop(
         outcome.reasons.push(EvidenceReason::NoPriceVariation);
         return outcome;
     }
-    let Some(threshold) = (-UNUSUAL_DROP_DEVIATIONS).checked_mul(deviation) else {
+    let Some(threshold) = (-deviations).checked_mul(deviation) else {
         outcome.reasons.push(EvidenceReason::CalculationOutOfRange);
         return outcome;
     };
@@ -193,6 +211,10 @@ pub struct OffHighOutcome {
 }
 
 pub fn off_high(series: &LookbackSeries) -> OffHighOutcome {
+    off_high_with_threshold(series, DEEP_BELOW_HIGH_PERCENT)
+}
+
+pub fn off_high_with_threshold(series: &LookbackSeries, deep_percent: Decimal) -> OffHighOutcome {
     let mut outcome = OffHighOutcome {
         state: OffHighState::Unknown,
         reasons: series.reasons(RANGE_MIN_CLOSES),
@@ -248,7 +270,7 @@ pub fn off_high(series: &LookbackSeries) -> OffHighOutcome {
     outcome.below_high_percent = Some(below);
     outcome.above_low_percent = Some(above);
     outcome.near_low = Some(above <= NEAR_LOW_PERCENT);
-    outcome.state = if below >= DEEP_BELOW_HIGH_PERCENT {
+    outcome.state = if below >= deep_percent {
         OffHighState::Deep
     } else {
         OffHighState::NotDeep
@@ -272,6 +294,15 @@ pub fn stopped_falling(
     series: &LookbackSeries,
     start: NaiveDate,
     end: NaiveDate,
+) -> StoppedFallingOutcome {
+    stopped_falling_with_age(series, start, end, STOPPED_FALLING_MIN_DAYS)
+}
+
+pub fn stopped_falling_with_age(
+    series: &LookbackSeries,
+    start: NaiveDate,
+    end: NaiveDate,
+    minimum_age: i64,
 ) -> StoppedFallingOutcome {
     let closes: Vec<_> = series
         .closes
@@ -330,7 +361,7 @@ pub fn stopped_falling(
     outcome.low_close = Some(low.close);
     outcome.low_date = Some(low.date);
     outcome.low_age_trading_days = Some(age);
-    outcome.state = if latest.close > low.close && age >= STOPPED_FALLING_MIN_DAYS {
+    outcome.state = if latest.close > low.close && age >= minimum_age {
         YesNoUnknown::Yes
     } else {
         YesNoUnknown::No
