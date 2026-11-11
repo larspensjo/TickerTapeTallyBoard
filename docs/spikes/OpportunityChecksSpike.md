@@ -228,7 +228,9 @@ Two effects lie behind the 90%:
 negative now gives weakening while the figures are current, even if another
 sub-test is missing or inconsistent. Up to 2 of the 4 unknown companies could
 therefore count as weakening under the current rule. The recorded counts above
-are unchanged.
+are unchanged. Measured again the same day under the current rule, after one more
+refresh on a fresh scratch copy: 10 intact, 6 weakening, 1 loss-making only and
+3 unknown of 20 companies.
 
 | R5 EPS pair consistency | Count | Share of companies |
 |---|---|---|
@@ -492,15 +494,89 @@ unusual-drop check never adds dividends back: no historical dividend evidence is
 supplied. This tool does not infer any of these checks or full candidate verdicts from
 price evidence.
 
-### Results — session lead placeholders
+### Results
 
-- Preparation and real replay: **NOT RUN — session lead to fill in**.
-- Per-window/horizon/group results and exclusion counts: **PENDING**.
-- Primary sufficiency counts, floor shortfalls and overall outcome: **PENDING**.
-- Grid comparisons in the whole period and both halves: **PENDING**.
-- Drop-criterion findings and any owner decision: **PENDING**.
-- Buy-more aggregates and observed-company-pair count: **PENDING**.
-- Threshold decision or insufficient-history follow-up: **PENDING**.
+**Replay of 2026-11-11.** One replay was run, on one prepared scratch copy of the
+newest launch backup snapshot after one live latest refresh, with the run date fixed
+to that day. Both copies were deleted afterwards. All figures below are aggregates;
+every statistic rests on at least five events from at least three instruments.
+
+**Outcome: Calibrated.** Every window met every sufficiency floor on the 20-day
+outcome.
+
+| Window | Usable dips (floor 100) | Usable flagged dips (floor 30) | Instruments (floor 8) | Distinct weeks (floor 26) | Outcome |
+|---|---|---|---|---|---|
+| 7d | 357 | 106 | 22 | 28 | Calibrated |
+| 14d | 342 | 106 | 19 | 30 | Calibrated |
+| 30d | 324 | 110 | 21 | 32 | Calibrated |
+
+"Calibrated" means there was enough history to judge the thresholds. It does not mean
+the checks were shown to predict a recovery. The weeks floor was met narrowly.
+
+**Median 20-day excess return, whole period (percentage points; share positive).**
+
+| Group | 7d | 14d | 30d |
+|---|---|---|---|
+| Unconditional (universe) | 0.12 (50.79%) | 0.13 (50.85%) | 0.14 (50.99%) |
+| All dips | −0.13 (48.74%) | −0.29 (48.54%) | 0.08 (50.93%) |
+| Flagged dips | −0.38 (46.23%) | −1.71 (46.23%) | −0.04 (49.09%) |
+| Unusual drop alone | −0.82 (41.86%) | −2.74 (39.47%) | 0.02 (51.28%) |
+| Deep below high alone | −0.15 (48.61%) | 0.09 (50.00%) | 0.23 (50.00%) |
+| Flagged, stopped falling | 4.15 (58.82%) | 2.54 (58.54%) | −0.18 (48.44%) |
+| Flagged, still falling | −0.82 (43.82%) | −3.19 (38.46%) | 0.00 (50.00%) |
+
+Event counts for these rows range from 17 to 762; the smallest is "Flagged, stopped
+falling" at 7d. The tenth percentile of every group lies between about −12 and −26
+points, so the spread dwarfs every median difference.
+
+**What the numbers say.**
+
+- **Flagged dips did no better than other dips.** In all three windows the flagged
+  group's median 20-day excess return is at or below that of all dips. On about a
+  year of usable history, with overlapping horizons and correlated holdings, this
+  shows no measurable edge for the price evidence; it does not show harm either.
+- **The one pattern with some support is descriptive.** Flagged dips that had
+  already stopped falling did better than those still falling in the 7d and 14d
+  windows, not in the 30d window. Stopped falling stays display-only.
+- **Halves.** Unusual drop alone was at or below zero in both halves at 7d and 14d.
+  The deep-below-high check has no usable first half yet, because it needs a full
+  year of history before each replay date.
+
+**Change criterion: not met; initial thresholds are kept.** No grid value met the
+criterion in all three windows. One value (unusual drop at 2.5 standard deviations)
+met it in the 14d window only, which the all-windows rule rejects. Replay decision:
+keep initial thresholds. No candidate is carried to a later replay.
+
+**Drop criterion: undetermined for both price checks.** Some half comparisons are
+suppressed or missing, so the criterion cannot be established in either direction.
+No removal is proposed.
+
+**Exclusions (20-day horizon, each window).** 81 weekly events had an incomplete
+horizon (too recent) and 1 a non-final endpoint. No event was excluded for source,
+currency, gap, split or a missing benchmark. Before that, 4 / 19 / 68 held
+instrument-dates (7d / 14d / 30d) had no available change, and 462 / 448 / 401 had
+no computable long-history check.
+
+**Buy-more replay (median 20-day excess return, whole period).**
+
+| Group | 7d | 14d | 30d |
+|---|---|---|---|
+| Buy-more on a flagged dip | 1.92 (25 events) | 0.16 (18) | 4.22 (16) |
+| Buy-more on an unflagged dip | −1.63 (11) | 3.75 (16) | 2.95 (13) |
+| Buy-more on a rise | 2.89 (34) | −0.19 (47) | −2.22 (48) |
+| Buy-more, price evidence undetermined | −0.95 (41) | −0.64 (22) | 0.20 (19) |
+
+These groups are small and point in different directions across windows; they
+support no conclusion.
+
+**Company checks.** No replay instrument-date had both a latest and a year-ago
+quarter already observed by its date, so the company side contributes nothing to
+this replay, as stated under "Not replayable".
+
+**Follow-up.** The thresholds in the parameters table stand. A later replay on a
+fresh copy, once more history exists, is recorded as a new replay. Whether the
+verdicts are presented as planned, given that the price evidence showed no
+measurable edge, is the owner's decision.
 
 ## Initial parameters
 
