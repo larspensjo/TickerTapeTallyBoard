@@ -5,6 +5,7 @@ mod repo_error;
 pub mod fundamental_values;
 pub mod fundamentals_sources;
 pub mod fx_rates;
+pub mod history_topups;
 pub mod import_batches;
 pub mod instrument_tickers;
 pub mod instruments;

@@ -2,6 +2,7 @@ use super::*;
 
 mod avanza_symbol_mapping;
 mod fundamentals;
+mod history_topup;
 mod instrument_selection;
 mod lease_coordination;
 mod multi_provider;
@@ -404,7 +405,16 @@ async fn latest_refresh_requests_the_recent_change_history_window() {
 
     let (prices, fx) = requested_windows(RefreshMode::Latest, None, None).await;
 
-    assert_eq!(prices, vec![expected]);
+    assert_eq!(
+        prices,
+        vec![
+            expected,
+            (
+                today - chrono::Duration::days(365 + domain::RecentWindow::ThirtyDays.days()),
+                today
+            )
+        ]
+    );
     assert_eq!(fx, vec![expected]);
 }
 

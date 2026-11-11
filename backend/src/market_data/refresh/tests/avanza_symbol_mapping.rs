@@ -406,7 +406,29 @@ async fn stale_avanza_symbol_is_preserved_when_candidate_is_not_newer() {
 
     assert_eq!(response.status, RefreshRunStatus::Succeeded);
     assert_eq!(response.prices_written, 1);
-    assert_eq!(price_provider.calls().len(), 2);
+    let calls = price_provider.calls();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0].symbol, "OLD");
+    assert_eq!(calls[1].symbol, "POSSIBLE");
+    assert_eq!(calls[0].start, calls[0].end - chrono::Duration::days(37));
+    assert_eq!(
+        (calls[1].start, calls[1].end),
+        (calls[0].start, calls[0].end)
+    );
+    assert_eq!(calls[2].symbol, "OLD");
+    assert_eq!(
+        calls[2].start,
+        calls[2].end - chrono::Duration::days(365 + domain::RecentWindow::ThirtyDays.days())
+    );
+    assert_eq!(calls[2].end, calls[0].end);
+    assert_eq!(
+        response
+            .items
+            .iter()
+            .filter(|item| item.kind == RefreshItemKind::History)
+            .count(),
+        1
+    );
     let mapping = provider_symbols::find_by_instrument_provider(
         &pool,
         instrument.id,

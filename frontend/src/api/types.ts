@@ -551,7 +551,7 @@ export interface HealthResponse {
 export type RefreshMode = "latest" | "backfill";
 export type RefreshTrigger = "manual" | "backfill" | "launch";
 export type RefreshRunStatus = "running" | "succeeded" | "partial" | "failed";
-export type RefreshItemKind = "price" | "fx";
+export type RefreshItemKind = "price" | "fx" | "history";
 export type RefreshItemStatus =
   | "fetched"
   | "missing"

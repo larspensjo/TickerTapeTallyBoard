@@ -1,9 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { refreshResult } from "../test/priceRefresh";
-import { initialPriceRefreshFeedback } from "./priceRefreshFeedback";
+import {
+  initialPriceRefreshFeedback,
+  priceRefreshFeedbackReducer,
+} from "./priceRefreshFeedback";
 import { backfillOutcome, priceRefreshStatus } from "./priceRefreshViewModel";
 
 describe("priceRefreshStatus", () => {
+  it.each(["failed", "missing", "unavailable"] as const)(
+    "does not show a notice for a %s history item",
+    (status) => {
+      const baseline = refreshResult("succeeded");
+      const result = {
+        ...baseline,
+        items: [
+          {
+            kind: "history" as const,
+            instrument_id: 1,
+            provider: "YAHOO",
+            symbol_or_pair: "TEST.ST",
+            status,
+            reason: "provider_error",
+            rows_written: 0,
+          },
+        ],
+      };
+      const feedback = priceRefreshFeedbackReducer(
+        initialPriceRefreshFeedback,
+        { type: "requestSucceeded", result },
+      );
+      expect(
+        priceRefreshStatus({
+          serverRefreshing: false,
+          requestInFlight: false,
+          feedback,
+        }),
+      ).toEqual({ running: false, warning: null });
+      expect(backfillOutcome(result)).toEqual(backfillOutcome(baseline));
+    },
+  );
   it.each([
     [true, false, true],
     [false, true, true],

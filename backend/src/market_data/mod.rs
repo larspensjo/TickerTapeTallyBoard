@@ -4,6 +4,7 @@ mod fundamentals_refresh;
 pub use fundamentals_preview::FundamentalsPreview;
 mod fundamentals_source_discovery;
 mod fx_refresh;
+mod history_topup;
 mod price_source_refresh;
 mod price_status;
 mod provider_registry;

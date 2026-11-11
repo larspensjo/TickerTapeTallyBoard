@@ -262,6 +262,37 @@ pub(super) async fn execute_refresh(
         Default::default()
     };
 
+    if request.mode == RefreshMode::Latest {
+        if let Err(error) = super::history_topup::run(
+            providers, pool, &targets, &grouped, clock, lease, &mut items,
+        )
+        .await
+        {
+            if matches!(error, MarketDataError::LeaseLost) {
+                return Ok(RefreshOutcome {
+                    fundamentals,
+                    ..RefreshOutcome::lease_lost(
+                        prices_written,
+                        fx_rates_written,
+                        unmapped_instruments,
+                        failed_items,
+                        items,
+                    )
+                });
+            }
+            // The history pass logs the failing operation with its instrument context.
+            items.push(RefreshItem {
+                kind: RefreshItemKind::History,
+                instrument_id: None,
+                provider: None,
+                symbol_or_pair: String::new(),
+                status: RefreshItemStatus::Failed,
+                reason: Some("repository_error".to_owned()),
+                rows_written: 0,
+            });
+        }
+    }
+
     let status = if failed_items == 0 && unmapped_instruments == 0 {
         RefreshRunStatus::Succeeded
     } else if prices_written == 0 && fx_rates_written == 0 {

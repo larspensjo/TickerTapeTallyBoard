@@ -54,6 +54,7 @@ impl RefreshRunStatus {
 pub enum RefreshItemKind {
     Price,
     Fx,
+    History,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
