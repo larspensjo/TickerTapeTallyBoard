@@ -31,9 +31,23 @@ visible "loss-making" caution.** A loss-making company whose sales shrink or who
 deepen goes to "Fell for a reason?". This knowingly loosens the "profitable" part of the
 brief's description of Business intact.
 
+Owner decisions after the readiness measurement (2026-11-11), which supersede any
+conflicting text below:
+
+- **A fifth verdict, "Possible candidate, report timing unknown"**, is added between
+  Sentiment-dip candidate and Not enough data (Open Question 1, answered).
+- **Unusual drop works from 120 closes; only the 1-year range ("off its high") needs
+  full-year coverage.** The gap between the look-back start and the first close blocks the
+  1-year range only.
+
+Outcome of the readiness measurement: the **relaxed** "no report" rule is selected (the
+strict rule answered 2 of 20 held company rows at 30 days).
+
 Settled by the session lead (open to challenge): the "no report in the period" rule is
 chosen from the readiness measurement by the data-driven rule below; the market check is
-context only and never changes the verdict tier.
+context only and never changes the verdict tier; a possible candidate carries the same
+cautions as a candidate; an unusual drop is unknown (`no_price_variation`) when the
+historical moves show no variation at all.
 
 Decision-log entries consulted and honoured: 2026-10-15 Opportunities page contract and
 latest-refresh window; 2026-11-04 company figures from free sources; 2026-11-08 company-figure
@@ -73,9 +87,11 @@ calibration replay):**
   latest close. Closes from another source, or in a currency other than the instrument's,
   are excluded and treated as missing, matching the page's same-source rule.
 - **Gap rule:** a gap of more than 5 weekdays between consecutive closes in the look-back
-  (including between the look-back start and the first close) makes the long-history
-  checks `unknown` with reason `price_history_gap` (and the gap's start date), never a
-  computation across the hole.
+  makes the long-history checks `unknown` with reason `price_history_gap` (and the gap's
+  start date), never a computation across the hole. A gap of more than 5 weekdays between
+  the look-back start and the first close (no full-year coverage) makes only the 1-year
+  range `unknown`; the unusual drop needs 120 closes and no gap between them (owner
+  decision 2026-11-11).
 - **Split rule:** when a ledger split or a stored provider split event falls inside the
   look-back, the long-history checks are computed only if every close in the look-back was
   fetched after that split from Yahoo (whose chart closes are split-adjusted at fetch time).
@@ -233,7 +249,8 @@ Rules, first match wins:
 | 1 | Price evidence absent | Normal movement |
 | 2 | Negative evidence | Fell for a reason? |
 | 3 | Price evidence present and company side passes | Sentiment-dip candidate |
-| 4 | Anything else | Not enough data |
+| 4 | Price evidence present, business = intact or `loss_making`, and report in the period = unknown | Possible candidate, report timing unknown |
+| 5 | Anything else | Not enough data |
 
 Consequences of the table, all covered by an exhaustive test:
 
@@ -241,9 +258,12 @@ Consequences of the table, all covered by an exhaustive test:
   the price unusually. Negative evidence beats positive evidence everywhere else.
 - Undetermined price evidence with negative evidence gives Fell for a reason?; without it,
   Not enough data.
-- Unknown report timing or unknown business blocks a candidate and gives Not enough data,
-  which lists the missing checks ("Not enough data: report timing unknown, less than a
-  year of prices").
+- Unknown report timing alone, with price evidence present and a business that is intact
+  or loss-making, gives Possible candidate, report timing unknown (owner decision
+  2026-11-11); it carries the same cautions as a candidate. Unknown business, or unknown
+  report timing together with undetermined price evidence, gives Not enough data, which
+  lists the missing checks ("Not enough data: business unknown, less than a year of
+  prices").
 - Unknown security type or no company-figures source makes both company checks unknown, so
   such rows can only be Normal movement or Not enough data: no negative evidence can be
   known for them, and no candidate can be confirmed.
@@ -256,8 +276,8 @@ Consequences of the table, all covered by an exhaustive test:
 
 ### Ordering
 
-"Best candidates first": Sentiment-dip candidate, then Not enough data (possible
-candidates whose evidence is incomplete), then Fell for a reason?, then Normal movement;
+"Best candidates first": Sentiment-dip candidate, then Possible candidate, report timing
+unknown, then Not enough data, then Fell for a reason?, then Normal movement;
 within a tier by the displayed change, biggest fall first; ties by symbol then exchange.
 Rows without a verdict follow: rows that did not fall in fallers order, then rows with an
 unavailable change. The backend supplies the verdict code; the view-model owns the tier
@@ -928,7 +948,8 @@ installer. Markets without a working symbol keep the median.
 
 Both questions below are conditional: each goes to the owner only if its trigger occurs.
 
-1. **Fifth verdict if report timing is mostly unknowable** (trigger: Phase 1 shows that even
+1. **ANSWERED 2026-11-11: the owner chose (b), add the fifth verdict.** Original question:
+   **Fifth verdict if report timing is mostly unknowable** (trigger: Phase 1 shows that even
    the relaxed "no report" rule leaves more than half of the held company rows unknown in
    the 30-day window). Options: (a) keep four verdicts, so most company dips show "Not
    enough data: report timing unknown"; (b) add "Possible candidate, report timing unknown"

@@ -5,8 +5,8 @@
 Status: **measured on 2026-11-11** on a scratch copy of the newest launch backup
 snapshot, deleted afterwards. The measurement date was the snapshot's last completed
 refresh, one day before the run. The evaluation was complete: no row failed. The
-relaxed "no report" rule is selected; whether a fifth verdict is added is an open
-owner decision (see the rule-selection finding).
+relaxed "no report" rule is selected, and the owner decided to add a fifth verdict for
+candidates whose report timing is unknown (see the rule-selection finding).
 
 ### Safe execution
 
@@ -179,7 +179,9 @@ The unknown reasons are identical for all six window and rule combinations.
   is not more than half, but four rows cannot carry the decision.
 - Owner question required: **yes**. The two bases disagree on the trigger, so the
   question of a fifth verdict for rows that would be candidates except for unknown
-  report timing was put to the owner on 2026-11-11. **Answer: pending.**
+  report timing was put to the owner on 2026-11-11. **Answer (2026-11-11):
+  add the verdict "Possible candidate, report timing unknown" between Sentiment-dip
+  candidate and Not enough data.**
 
 Two effects lie behind the 90%:
 
@@ -330,6 +332,12 @@ the later domain-parameter consistency test.
 The displayed unusual-drop change is anchored on today, while the historical moves
 it is compared with are anchored on each stored close. Before the day's close, the
 displayed move can therefore span one trading day fewer than the moves in the sample.
+
+The owner decided on 2026-11-11 that the unusual-drop check works from 120 closes with no
+gap between consecutive closes, and that only the 1-year range needs full-year coverage.
+The readiness counts above were measured before that decision, when both checks required
+full-year coverage, so "Unusual-drop history ready" can be understated by up to the three
+short-history rows.
 
 When the historical moves show no variation at all, the unusual-drop check is unknown
 (`no_price_variation`) rather than yes: a threshold of zero built from a price that
