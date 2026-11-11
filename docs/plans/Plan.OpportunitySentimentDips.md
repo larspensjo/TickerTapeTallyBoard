@@ -47,7 +47,10 @@ Settled by the session lead (open to challenge): the "no report in the period" r
 chosen from the readiness measurement by the data-driven rule below; the market check is
 context only and never changes the verdict tier; a possible candidate carries the same
 cautions as a candidate; an unusual drop is unknown (`no_price_variation`) when the
-historical moves show no variation at all.
+historical moves show no variation at all; a company-confirmed report dated today whose
+figures are in counts as a report in the period (only a scheduled date whose figures have
+not appeared counts as "coming soon"); the business check stays unknown whenever any of
+its unknown conditions holds, even if another sub-test is known to be negative.
 
 Decision-log entries consulted and honoured: 2026-10-15 Opportunities page contract and
 latest-refresh window; 2026-11-04 company figures from free sources; 2026-11-08 company-figure

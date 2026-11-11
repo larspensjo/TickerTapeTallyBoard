@@ -23,9 +23,9 @@ pub const REPORT_SOON_MIN_DAYS: i64 = 0;
 pub const REPORT_SOON_MAX_DAYS: i64 = 7;
 pub const PROFITABLE_MARGIN_PERCENT: Decimal = dec!(0);
 pub const EARNINGS_SLIDING_PERCENT: Decimal = dec!(10);
-pub const EPS_ROUNDING_ALLOWANCE: Decimal = dec!(0.02);
-pub const EPS_APPROXIMATE_PERCENT: Decimal = dec!(5);
-pub const EPS_UNKNOWN_PERCENT: Decimal = dec!(20);
+pub use crate::domain::company_figures::{
+    EPS_APPROXIMATE_PERCENT, EPS_ROUNDING_ALLOWANCE, EPS_UNKNOWN_PERCENT,
+};
 pub const MARKET_MIN_OTHER_ROWS: usize = 5;
 pub const MARKET_MARGIN_7D: Decimal = dec!(3);
 pub const MARKET_MARGIN_14D: Decimal = dec!(4);

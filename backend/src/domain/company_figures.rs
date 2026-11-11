@@ -1,5 +1,7 @@
 //! Company figures from source-neutral reported inputs. No I/O or provider ratios.
+mod eps_consistency;
 mod quarters;
+pub use eps_consistency::*;
 #[cfg(test)]
 mod tests;
 
@@ -192,6 +194,7 @@ pub struct CompanyFigures {
     pub fx_conversion: Option<FxConversion>,
     pub share_basis: ShareBasis,
     pub quarters: Vec<Quarter>,
+    pub eps_consistency: EpsConsistency,
 }
 
 // Verified ECB currencies. An arbitrary cached rate must not enable an unsupported currency.
@@ -317,6 +320,7 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
         quarter_grid(input.values, &splits)
     };
     let basis = share_basis(input, &grid);
+    let eps_consistency = evaluate_eps_consistency(&grid[grid.len().saturating_sub(4)..], 3);
     let mut result = CompanyFigures {
         pe: Figure::unavailable("too_few_quarters"),
         ps: Figure::unavailable("too_few_quarters"),
@@ -325,6 +329,7 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
         fx_conversion: None,
         share_basis: basis,
         quarters: grid,
+        eps_consistency,
     };
     if let Some(reason) = input.source.blocking_reason(!result.quarters.is_empty()) {
         let mut figure = Figure::missing(reason);
@@ -441,44 +446,34 @@ fn compute_grid(input: &Inputs<'_>, trailing_only: bool) -> CompanyFigures {
             }
         }
     }
-    // Compare each reported quarter on its own weighted-average share basis. Allow
-    // a single 0.02 per-share rounding allowance over the aggregate window. Scale by
-    // the summed size of the derived quarters, so profit and loss quarters that cancel
-    // do not shrink the denominator; for always-profitable companies this equals |TTM|.
-    let pairs: Vec<_> = window
-        .iter()
-        .filter_map(|q| {
-            Some((
-                q.eps.value?,
-                q.net_income.value? / q.shares.filter(|s| *s > Decimal::ZERO)?,
-            ))
-        })
-        .collect();
-    if pairs.len() >= 3 {
-        let reported: Decimal = pairs.iter().map(|(e, _)| *e).sum();
-        let derived: Decimal = pairs.iter().map(|(_, e)| *e).sum();
-        let scale: Decimal = pairs.iter().map(|(_, e)| e.abs()).sum();
-        if scale > Decimal::ZERO {
-            let gap = ((reported - derived).abs() - dec!(0.02)).max(Decimal::ZERO) / scale;
-            if gap >= dec!(0.05) {
-                for f in [&mut result.pe, &mut result.ps] {
-                    if f.value.is_none() {
-                        continue;
-                    }
-                    let reason = Reason::detail(
-                        if gap > dec!(0.20) {
-                            "figures_inconsistent"
-                        } else {
-                            "figures_disagree"
-                        },
-                        format!("{:.1}%", (gap * Decimal::from(100)).round_dp(1)),
-                    );
-                    if gap > dec!(0.20) {
-                        *f = Figure::missing(reason);
-                    } else {
-                        f.warn(reason);
-                    }
-                }
+    if matches!(
+        result.eps_consistency.state,
+        EpsConsistencyState::Approximate | EpsConsistencyState::Inconsistent
+    ) {
+        let severe = result.eps_consistency.state == EpsConsistencyState::Inconsistent;
+        for f in [&mut result.pe, &mut result.ps] {
+            if f.value.is_none() {
+                continue;
+            }
+            let reason = Reason::detail(
+                if severe {
+                    "figures_inconsistent"
+                } else {
+                    "figures_disagree"
+                },
+                format!(
+                    "{:.1}%",
+                    result
+                        .eps_consistency
+                        .gap_percent
+                        .expect("evaluated gap")
+                        .round_dp(1)
+                ),
+            );
+            if severe {
+                *f = Figure::missing(reason);
+            } else {
+                f.warn(reason);
             }
         }
     }

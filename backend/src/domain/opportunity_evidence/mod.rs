@@ -1,10 +1,15 @@
-//! Pure price evidence. Callers supply dates and stored data; nothing here loads or logs it.
+//! Pure opportunity evidence. Callers supply dates and stored data; nothing here loads or logs it.
 //! Evidence is requested only for rows with an available, negative recent price change.
 
+pub mod business_check;
+pub mod dividend_check;
 pub mod lookback_series;
 pub mod market_reference;
 pub mod parameters;
 pub mod price_checks;
+pub mod report_timing;
+pub mod room_to_buy;
+pub mod verdict;
 
 use chrono::NaiveDate;
 
@@ -46,5 +51,7 @@ pub enum YesNoUnknown {
     Unknown,
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

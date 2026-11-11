@@ -212,7 +212,7 @@ fn passed_schedules_preserve_certainty_and_today_does_not_count_as_a_past_report
     input.last.date = Some(d("2026-11-11"));
     assert_eq!(
         reports::in_period(&input, RecentWindow::ThirtyDays, false).state,
-        "unknown"
+        "yes"
     );
 }
 
@@ -260,6 +260,36 @@ fn business_is_independent_of_pe_and_loss_making_is_not_weakening() {
     assert!(business::evaluate(today, &loaded)
         .reasons
         .contains("expected_report_passed"));
+}
+
+#[test]
+fn business_unknown_reason_codes_keep_derived_eps_as_a_marker_only() {
+    use std::collections::BTreeSet;
+    use ticker_tape_tally_board_backend::domain::company_figures::{Figure, Reason};
+
+    for (latest_eps, expected_reason, expected_eps) in [
+        (
+            Figure::unavailable("quarter_missing"),
+            "quarter_missing",
+            "pair_unavailable",
+        ),
+        (
+            Figure::available(dec!(1.421), vec![]),
+            "eps_inconsistent",
+            "unknown_inconsistent",
+        ),
+    ] {
+        let mut loaded = loaded();
+        loaded.figures.quarters[4].eps = latest_eps;
+        loaded.figures.quarters[0].eps =
+            Figure::available(dec!(1), vec![Reason::new("eps_derived_from_net_income")]);
+        let out = business::evaluate(d("2026-11-11"), &loaded);
+        assert_eq!(out.state, "unknown");
+        // These are the codes emitted by the original readiness implementation:
+        // only the missing quarter's reasons, or the severe disagreement itself.
+        assert_eq!(out.reasons, BTreeSet::from([expected_reason]));
+        assert_eq!(out.eps, expected_eps);
+    }
 }
 
 #[test]

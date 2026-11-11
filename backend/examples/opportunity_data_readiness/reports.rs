@@ -1,4 +1,4 @@
-use chrono::{Duration, NaiveDate};
+use chrono::NaiveDate;
 use ticker_tape_tally_board_backend::{
     api::CompanyFigureInputs,
     domain::{
@@ -117,8 +117,11 @@ fn answer(state: &'static str, reason: &'static str) -> Outcome {
 }
 
 pub fn in_period(input: &ReportInputs<'_>, window: RecentWindow, relaxed: bool) -> Outcome {
-    let today = input.today;
-    let start = window.start_date(today) - Duration::days(7);
+    use ticker_tape_tally_board_backend::domain::opportunity_evidence::{
+        parameters::NoReportRule,
+        report_timing::{report_in_period, ReportTimingInputs},
+    };
+    // This tool reports only company yes/no/unknown categories, as before.
     if let Some(reason) = input
         .loaded
         .source
@@ -126,66 +129,23 @@ pub fn in_period(input: &ReportInputs<'_>, window: RecentWindow, relaxed: bool) 
     {
         return answer("unknown", reason.code);
     }
-    let mut uncertainty = None;
-    let mut upper = None;
-    if input.last.certainty == ReportCertainty::Confirmed {
-        if let Some(date) = input.last.date {
-            if date >= start && date < today {
-                return answer("yes", "confirmed_report");
-            }
-            if date == today {
-                uncertainty = Some("report_today");
-            }
-            upper = Some(date);
-        }
-    } else if let Some(observation) = input.latest_observation() {
-        upper = Some(observation.first_seen);
-        if observation.first_seen >= start && observation.first_seen <= today {
-            match observation.absent_on {
-                Some(absent) if absent >= start && absent <= observation.first_seen => {
-                    return answer("yes", "observed_report_inside_window")
-                }
-                Some(_) => uncertainty = Some("observed_interval_overlaps_window"),
-                None => uncertainty = Some(input.no_baseline_reason()),
-            }
-        } else if observation.first_seen > today {
-            uncertainty = Some("observation_after_as_of");
-        }
-    }
-    let next = &input.loaded.next_report;
-    if next.date.is_some_and(|date| date >= start && date < today) {
-        if matches!(
-            next.basis,
-            Some(EstimateBasis::CompanyAnnounced | EstimateBasis::NasdaqExpected)
-        ) {
-            return answer("yes", "scheduled_report_figures_not_seen");
-        }
-        uncertainty = Some("app_estimate_passed_in_window");
-    }
-    if let Some(reason) = uncertainty {
-        return answer("unknown", reason);
-    }
-    if !upper.is_some_and(|date| date < start) {
-        return answer("unknown", "last_report_upper_bound_unavailable");
-    }
-    let quarter_not_ended =
-        report_dates::implied_quarter(input.loaded.latest).is_some_and(|date| date > today);
-    let fresh_check = input
-        .loaded
-        .source
-        .last_success
-        .is_some_and(|date| date >= today - Duration::days(1) && date <= today);
-    if quarter_not_ended || fresh_check {
-        return answer("no", "strict_absence");
-    }
-    if relaxed
-        && input.app_next.basis == Some(EstimateBasis::LastYearDate)
-        && input
-            .app_next
-            .date
-            .is_some_and(|date| date >= today + Duration::days(14))
-    {
-        return answer("no", "report_history_horizon");
-    }
-    answer("unknown", "next_quarter_ended_no_recent_check")
+    let outcome = report_in_period(
+        &ReportTimingInputs {
+            today: input.today,
+            period_start: window.start_date(input.today),
+            latest_period: input.loaded.latest,
+            source: &input.loaded.source,
+            last: &input.last,
+            observations: input.observations,
+            earliest_first_seen: input.earliest_first_seen,
+            next: &input.loaded.next_report,
+            app_next: &input.app_next,
+        },
+        if relaxed {
+            NoReportRule::Relaxed
+        } else {
+            NoReportRule::Strict
+        },
+    );
+    answer(outcome.state.as_str(), outcome.reasons[0].code)
 }
