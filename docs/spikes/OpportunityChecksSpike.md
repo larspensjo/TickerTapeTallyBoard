@@ -339,6 +339,20 @@ The readiness counts above were measured before that decision, when both checks 
 full-year coverage, so "Unusual-drop history ready" can be understated by up to the three
 short-history rows.
 
+**History top-up trial (2026-11-11).** A latest refresh with the history top-up was run
+once against a scratch copy of the newest launch backup snapshot, deleted afterwards.
+Aggregate outcome:
+
+- 3 of 21 held rows needed a top-up; each got exactly one request and all 3 succeeded.
+- The price source had no older closes for any of the 3 (they are recent listings), so
+  their history stays short. The remaining needs were recorded, and a second refresh the
+  same day made no top-up request.
+- Both refreshes ended with the normal succeeded status and no failed items; the top-up
+  added nothing to the price counts or failures.
+- Measured afterwards under the owner's rule: unusual-drop history is ready for 19 of 21
+  rows and 1-year range history for 18 of 21. The other rows become ready as their
+  listings age, not through a top-up.
+
 When the historical moves show no variation at all, the unusual-drop check is unknown
 (`no_price_variation`) rather than yes: a threshold of zero built from a price that
 never moved would count any fall as unusual.
