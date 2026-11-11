@@ -12,6 +12,7 @@ mod day_change;
 mod holding_period_return;
 mod market_snapshot;
 mod money_weighted_return;
+pub mod opportunity_evidence;
 mod performance;
 mod period_amounts;
 mod position;

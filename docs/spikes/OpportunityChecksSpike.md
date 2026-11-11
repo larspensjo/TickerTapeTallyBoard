@@ -326,3 +326,11 @@ the later domain-parameter consistency test.
 | Stopped falling | latest close above the window low; low at least 2 trading days old |
 | Calibration final close | a close counts as final only if its `fetched_at` UTC date is after its price date |
 | Calibration sufficiency | per window: ≥ 100 dips and ≥ 30 flagged dips from ≥ 8 instruments over ≥ 26 distinct weeks |
+
+The displayed unusual-drop change is anchored on today, while the historical moves
+it is compared with are anchored on each stored close. Before the day's close, the
+displayed move can therefore span one trading day fewer than the moves in the sample.
+
+When the historical moves show no variation at all, the unusual-drop check is unknown
+(`no_price_variation`) rather than yes: a threshold of zero built from a price that
+never moved would count any fall as unusual.

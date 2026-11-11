@@ -363,6 +363,32 @@ fn final_closes_use_utc_calendar_and_splits_require_refetched_yahoo_closes() {
 }
 
 #[test]
+fn split_inventory_ignores_unused_prices_and_stops_decoding_at_the_first_blocker() {
+    let splits = [d("2026-11-10")];
+    let mut adjusted = price("2026-11-11T00:00:00Z", MarketDataProvider::Yahoo);
+    adjusted.close = "malformed synthetic close".into();
+    adjusted.date = "malformed synthetic date".into();
+    assert!(!history::split_blocks(&[adjusted.clone()], &splits).unwrap());
+
+    let mut malformed = adjusted;
+    malformed.fetched_at = "malformed synthetic timestamp".into();
+    assert!(!history::split_blocks(std::slice::from_ref(&malformed), &[]).unwrap());
+    assert!(!history::split_blocks(&[], &splits).unwrap());
+    // A needed timestamp remains an evaluation error if no earlier row blocks.
+    assert!(history::split_blocks(std::slice::from_ref(&malformed), &splits).is_err());
+    let stale = price("2026-11-10T12:00:00Z", MarketDataProvider::Yahoo);
+    assert!(history::split_blocks(&[stale, malformed.clone()], &splits).unwrap());
+    for provider in [
+        MarketDataProvider::NasdaqNordic,
+        MarketDataProvider::Manual,
+        MarketDataProvider::TwelveData,
+    ] {
+        malformed.provider = provider;
+        assert!(history::split_blocks(std::slice::from_ref(&malformed), &splits).unwrap());
+    }
+}
+
+#[test]
 fn markets_follow_enabled_source_before_currency_and_never_broker_tags() {
     let mapping = |symbol: &str, provider, currency: Option<&str>| PriceSourceMapping {
         provider,

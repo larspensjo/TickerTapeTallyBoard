@@ -1,12 +1,18 @@
 use super::{Error, Table};
-use chrono::{Datelike, Duration, NaiveDate, Utc, Weekday};
+use chrono::{Duration, NaiveDate, Utc};
 use sqlx::SqlitePool;
 use ticker_tape_tally_board_backend::{
     db::{
         instruments::InstrumentRow,
         prices::{self, PriceRow},
     },
-    domain::PriceSnapshot,
+    domain::{
+        opportunity_evidence::{
+            lookback_series,
+            parameters::{LOOKBACK_DAYS, RANGE_MIN_CLOSES, UNUSUAL_MIN_CLOSES},
+        },
+        PriceSnapshot,
+    },
     market_data::effective_prices::{self, PriceSourceMapping},
     providers::MarketDataProvider,
 };
@@ -113,27 +119,8 @@ pub fn listing_market(mappings: &[PriceSourceMapping], currency: &str) -> &'stat
     }
 }
 
-pub fn missing_weekdays(left: NaiveDate, right: NaiveDate) -> usize {
-    let mut date = left + Duration::days(1);
-    let mut count = 0;
-    while date < right {
-        if !matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
-            count += 1;
-        }
-        date += Duration::days(1);
-    }
-    count
-}
-
 pub fn has_gap(start: NaiveDate, dates: &[NaiveDate]) -> bool {
-    let mut previous = start;
-    for date in dates {
-        if missing_weekdays(previous, *date) > 5 {
-            return true;
-        }
-        previous = *date;
-    }
-    false
+    !lookback_series::history_gaps(start, dates).is_empty()
 }
 
 pub fn final_close(row: &PriceRow) -> Result<bool, Error> {
@@ -152,7 +139,7 @@ pub async fn measure_history(
     splits: &[NaiveDate],
     table: &mut Table,
 ) -> Result<(), Error> {
-    let start = today - Duration::days(365);
+    let start = today - Duration::days(LOOKBACK_DAYS);
     let mut rows = Vec::new();
     if let Some(latest) = latest {
         let provider = MarketDataProvider::from_db_str(latest.source.as_str())
@@ -180,10 +167,13 @@ pub async fn measure_history(
         .map(PriceRow::date_value)
         .collect::<Result<_, _>>()?;
     let gap = has_gap(start, &dates);
+    let unusual_short =
+        lookback_series::short_history_reason(rows.len(), UNUSUAL_MIN_CLOSES).is_some();
+    let range_short = lookback_series::short_history_reason(rows.len(), RANGE_MIN_CLOSES).is_some();
     table.add(match rows.len() {
-        200.. if !gap => "at_least_200_no_gap",
-        200.. => "at_least_200_with_gap",
-        120..=199 => "120_to_199",
+        _ if !range_short && !gap => "at_least_200_no_gap",
+        _ if !range_short => "at_least_200_with_gap",
+        _ if !unusual_short => "120_to_199",
         _ => "under_120",
     });
     if gap {
@@ -215,13 +205,13 @@ pub async fn measure_history(
     {
         table.add("source_changes");
     }
-    if rows.len() >= 120 && !gap && !split_blocks {
+    if !unusual_short && !gap && !split_blocks {
         table.add("unusual_drop_history_ready");
     }
-    if rows.len() >= 200 && !gap && !split_blocks {
+    if !range_short && !gap && !split_blocks {
         table.add("range_history_ready");
     }
-    if rows.len() < 200 || gap || split_blocks {
+    if range_short || gap || split_blocks {
         table.add("top_up_needed");
         table.add(top_up_effect(
             latest.map(|p| p.source.as_str()),
@@ -233,13 +223,17 @@ pub async fn measure_history(
 }
 
 pub fn split_blocks(rows: &[PriceRow], splits: &[NaiveDate]) -> Result<bool, Error> {
+    // Preserve the inventory's lazy decoding: prices are irrelevant here, and
+    // once a blocker is found later malformed timestamps cannot change its bucket.
     for split in splits {
         for row in rows {
-            if row.provider != MarketDataProvider::Yahoo
-                || chrono::DateTime::parse_from_rfc3339(&row.fetched_at)?
-                    .with_timezone(&Utc)
-                    .date_naive()
-                    <= *split
+            if !row.provider.history_is_split_adjusted_at_fetch()
+                || lookback_series::split_fetch_is_stale(
+                    chrono::DateTime::parse_from_rfc3339(&row.fetched_at)?
+                        .with_timezone(&Utc)
+                        .date_naive(),
+                    *split,
+                )
             {
                 return Ok(true);
             }

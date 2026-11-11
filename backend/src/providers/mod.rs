@@ -40,6 +40,11 @@ pub enum MarketDataProvider {
 }
 
 impl MarketDataProvider {
+    /// Only Yahoo is verified to restate historical closes for splits at fetch time.
+    pub fn history_is_split_adjusted_at_fetch(self) -> bool {
+        matches!(self, Self::Yahoo)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Yahoo => "YAHOO",
@@ -536,6 +541,18 @@ mod tests {
 
     use chrono::NaiveDate;
     use rust_decimal_macros::dec;
+
+    #[test]
+    fn only_yahoo_history_is_known_to_be_split_adjusted_at_fetch() {
+        assert!(MarketDataProvider::Yahoo.history_is_split_adjusted_at_fetch());
+        for provider in [
+            MarketDataProvider::NasdaqNordic,
+            MarketDataProvider::Manual,
+            MarketDataProvider::TwelveData,
+        ] {
+            assert!(!provider.history_is_split_adjusted_at_fetch());
+        }
+    }
 
     #[tokio::test]
     async fn fake_providers_record_calls_and_return_queued_results() {
