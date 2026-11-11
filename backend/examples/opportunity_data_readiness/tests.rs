@@ -293,6 +293,23 @@ fn business_unknown_reason_codes_keep_derived_eps_as_a_marker_only() {
 }
 
 #[test]
+fn readiness_known_negative_uses_domain_precedence_and_keeps_eps_bucket() {
+    use ticker_tape_tally_board_backend::domain::company_figures::Figure;
+    let today = d("2026-11-11");
+    let mut loaded = loaded();
+    loaded.figures.sales_growth.value = Some(dec!(-0.1));
+    loaded.figures.profit_margin = Figure::unavailable("too_few_quarters");
+    assert_eq!(business::evaluate(today, &loaded).state, "weakening");
+    loaded.figures.quarters[4].eps.value = Some(dec!(1.421));
+    let out = business::evaluate(today, &loaded);
+    assert_eq!(out.state, "weakening");
+    assert!(out.reasons.is_empty());
+    assert_eq!(out.eps, "unknown_inconsistent");
+    loaded.next_report.date = Some(today - Duration::days(1));
+    assert_eq!(business::evaluate(today, &loaded).state, "unknown");
+}
+
+#[test]
 fn eps_pair_uses_rounding_allowance_absolute_quarter_scale_and_both_boundaries() {
     let mut loaded = loaded();
     let pair = |loaded: &CompanyFigureInputs| {

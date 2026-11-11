@@ -134,6 +134,29 @@ pub fn business_check(
     if pair.is_some_and(|[latest, prior]| latest.currency != prior.currency) {
         out.reasons.push(Reason::new("report_currency_changed"));
     }
+    // Only known sub-test-local gaps/approximations leave another negative usable.
+    // A cached source warning on an available figure is informational, as in the
+    // company-figures contract. Every unrecognised reason fails toward unknown.
+    for figure in [&figures.profit_margin, &figures.sales_growth, eps, old_eps] {
+        for reason in &figure.reasons {
+            let local = matches!(
+                reason.code,
+                "too_few_quarters"
+                    | "quarter_missing"
+                    | "year_ago_quarter_missing"
+                    | "non_positive_revenue"
+                    | "eps_inconsistent"
+                    | "eps_disagree"
+                    | "eps_not_cross_checked"
+                    | "eps_derived_from_net_income"
+                    | "ttm_from_three_quarters"
+            ) || (figure.value.is_some() && reason.code == "source_unreachable");
+            if !local && !out.reasons.contains(reason) {
+                out.reasons.push(reason.clone());
+            }
+        }
+    }
+    let figures_unusable = !out.reasons.is_empty();
     match out.eps_consistency.state {
         EpsConsistencyState::Inconsistent => {
             out.earnings_not_sliding.passes = None;
@@ -170,14 +193,19 @@ pub fn business_check(
             }
         }
     }
+    if !figures_unusable
+        && (out.sales_not_shrinking.passes == Some(false)
+            || out.earnings_not_sliding.passes == Some(false))
+    {
+        out.state = BusinessState::Weakening;
+        // Unknown sub-tests retain their markers, but do not block the result.
+        out.reasons.clear();
+        return out;
+    }
     if !out.reasons.is_empty() {
         return out;
     }
-    out.state = if out.sales_not_shrinking.passes == Some(false)
-        || out.earnings_not_sliding.passes == Some(false)
-    {
-        BusinessState::Weakening
-    } else if out.profitable.passes == Some(false) {
+    out.state = if out.profitable.passes == Some(false) {
         BusinessState::LossMaking
     } else {
         BusinessState::Intact

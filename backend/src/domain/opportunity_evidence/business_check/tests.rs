@@ -166,9 +166,8 @@ fn missing_cross_check_inputs_do_not_block_and_derived_eps_keeps_approximation()
 }
 
 #[test]
-fn unknown_conditions_override_known_subtest_failures() {
+fn unusable_figures_override_known_subtest_failures() {
     for reason in [
-        "too_few_quarters",
         "latest_quarter_too_old",
         "report_currency_changed",
         "source_unreachable",
@@ -220,6 +219,95 @@ fn unknown_conditions_override_known_subtest_failures() {
         business_check(today(), &figures(), &s, &report(None, None)).state,
         BusinessState::Unknown
     );
+}
+
+#[test]
+fn current_known_negative_beats_missing_subtests_and_eps_disagreement() {
+    let mut f = figures();
+    f.sales_growth.value = Some(dec!(-0.1));
+    f.profit_margin = Figure::unavailable("too_few_quarters");
+    let out = run(&f);
+    assert_eq!(out.state, BusinessState::Weakening);
+    assert_eq!(out.profitable.passes, None);
+    assert!(out.reasons.is_empty());
+    f.quarters[4].eps.value = Some(dec!(1.421));
+    let out = run(&f);
+    assert_eq!(out.state, BusinessState::Weakening);
+    assert_eq!(out.earnings_not_sliding.passes, None);
+    assert!(out.reasons.is_empty());
+    assert!(out
+        .earnings_not_sliding
+        .reasons
+        .iter()
+        .any(|r| r.code == "eps_inconsistent"));
+    // Earnings alone establishes weakening, without either sales or profitability.
+    for (prior, latest) in [
+        (dec!(1), dec!(0.89)),
+        (dec!(1), dec!(-0.01)),
+        (dec!(-1), dec!(-1.11)),
+    ] {
+        let mut f = figures();
+        f.sales_growth = Figure::unavailable("year_ago_quarter_missing");
+        f.profit_margin = Figure::unavailable("too_few_quarters");
+        set_eps(&mut f, 0, prior);
+        set_eps(&mut f, 4, latest);
+        assert_eq!(run(&f).state, BusinessState::Weakening);
+    }
+}
+
+#[test]
+fn known_negative_never_overrides_out_of_date_or_passed_report_or_source_blockers() {
+    let mut f = figures();
+    f.sales_growth.value = Some(dec!(-0.1));
+    f.profit_margin
+        .reasons
+        .push(Reason::new("newer_report_expected"));
+    assert_eq!(run(&f).state, BusinessState::Unknown);
+    f.profit_margin.reasons.clear();
+    let next = report(
+        Some(today() - chrono::Duration::days(1)),
+        Some(crate::domain::report_dates::EstimateBasis::TypicalGap),
+    );
+    assert_eq!(
+        business_check(today(), &f, &source(), &next).state,
+        BusinessState::Unknown
+    );
+    let mut s = source();
+    s.awaiting_figures = true;
+    assert_eq!(
+        business_check(today(), &f, &s, &report(None, None)).state,
+        BusinessState::Unknown
+    );
+    s.awaiting_figures = false;
+    s.classification = Classification::Unknown;
+    assert_eq!(
+        business_check(today(), &f, &s, &report(None, None)).state,
+        BusinessState::Unknown
+    );
+}
+
+#[test]
+fn missing_subtest_without_known_negative_stays_unknown() {
+    for subtest in ["margin", "sales", "earnings"] {
+        let mut f = figures();
+        match subtest {
+            "margin" => f.profit_margin = Figure::unavailable("too_few_quarters"),
+            "sales" => f.sales_growth = Figure::unavailable("year_ago_quarter_missing"),
+            _ => f.quarters[4].eps = Figure::unavailable("quarter_missing"),
+        }
+        assert_eq!(run(&f).state, BusinessState::Unknown);
+    }
+}
+
+#[test]
+fn cached_source_warning_does_not_make_available_current_figures_unusable() {
+    let mut f = figures();
+    f.profit_margin
+        .reasons
+        .push(Reason::new("source_unreachable"));
+    assert_eq!(run(&f).state, BusinessState::Intact);
+    f.sales_growth.value = Some(dec!(-0.1));
+    assert_eq!(run(&f).state, BusinessState::Weakening);
 }
 
 #[test]
@@ -418,4 +506,19 @@ fn unavailable_figures_cannot_pass_even_without_a_source_reason() {
     f.profit_margin.value = None;
     f.profit_margin.reasons.clear();
     assert_eq!(run(&f).state, BusinessState::Unknown);
+}
+
+#[test]
+fn unrecognised_figure_reason_blocks_a_current_known_negative() {
+    for available in [false, true] {
+        let mut f = figures();
+        f.sales_growth.value = Some(dec!(-0.1));
+        f.profit_margin
+            .reasons
+            .push(Reason::new("future_staleness_rule"));
+        if !available {
+            f.profit_margin.value = None;
+        }
+        assert_eq!(run(&f).state, BusinessState::Unknown);
+    }
 }
