@@ -46,9 +46,8 @@ strict rule answered 2 of 20 held company rows at 30 days).
 Outcome of the calibration replay (2026-11-11): **Calibrated**, thresholds unchanged, and
 **no measurable edge** for flagged dips over the following 20 trading days.
 
-Owner answer after the replay, relayed by the orchestrator on 2026-11-12 and to be
-confirmed by the owner in the implementation session before it enters the decision log:
-**the verdicts are shown as planned**, with a visible, honest note that a verdict describes
+Owner decision after the replay (2026-11-12, relayed by the orchestrator and confirmed by
+the owner in the implementation session): **the verdicts are shown as planned**, with a visible, honest note that a verdict describes
 the dip and does not predict the price, and the replay is repeated as history grows. The
 owner also said that 20 trading days may be too short a horizon and that more evaluations
 of this kind may be needed; see "Proposal for the owner: longer horizons and repeat
@@ -890,9 +889,8 @@ not calibrated, because stored figures are not point-in-time. During market hour
 and "stopped falling" can change before the close. The 2026-11-11 replay of stored price
 history had enough data to judge the thresholds and kept them, but found no measurable
 difference over the following 20 trading days between flagged and other dips; the owner
-chose to show the verdicts with a visible note that a verdict describes the dip and does
-not predict the price, and the replay is repeated as history grows (wording to be confirmed
-with the owner before this entry is written).
+chose on 2026-11-12 to show the verdicts with a visible note that a verdict describes the
+dip and does not predict the price, and the replay is repeated as history grows.
 
 **B. The Latest Refresh Tops Up A Year Of Daily History For Held Instruments — refines
 2026-10-15 The Latest Price Refresh Covers The Longest Recent-Change Window**
