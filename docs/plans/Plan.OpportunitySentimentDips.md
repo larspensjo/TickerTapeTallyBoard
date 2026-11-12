@@ -915,9 +915,11 @@ Opportunities Page Measures Recent Share-Price Change Over Its Own Window**
 Decision: The Yahoo chart response's dividend events are validated separately from its
 closes and stored per instrument with a coverage record per mapping, written with the closes
 they arrived with; a re-fetched range replaces its events. Invalid dividend data never fails
-the closes, never replaces stored events and never extends coverage; it is reported as its
-own refresh item outside the price/FX status. An ex-dividend date counts as known only
-inside covered ranges. Ledger dividends are not used as ex-dates.
+the closes, never replaces stored events and never extends coverage; the failed range is
+remembered, so the ex-dividend check is unknown there until a later valid capture covers
+it; it is reported as its own refresh item outside the price/FX status. An ex-dividend date
+counts as known only inside covered ranges, which end at the last day a price was actually
+received. Ledger dividends are not used as ex-dates.
 Context: The page could not tell an ex-dividend drop from a fall. The request already asked
 for dividend events; ledger dividends carry the payment date and arrive only with imports.
 Consequences: Nasdaq Nordic-only instruments have no known ex-dividend dates. No extra
