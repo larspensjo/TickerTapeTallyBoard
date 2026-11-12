@@ -24,13 +24,15 @@ use super::{refresh::RefreshLease, refresh_contract::MarketDataError};
 pub(crate) struct ResolvedPriceHistory {
     pub(crate) provider_symbol: String,
     pub(crate) rows: Vec<crate::providers::DailyClose>,
+    pub(crate) dividends: crate::providers::DividendCapture,
 }
 
 impl ResolvedPriceHistory {
-    pub(crate) fn new(provider_symbol: &str, rows: Vec<crate::providers::DailyClose>) -> Self {
+    pub(crate) fn new(provider_symbol: &str, history: crate::providers::PriceHistory) -> Self {
         Self {
             provider_symbol: provider_symbol.to_owned(),
-            rows,
+            rows: history.closes,
+            dividends: history.dividends,
         }
     }
 }
@@ -60,7 +62,7 @@ pub(crate) async fn price_history_with_symbol_recovery(
 
     match initial {
         Ok(rows) => {
-            let latest_date = latest_close_date(&rows);
+            let latest_date = latest_close_date(&rows.closes);
             if latest_date.is_some_and(|date| date >= window.end) {
                 return Ok(ResolvedPriceHistory::new(mapped_symbol, rows));
             }
@@ -80,7 +82,8 @@ pub(crate) async fn price_history_with_symbol_recovery(
 
             Ok(ResolvedPriceHistory {
                 provider_symbol: recovered.provider_symbol,
-                rows: merge_price_histories(rows, recovered.rows),
+                rows: merge_price_histories(rows.closes, recovered.rows),
+                dividends: recovered.dividends,
             })
         }
         Err(error) => {
@@ -180,8 +183,8 @@ pub(crate) async fn recover_changed_yahoo_symbol(
             Ok(rows) => rows,
             Err(_) => continue,
         };
-        if rows.is_empty()
-            || rows.iter().any(|row| {
+        if rows.closes.is_empty()
+            || rows.closes.iter().any(|row| {
                 !row.currency
                     .trim()
                     .eq_ignore_ascii_case(instrument.currency.trim())
@@ -189,7 +192,7 @@ pub(crate) async fn recover_changed_yahoo_symbol(
         {
             continue;
         }
-        let Some(latest_date) = latest_close_date(&rows) else {
+        let Some(latest_date) = latest_close_date(&rows.closes) else {
             continue;
         };
         if mapped_latest_date.is_some_and(|mapped_date| latest_date <= mapped_date) {
@@ -216,7 +219,8 @@ pub(crate) async fn recover_changed_yahoo_symbol(
 
     Some(ResolvedPriceHistory {
         provider_symbol: selected.1,
-        rows: selected.2,
+        rows: selected.2.closes,
+        dividends: selected.2.dividends,
     })
 }
 

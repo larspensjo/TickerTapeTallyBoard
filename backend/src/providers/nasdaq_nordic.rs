@@ -208,7 +208,7 @@ impl super::PriceProvider for NasdaqNordicClient {
     async fn daily_history(
         &self,
         request: &PriceHistoryRequest,
-    ) -> ProviderResult<Vec<DailyClose>> {
+    ) -> ProviderResult<super::PriceHistory> {
         if request
             .quote_currency
             .as_deref()
@@ -271,7 +271,7 @@ impl super::PriceProvider for NasdaqNordicClient {
         if let Err(error) = &parsed {
             Self::log_price_failure(request, error);
         }
-        parsed
+        parsed.map(super::PriceHistory::from)
     }
 }
 
@@ -756,6 +756,7 @@ mod tests {
         .expect("Yahoo fixture should parse");
 
         let yahoo_by_date = yahoo
+            .closes
             .into_iter()
             .map(|row| (row.date, row.close))
             .collect::<std::collections::BTreeMap<_, _>>();

@@ -440,7 +440,7 @@ impl PriceProvider for GatedHistory {
     async fn daily_history(
         &self,
         request: &crate::providers::PriceHistoryRequest,
-    ) -> crate::providers::ProviderResult<Vec<DailyClose>> {
+    ) -> crate::providers::ProviderResult<crate::providers::PriceHistory> {
         if (request.end - request.start).num_days() > 37 {
             self.entered.notify_one();
             self.release.notified().await;

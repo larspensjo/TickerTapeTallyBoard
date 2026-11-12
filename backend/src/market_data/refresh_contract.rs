@@ -55,6 +55,7 @@ pub enum RefreshItemKind {
     Price,
     Fx,
     History,
+    Dividend,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]

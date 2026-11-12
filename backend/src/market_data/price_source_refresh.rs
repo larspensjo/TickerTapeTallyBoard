@@ -82,6 +82,7 @@ pub(super) async fn refresh_one_source(
 
     let provider_symbol = resolved.provider_symbol;
     let rows = resolved.rows;
+    let dividends = resolved.dividends;
 
     if !provider_symbol.eq_ignore_ascii_case(&mapped_symbol) {
         // The recovery path only accepts candidates whose rows quote in the
@@ -147,6 +148,14 @@ pub(super) async fn refresh_one_source(
     let rows_to_write = rows.clone();
     let instrument_id = instrument.id;
     let provider = source.provider;
+    let dividend_item = super::dividend_capture::invalid_item(
+        &dividends,
+        instrument_id,
+        provider,
+        &provider_symbol,
+    );
+    let (start, end) = (window.start, window.end);
+    let latest_close = rows.iter().map(|row| row.date).max();
     let write =
         crate::db::market_data_runs::fenced_write(pool, lease.run_id, &lease.owner, |conn| {
             Box::pin(async move {
@@ -165,6 +174,15 @@ pub(super) async fn refresh_one_source(
                     )
                     .await?;
                 }
+                crate::db::dividends::capture(
+                    conn,
+                    instrument_id,
+                    provider,
+                    start..=end,
+                    latest_close,
+                    &dividends,
+                )
+                .await?;
                 Ok(())
             })
         })
@@ -172,10 +190,17 @@ pub(super) async fn refresh_one_source(
     if write.is_err() {
         return Err(MarketDataError::LeaseLost);
     }
+    super::dividend_capture::log_invalid_item(
+        dividend_item.as_ref(),
+        lease.run_id,
+        provider,
+        start,
+        end,
+    );
 
     let reason = clamp_reason(instrument, source, &provider_symbol, &rows, window, mode);
 
-    Ok(SourceRefreshOutcome::succeeded(RefreshItem {
+    let mut outcome = SourceRefreshOutcome::succeeded(RefreshItem {
         kind: RefreshItemKind::Price,
         instrument_id: Some(instrument.id),
         provider: Some(source.provider.to_string()),
@@ -183,7 +208,9 @@ pub(super) async fn refresh_one_source(
         status: RefreshItemStatus::Fetched,
         reason,
         rows_written: rows.len(),
-    }))
+    });
+    outcome.dividend_item = dividend_item;
+    Ok(outcome)
 }
 
 /// Rewrite one mapping's enabled flag (and, after a symbol recovery, its
@@ -264,6 +291,7 @@ pub(super) async fn price_history_for_source(
 /// The result of fetching one instrument from one of its sources.
 pub(super) struct SourceRefreshOutcome {
     pub(super) item: RefreshItem,
+    pub(super) dividend_item: Option<RefreshItem>,
     pub(super) failed: bool,
 }
 
@@ -271,12 +299,17 @@ impl SourceRefreshOutcome {
     fn succeeded(item: RefreshItem) -> Self {
         Self {
             item,
+            dividend_item: None,
             failed: false,
         }
     }
 
     fn failed(item: RefreshItem) -> Self {
-        Self { item, failed: true }
+        Self {
+            item,
+            dividend_item: None,
+            failed: true,
+        }
     }
 }
 

@@ -235,7 +235,8 @@ pub(super) async fn run(
             .await
             {
                 Ok(Some(item)) => {
-                    items.push(item);
+                    items.push(item.history);
+                    items.extend(item.dividend);
                 }
                 Ok(None) => {}
                 Err(MarketDataError::LeaseLost) => return Err(MarketDataError::LeaseLost),
@@ -319,6 +320,11 @@ async fn load_series(
     ))
 }
 
+struct TopUpOutcome {
+    history: RefreshItem,
+    dividend: Option<RefreshItem>,
+}
+
 async fn top_up_one(
     providers: &ProviderSet,
     pool: &SqlitePool,
@@ -327,7 +333,7 @@ async fn top_up_one(
     clock: &Clock,
     context: &HistoryContext<'_>,
     stop_pass: &mut bool,
-) -> Result<Option<RefreshItem>, MarketDataError> {
+) -> Result<Option<TopUpOutcome>, MarketDataError> {
     let target = context.target;
     let lease = context.lease;
     let (start, today) = (context.start, context.end);
@@ -404,8 +410,10 @@ async fn top_up_one(
             "provider_unregistered",
         )),
     }
-    .and_then(|rows| {
-        let rows: Vec<_> = rows
+    .and_then(|history| {
+        let latest_close = history.closes.iter().map(|row| row.date).max();
+        let rows: Vec<_> = history
+            .closes
             .into_iter()
             .filter(|row| row.date >= start && row.date <= today)
             .collect();
@@ -417,12 +425,19 @@ async fn top_up_one(
                 "invalid history row provider or currency",
             ))
         } else {
-            Ok(rows)
+            Ok((
+                crate::providers::PriceHistory {
+                    closes: rows,
+                    dividends: history.dividends,
+                },
+                latest_close,
+            ))
         }
     });
     check_cancelled(lease)?;
-    let (rows, status, reason, remaining) = match result {
-        Ok(rows) => {
+    let (rows, dividends, latest_close, status, reason, remaining) = match result {
+        Ok((history, latest_close)) => {
+            let rows = history.closes;
             for row in &rows {
                 series.closes.retain(|close| close.date != row.date);
                 if row.date >= series.start {
@@ -448,7 +463,14 @@ async fn top_up_one(
                     MarketDataError::internal(error.to_string()),
                 )
             })?;
-            (rows, RefreshItemStatus::Fetched, None, Some(remaining))
+            (
+                rows,
+                history.dividends,
+                latest_close,
+                RefreshItemStatus::Fetched,
+                None,
+                Some(remaining),
+            )
         }
         Err(error) => {
             *stop_pass = matches!(
@@ -458,6 +480,8 @@ async fn top_up_one(
             crate::engine_warn!("history top-up failure run_id={} instrument_id={} provider={} symbol={} start={} end={} operation=daily_history reason={} message={}", lease.run_id, target.instrument.id, mapping.provider, mapping.provider_symbol, start, today, error.reason_code(), error.message());
             (
                 Vec::new(),
+                crate::providers::DividendCapture::NotReported,
+                None,
                 provider_error_status(&error),
                 Some(error.reason_code().to_owned()),
                 None,
@@ -470,6 +494,12 @@ async fn top_up_one(
     let instrument_id = target.instrument.id;
     let provider = mapping.provider;
     let expected_mapping = mapping.clone();
+    let dividend = super::dividend_capture::invalid_item(
+        &dividends,
+        instrument_id,
+        provider,
+        &mapping.provider_symbol,
+    );
     let written = market_data_runs::fenced_write(pool, lease.run_id, &lease.owner, |conn| {
         Box::pin(async move {
             if !history_topups::mapping_is_current(&mut *conn, &expected_mapping).await? {
@@ -491,6 +521,15 @@ async fn top_up_one(
                 )
                 .await?;
             }
+            crate::db::dividends::capture(
+                conn,
+                instrument_id,
+                provider,
+                start..=today,
+                latest_close,
+                &dividends,
+            )
+            .await?;
             history_topups::finish(conn, mapping_id, today, earliest, remaining.as_deref()).await?;
             Ok(true)
         })
@@ -522,16 +561,29 @@ async fn top_up_one(
     };
     if !written {
         crate::engine_warn!("history top-up discarded changed mapping run_id={} instrument_id={} provider={} symbol={} start={} end={}", lease.run_id, instrument_id, provider, mapping.provider_symbol, start, today);
-        return Ok(Some(history_item(
-            target,
-            mapping,
-            RefreshItemStatus::Missing,
-            Some("mapping_changed".to_owned()),
-            0,
-        )));
+        return Ok(Some(TopUpOutcome {
+            history: history_item(
+                target,
+                mapping,
+                RefreshItemStatus::Missing,
+                Some("mapping_changed".to_owned()),
+                0,
+            ),
+            dividend: None,
+        }));
     }
+    super::dividend_capture::log_invalid_item(
+        dividend.as_ref(),
+        lease.run_id,
+        provider,
+        start,
+        today,
+    );
     crate::engine_info!("history top-up completed run_id={} instrument_id={} provider={} symbol={} start={} end={} rows={} reason={:?}", lease.run_id, instrument_id, provider, mapping.provider_symbol, start, today, count, reason);
-    Ok(Some(history_item(target, mapping, status, reason, count)))
+    Ok(Some(TopUpOutcome {
+        history: history_item(target, mapping, status, reason, count),
+        dividend,
+    }))
 }
 
 fn check_cancelled(lease: &RefreshLease) -> Result<(), MarketDataError> {

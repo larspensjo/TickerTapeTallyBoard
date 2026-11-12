@@ -191,6 +191,7 @@ pub(super) async fn execute_refresh(
                 );
             }
             items.push(outcome.item);
+            items.extend(outcome.dividend_item);
         }
     }
 

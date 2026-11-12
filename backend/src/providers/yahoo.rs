@@ -6,8 +6,8 @@ use serde_json::Number;
 use std::str::FromStr;
 
 use super::{
-    DailyClose, MarketDataProvider, PriceHistoryRequest, ProviderError, ProviderMissingReason,
-    ProviderResult, SymbolSearchMatch,
+    DailyClose, DividendCapture, MarketDataProvider, PriceHistory, PriceHistoryRequest,
+    ProviderError, ProviderMissingReason, ProviderResult, SymbolSearchMatch,
 };
 
 const DEFAULT_BASE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
@@ -76,7 +76,7 @@ impl YahooChartClient {
         );
     }
 
-    pub(crate) fn parse_response(symbol: &str, body: &str) -> ProviderResult<Vec<DailyClose>> {
+    pub(crate) fn parse_response(symbol: &str, body: &str) -> ProviderResult<PriceHistory> {
         let response: YahooChartResponse = serde_json::from_str(body).map_err(|error| {
             ProviderError::provider_error(
                 MarketDataProvider::Yahoo.as_str(),
@@ -98,6 +98,11 @@ impl YahooChartClient {
         })?;
 
         let meta_symbol = result.meta.symbol.unwrap_or_else(|| symbol.to_owned());
+        let dividends = parse_dividends(
+            &result.events,
+            result.meta.currency.as_deref(),
+            result.meta.gmtoffset.unwrap_or(0),
+        );
         let currency = result.meta.currency.ok_or_else(|| {
             ProviderError::provider_error(
                 MarketDataProvider::Yahoo.as_str(),
@@ -135,7 +140,10 @@ impl YahooChartClient {
         }
 
         rows.sort_by_key(|row| row.date);
-        Ok(rows)
+        Ok(PriceHistory {
+            closes: rows,
+            dividends,
+        })
     }
 }
 
@@ -274,10 +282,7 @@ impl super::SymbolSearchProvider for YahooSearchClient {
 
 #[async_trait::async_trait]
 impl super::PriceProvider for YahooChartClient {
-    async fn daily_history(
-        &self,
-        request: &PriceHistoryRequest,
-    ) -> ProviderResult<Vec<DailyClose>> {
+    async fn daily_history(&self, request: &PriceHistoryRequest) -> ProviderResult<PriceHistory> {
         let symbol = request.symbol.as_str();
         let start = request.start;
         let end = request.end;
@@ -332,7 +337,72 @@ fn date_from_timestamp(timestamp: i64, gmtoffset: i64) -> ProviderResult<NaiveDa
             format!("Yahoo timestamp {timestamp} could not be converted to a date"),
         )
     })?;
-    Ok((datetime + Duration::seconds(gmtoffset)).date_naive())
+    datetime
+        .checked_add_signed(Duration::try_seconds(gmtoffset).ok_or_else(|| {
+            ProviderError::provider_error(
+                MarketDataProvider::Yahoo.as_str(),
+                "invalid chart GMT offset",
+            )
+        })?)
+        .map(|datetime| datetime.date_naive())
+        .ok_or_else(|| {
+            ProviderError::provider_error(MarketDataProvider::Yahoo.as_str(), "chart date overflow")
+        })
+}
+
+fn parse_dividends(
+    events: &serde_json::Value,
+    currency: Option<&str>,
+    offset: i64,
+) -> DividendCapture {
+    use crate::domain::opportunity_evidence::dividend_check::DividendEvent;
+    let parse = || -> Result<Vec<DividendEvent>, &'static str> {
+        let currency = currency
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("dividend_currency_missing")?;
+        if matches!(currency, "GBp" | "GBX" | "ZAc" | "ILA") {
+            return Err("dividend_currency_subunit_ambiguous");
+        }
+        if events.is_null() {
+            return Ok(vec![]);
+        }
+        let object = events.as_object().ok_or("dividend_events_invalid")?;
+        let Some(dividends) = object.get("dividends") else {
+            return Ok(vec![]);
+        };
+        let dividends = dividends.as_object().ok_or("dividend_events_invalid")?;
+        let mut amounts = std::collections::BTreeMap::new();
+        for event in dividends.values() {
+            let timestamp = event
+                .get("date")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or("dividend_date_invalid")?;
+            let ex_date =
+                date_from_timestamp(timestamp, offset).map_err(|_| "dividend_date_invalid")?;
+            let amount = event
+                .get("amount")
+                .and_then(serde_json::Value::as_number)
+                .and_then(|number| Decimal::from_str(&number.to_string()).ok())
+                .filter(|amount| *amount > Decimal::ZERO)
+                .ok_or("dividend_amount_invalid")?;
+            let total = amounts.entry(ex_date).or_insert(Decimal::ZERO);
+            *total = total.checked_add(amount).ok_or("dividend_amount_invalid")?;
+        }
+        Ok(amounts
+            .into_iter()
+            .map(|(ex_date, amount)| DividendEvent {
+                ex_date,
+                amount,
+                currency: currency.to_owned(),
+            })
+            .collect())
+    };
+    match parse() {
+        Ok(events) => DividendCapture::Valid(events),
+        Err(reason) => DividendCapture::Invalid {
+            reason: reason.to_owned(),
+        },
+    }
 }
 
 fn number_to_decimal(number: &Number, symbol: &str) -> ProviderResult<Decimal> {
@@ -419,6 +489,8 @@ struct YahooChartError {
 struct YahooChartResult {
     meta: YahooMeta,
     #[serde(default)]
+    events: serde_json::Value,
+    #[serde(default)]
     timestamp: Vec<i64>,
     indicators: YahooIndicators,
 }
@@ -452,12 +524,146 @@ mod tests {
     use chrono::NaiveDate;
 
     #[test]
+    fn dividend_fixtures_preserve_closes_and_chart_currency() {
+        for (symbol, body, count, date, amount, currency) in [
+            (
+                "MSFT",
+                include_str!("../../tests/fixtures/market_data/yahoo_msft_dividend.json"),
+                15,
+                "2026-08-20",
+                "0.91",
+                "USD",
+            ),
+            (
+                "VOLV-B.ST",
+                include_str!("../../tests/fixtures/market_data/yahoo_volv_b_st_dividend.json"),
+                32,
+                "2026-04-09",
+                "13.0",
+                "SEK",
+            ),
+        ] {
+            let history = YahooChartClient::parse_response(symbol, body).unwrap();
+            assert_eq!(history.closes.len(), count);
+            let DividendCapture::Valid(events) = history.dividends else {
+                panic!("valid dividends expected");
+            };
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].ex_date, date.parse::<NaiveDate>().unwrap());
+            assert_eq!(events[0].amount, amount.parse::<Decimal>().unwrap());
+            assert_eq!(events[0].currency, currency);
+        }
+        let history = YahooChartClient::parse_response(
+            "INVE-B.ST",
+            include_str!("../../tests/fixtures/market_data/yahoo_inve_b_adjusted.json"),
+        )
+        .unwrap();
+        assert!(matches!(history.dividends, DividendCapture::Valid(events) if events.len() == 1));
+    }
+
+    #[test]
+    fn dividend_dates_share_close_timezone_and_validation_is_all_or_nothing() {
+        let body = serde_json::json!({"chart":{"result":[{
+            "meta":{"symbol":"TEST", "currency":"USD", "gmtoffset":-18000},
+            "timestamp":[0], "indicators":{"quote":[{"close":[100]}]},
+            "events":{"dividends":{"0":{"date":0,"amount":1}}}
+        }],"error":null}});
+        let parsed = YahooChartClient::parse_response("TEST", &body.to_string()).unwrap();
+        let DividendCapture::Valid(events) = parsed.dividends else {
+            panic!("valid capture");
+        };
+        assert_eq!(
+            events[0].ex_date,
+            "1969-12-31".parse::<NaiveDate>().unwrap()
+        );
+        assert_eq!(events[0].ex_date, parsed.closes[0].date);
+        let mut bad = body.clone();
+        bad["chart"]["result"][0]["events"]["dividends"]["second"] =
+            serde_json::json!({"date":86400});
+        let parsed = YahooChartClient::parse_response("TEST", &bad.to_string()).unwrap();
+        assert_eq!(parsed.closes.len(), 1);
+        assert_eq!(
+            parsed.dividends,
+            DividendCapture::Invalid {
+                reason: "dividend_amount_invalid".into()
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_dividends_never_reject_valid_closes() {
+        let original: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/market_data/yahoo_msft_dividend.json"
+        ))
+        .unwrap();
+        for field in ["date", "amount"] {
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!("bad"),
+                serde_json::json!(-1),
+                serde_json::json!(0),
+            ] {
+                let mut body = original.clone();
+                let dividends = body["chart"]["result"][0]["events"]["dividends"]
+                    .as_object_mut()
+                    .unwrap();
+                dividends.values_mut().next().unwrap()[field] = value;
+                if field == "date" && dividends.values().next().unwrap()[field].as_i64().is_some() {
+                    continue; // Negative timestamps and the epoch are representable dates.
+                }
+                let history = YahooChartClient::parse_response("MSFT", &body.to_string()).unwrap();
+                assert_eq!(history.closes.len(), 15);
+                assert!(matches!(history.dividends, DividendCapture::Invalid { .. }));
+            }
+        }
+        for currency in [
+            None,
+            Some(""),
+            Some("GBp"),
+            Some("GBX"),
+            Some("ZAc"),
+            Some("ILA"),
+        ] {
+            let mut body = original.clone();
+            body["chart"]["result"][0]["meta"]["currency"] = serde_json::json!(currency);
+            let parsed = YahooChartClient::parse_response("MSFT", &body.to_string());
+            if currency.is_none() {
+                assert_eq!(parsed.unwrap_err().reason_code(), "provider_error");
+                continue;
+            }
+            let history = parsed.unwrap();
+            assert_eq!(history.closes.len(), 15);
+            assert!(history
+                .closes
+                .iter()
+                .all(|row| Some(row.currency.as_str()) == currency));
+            assert!(matches!(history.dividends, DividendCapture::Invalid { .. }));
+        }
+        let mut body = original.clone();
+        body["chart"]["result"][0]["events"] = serde_json::json!({"splits": {}});
+        assert_eq!(
+            YahooChartClient::parse_response("MSFT", &body.to_string())
+                .unwrap()
+                .dividends,
+            DividendCapture::Valid(vec![])
+        );
+        body["chart"]["result"][0]["events"]["dividends"] = serde_json::json!([]);
+        assert!(matches!(
+            YahooChartClient::parse_response("MSFT", &body.to_string())
+                .unwrap()
+                .dividends,
+            DividendCapture::Invalid { .. }
+        ));
+    }
+
+    #[test]
     fn parses_msft_fixture_into_daily_closes() {
         let rows = YahooChartClient::parse_response(
             "MSFT",
             include_str!("../../tests/fixtures/market_data/yahoo_msft.json"),
         )
-        .expect("fixture should parse");
+        .expect("fixture should parse")
+        .closes;
 
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].provider, MarketDataProvider::Yahoo);
@@ -476,7 +682,8 @@ mod tests {
             "ASML.AS",
             include_str!("../../tests/fixtures/market_data/yahoo_asml_as.json"),
         )
-        .expect("fixture should parse");
+        .expect("fixture should parse")
+        .closes;
 
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].provider_symbol, "ASML.AS");

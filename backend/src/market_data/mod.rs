@@ -1,3 +1,4 @@
+mod dividend_capture;
 pub mod effective_prices;
 mod fundamentals_preview;
 mod fundamentals_refresh;

@@ -2,6 +2,7 @@ mod memory_pool;
 mod pool;
 mod repo_error;
 
+pub mod dividends;
 pub mod fundamental_values;
 pub mod fundamentals_sources;
 pub mod fx_rates;

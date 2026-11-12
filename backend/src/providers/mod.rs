@@ -40,6 +40,9 @@ pub enum MarketDataProvider {
 }
 
 impl MarketDataProvider {
+    pub fn reports_dividends(self) -> bool {
+        matches!(self, Self::Yahoo)
+    }
     /// Only Yahoo is verified to restate historical closes for splits at fetch time.
     pub fn history_is_split_adjusted_at_fetch(self) -> bool {
         matches!(self, Self::Yahoo)
@@ -140,6 +143,28 @@ pub struct DailyClose {
     pub date: NaiveDate,
     pub close: Decimal,
     pub currency: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DividendCapture {
+    NotReported,
+    Valid(Vec<crate::domain::opportunity_evidence::dividend_check::DividendEvent>),
+    Invalid { reason: String },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PriceHistory {
+    pub closes: Vec<DailyClose>,
+    pub dividends: DividendCapture,
+}
+
+impl From<Vec<DailyClose>> for PriceHistory {
+    fn from(closes: Vec<DailyClose>) -> Self {
+        Self {
+            closes,
+            dividends: DividendCapture::NotReported,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,8 +286,7 @@ pub type ProviderResult<T> = Result<T, ProviderError>;
 
 #[async_trait]
 pub trait PriceProvider: Send + Sync {
-    async fn daily_history(&self, request: &PriceHistoryRequest)
-        -> ProviderResult<Vec<DailyClose>>;
+    async fn daily_history(&self, request: &PriceHistoryRequest) -> ProviderResult<PriceHistory>;
 }
 
 #[async_trait]
@@ -311,7 +335,7 @@ pub struct FakePriceProvider {
 
 #[derive(Default)]
 struct FakePriceProviderState {
-    responses: VecDeque<ProviderResult<Vec<DailyClose>>>,
+    responses: VecDeque<ProviderResult<PriceHistory>>,
     calls: Vec<PriceHistoryRequest>,
     next_call_gate: Option<Arc<Notify>>,
 }
@@ -329,6 +353,10 @@ impl FakePriceProvider {
     }
 
     pub fn push_response(&self, response: ProviderResult<Vec<DailyClose>>) {
+        self.push_history_response(response.map(PriceHistory::from));
+    }
+
+    pub fn push_history_response(&self, response: ProviderResult<PriceHistory>) {
         self.state
             .lock()
             .expect("fake price provider mutex poisoned")
@@ -360,10 +388,7 @@ impl Default for FakePriceProvider {
 
 #[async_trait]
 impl PriceProvider for FakePriceProvider {
-    async fn daily_history(
-        &self,
-        request: &PriceHistoryRequest,
-    ) -> ProviderResult<Vec<DailyClose>> {
+    async fn daily_history(&self, request: &PriceHistoryRequest) -> ProviderResult<PriceHistory> {
         let (gate, response) = {
             let mut state = self
                 .state
@@ -584,7 +609,7 @@ mod tests {
             })
             .await
             .expect("fake price call should succeed");
-        assert_eq!(prices.len(), 1);
+        assert_eq!(prices.closes.len(), 1);
 
         let rates = fx
             .fx_history(

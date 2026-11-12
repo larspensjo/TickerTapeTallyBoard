@@ -1,6 +1,7 @@
 use super::*;
 
 mod avanza_symbol_mapping;
+mod dividends;
 mod fundamentals;
 mod history_topup;
 mod instrument_selection;
