@@ -1,6 +1,7 @@
 pub(super) mod loading;
 mod response;
-use response::{CompanyFiguresResponse, FigureResponse, ReportDateResponse};
+pub(super) use response::ReportDateResponse;
+use response::{CompanyFiguresResponse, FigureResponse};
 
 use crate::{
     api::{error::ApiError, valuation::load_valuation_inputs},
@@ -114,8 +115,8 @@ pub(super) async fn load(
         next_report,
         source,
         link,
-        latest,
-        annual,
+        last_report,
+        ..
     } = loading::load_inputs(
         pool,
         instrument,
@@ -123,17 +124,11 @@ pub(super) async fn load(
         clock,
         loaded_price,
         loaded_fx,
-        None,
+        loading::LoadScope::Stock,
     )
     .await?;
     let id = instrument.id;
     let awaiting = source.awaiting_figures;
-    let observations = crate::db::report_announcements::observations(pool, id).await?;
-    let (_, last_report) =
-        report_dates::report_dates(today, latest, &annual, &observations, &source);
-    let announcements = crate::db::report_announcements::current(pool, id).await?;
-    let last_report =
-        report_dates::confirmed_last(today, last_report, &announcements, &observations);
     let panel = SourcePanel {
         symbol: link.as_ref().and_then(|s| s.definition.symbol.clone()),
         origin: link.as_ref().map(|s| s.definition.origin),
@@ -194,7 +189,7 @@ pub(super) async fn load_holdings(
         clock,
         holding.latest_price_snapshot(),
         holding.latest_fx_snapshot(),
-        Some(&holding.ledger),
+        loading::LoadScope::Holdings(&holding.ledger),
     )
     .await?;
     Ok(HoldingsFundamentals {

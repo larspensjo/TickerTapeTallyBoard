@@ -2,9 +2,7 @@ use chrono::NaiveDate;
 use ticker_tape_tally_board_backend::{
     api::CompanyFigureInputs,
     domain::{
-        report_dates::{
-            self, Announcement, EstimateBasis, Observation, ReportCertainty, ReportDate,
-        },
+        report_dates::{EstimateBasis, Observation, ReportCertainty, ReportDate},
         RecentWindow,
     },
 };
@@ -27,35 +25,14 @@ pub struct ReportInputs<'a> {
     pub app_next: ReportDate,
 }
 impl<'a> ReportInputs<'a> {
-    pub fn new(
-        today: NaiveDate,
-        loaded: &'a CompanyFigureInputs,
-        observations: &'a [Observation],
-        announcements: &[Announcement],
-    ) -> Self {
-        let (_, last) = report_dates::report_dates(
-            today,
-            loaded.latest,
-            &loaded.annual,
-            observations,
-            &loaded.source,
-        );
-        let last = report_dates::confirmed_last(today, last, announcements, observations);
-        let history = report_dates::real_report_history(announcements, observations);
-        let app_next = report_dates::next_report(
-            today,
-            loaded.latest,
-            &loaded.annual,
-            &history,
-            &loaded.source,
-        );
+    pub fn from_loaded(today: NaiveDate, loaded: &'a CompanyFigureInputs) -> Self {
         Self {
             today,
             loaded,
-            observations,
-            earliest_first_seen: observations.iter().map(|o| o.first_seen).min(),
-            last,
-            app_next,
+            observations: &loaded.observations,
+            earliest_first_seen: loaded.earliest_first_seen,
+            last: loaded.last_report.clone(),
+            app_next: loaded.app_next_report.clone(),
         }
     }
     pub fn first_fetch_without_baseline(&self) -> bool {

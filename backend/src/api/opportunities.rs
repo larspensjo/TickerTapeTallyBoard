@@ -19,6 +19,8 @@ use crate::domain::{
 use crate::market_data::effective_prices;
 use crate::state::AppState;
 
+mod evidence;
+
 #[derive(Debug, Deserialize)]
 pub struct OpportunitiesQuery {
     pub window: Option<String>,
@@ -50,6 +52,7 @@ pub struct OpportunityRow {
     pub unrealized_gain_percent: AvailabilityResponse,
     pub unrealized_gain_freshness: Option<String>,
     pub conviction_target: ConvictionTargetResponse,
+    pub evidence: Option<evidence::EvidenceResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,7 +115,7 @@ pub async fn handler(
         .map(ValuedOpenHolding::conviction_target_input)
         .collect();
     let targets = derive_targets(&inputs);
-    let mut rows = Vec::new();
+    let mut pending = Vec::new();
 
     for (holding, target) in holdings
         .iter()
@@ -142,9 +145,35 @@ pub async fn handler(
         } else {
             RecentPriceChange::Unavailable(vec![RecentChangeReason::NoPriceSource])
         };
-        rows.push(build_opportunity_row(
-            holding, target, change, window, start_date, &tickers,
-        )?);
+        pending.push((holding, target, change));
+    }
+    let held_changes: Vec<_> = pending
+        .iter()
+        .map(|(holding, _, change)| {
+            (
+                holding.instrument.id,
+                match change {
+                    RecentPriceChange::Available { change_percent, .. } => Some(*change_percent),
+                    RecentPriceChange::Unavailable(_) => None,
+                },
+            )
+        })
+        .collect();
+    let mut rows = Vec::with_capacity(pending.len());
+    for (holding, target, change) in pending {
+        let evidence = evidence::load(
+            &state,
+            today,
+            window,
+            holding,
+            target,
+            &change,
+            &held_changes,
+        )
+        .await?;
+        let mut row = build_opportunity_row(holding, target, change, window, start_date, &tickers)?;
+        row.evidence = evidence;
+        rows.push(row);
     }
 
     Ok(Json(OpportunitiesResponse {
@@ -239,6 +268,7 @@ fn build_opportunity_row(
         unrealized_gain_percent,
         unrealized_gain_freshness,
         conviction_target: build_conviction_target(target, &holding.market_value_reasons()),
+        evidence: None,
     })
 }
 

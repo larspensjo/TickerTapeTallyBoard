@@ -1,6 +1,13 @@
 use super::*;
 use crate::domain::LedgerTransaction;
 
+#[derive(Clone, Copy)]
+pub enum LoadScope<'a> {
+    Stock,
+    Holdings(&'a [LedgerTransaction]),
+    Evidence(&'a [LedgerTransaction]),
+}
+
 pub struct Loaded {
     pub figures: CompanyFigures,
     pub next_report: ReportDate,
@@ -8,6 +15,11 @@ pub struct Loaded {
     pub link: Option<fundamentals_sources::SourceLink>,
     pub latest: Option<NaiveDate>,
     pub annual: Vec<NaiveDate>,
+    pub last_report: ReportDate,
+    pub app_next_report: ReportDate,
+    pub observations: Vec<report_dates::Observation>,
+    pub earliest_first_seen: Option<NaiveDate>,
+    pub provider_splits: Vec<NaiveDate>,
 }
 
 pub(super) fn local_date(
@@ -30,8 +42,12 @@ pub async fn load_inputs(
     clock: &crate::clock::Clock,
     loaded_price: Option<&PriceSnapshot>,
     loaded_fx: Option<&FxSnapshot>,
-    ledger: Option<&[LedgerTransaction]>,
+    scope: LoadScope<'_>,
 ) -> Result<Loaded, ApiError> {
+    let ledger = match scope {
+        LoadScope::Stock => None,
+        LoadScope::Holdings(ledger) | LoadScope::Evidence(ledger) => Some(ledger),
+    };
     let id = instrument.id;
     let stored = fundamental_values::active_values(pool, id).await?;
     let (link, state) = if ledger.is_some() {
@@ -92,13 +108,31 @@ pub async fn load_inputs(
         .map(|v| v.input.period_end)
         .collect();
     let announcements = crate::db::report_announcements::current(pool, id).await?;
-    let observations = crate::db::report_announcements::observations(pool, id).await?;
+    // Only evidence needs the absence baseline across annual and quarterly periods.
+    // Holdings must not decode unrelated annual observations or panel metadata.
+    let observation_type = match scope {
+        LoadScope::Evidence(_) => None,
+        _ => Some(PeriodType::Quarter),
+    };
+    let period_observations =
+        fundamental_values::active_observations(pool, id, observation_type).await?;
+    let earliest_first_seen = period_observations.iter().map(|o| o.first_seen_on).min();
+    let observations: Vec<_> = period_observations
+        .into_iter()
+        .filter(|o| o.period_type == PeriodType::Quarter)
+        .map(|o| report_dates::Observation {
+            period_end: o.period_end,
+            first_seen: o.first_seen_on,
+            absent_on: o.absent_fetch_on,
+        })
+        .collect();
     let history = report_dates::real_report_history(&announcements, &observations);
-    let next_report = report_dates::scheduled_next(
-        today,
-        report_dates::next_report(today, latest, &annual, &history, &source),
-        &announcements,
-    );
+    let app_next_report = report_dates::next_report(today, latest, &annual, &history, &source);
+    let next_report = report_dates::scheduled_next(today, app_next_report.clone(), &announcements);
+    let (_, last_report) =
+        report_dates::report_dates(today, latest, &annual, &observations, &source);
+    let last_report =
+        report_dates::confirmed_last(today, last_report, &announcements, &observations);
     let price = loaded_price.map(|p| Price {
         date: p.date,
         close: p.close,
@@ -190,11 +224,12 @@ pub async fn load_inputs(
             });
         }
     }
-    let mut splits: Vec<_> = fundamental_values::active_splits(pool, id)
+    let provider_splits: Vec<_> = fundamental_values::active_splits(pool, id)
         .await?
         .iter()
         .map(|s| s.date)
         .collect();
+    let mut splits = provider_splits.clone();
     if let Some(ledger) = ledger {
         splits.extend(
             ledger
@@ -233,5 +268,10 @@ pub async fn load_inputs(
         link,
         latest,
         annual,
+        last_report,
+        app_next_report,
+        observations,
+        earliest_first_seen,
+        provider_splits,
     })
 }

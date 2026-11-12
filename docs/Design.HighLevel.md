@@ -133,11 +133,11 @@ Multi-currency rules: every transaction stores its native currency; the FX rate 
   ```
 
   The app-bar **Refresh** button (accessible name "Refresh prices") sends `mode: "latest"` and fills the 37-calendar-day window ending today, which covers the Opportunities page's longest period (30 days) plus its start-close tolerance; the length is that period plus a fixed margin kept wider than the tolerance.
-- **Dividend captures:** Yahoo's existing chart request supplies closes and separately validated dividend events without extra calls. Ex-dates use the chart GMT offset, like close dates; positive amounts use the chart currency. Latest refreshes, backfills and history top-ups store valid captures in the closes' fenced transaction: events inside the requested range are replaced (including removal). Per-mapping valid coverage starts at the requested start and ends at the earlier of the requested end and the latest returned close, even for zero events; no valid coverage is added without a returned close on or after its start. Invalid captures preserve events and valid coverage, record the requested range as failed so ex-dividend evidence is unknown, and report a separate `dividend` refresh item with contextual engine logging after the write commits. Overlapping or directly adjacent coverage ranges with the same mapping and outcome merge without bridging uncovered days; merged failures retain the most recently recorded reason. A later valid capture clears failures only in the part it covers. Missing or empty currency and ambiguous sub-unit quotations (GBp, GBX, ZAc, ILA) invalidate the dividend capture defensively; price handling is unchanged: missing chart currency fails the price fetch and empty currency is passed through to price validation. Price/FX outcomes and counts are independent of dividend validation. Failed price fetches leave events and coverage untouched. Nasdaq Nordic and default fake responses supply no dividend information and create no coverage. Repository reads provide single-source events, valid and failed coverage, and the source's dividend-reporting capability to the pure ex-dividend check; Opportunities is not yet wired to these stored facts.
+- **Dividend captures:** Yahoo's existing chart request supplies closes and separately validated dividend events without extra calls. Ex-dates use the chart GMT offset, like close dates; positive amounts use the chart currency. Latest refreshes, backfills and history top-ups store valid captures in the closes' fenced transaction: events inside the requested range are replaced (including removal). Per-mapping valid coverage starts at the requested start and ends at the earlier of the requested end and the latest returned close, even for zero events; no valid coverage is added without a returned close on or after its start. Invalid captures preserve events and valid coverage, record the requested range as failed so ex-dividend evidence is unknown, and report a separate `dividend` refresh item with contextual engine logging after the write commits. Overlapping or directly adjacent coverage ranges with the same mapping and outcome merge without bridging uncovered days; merged failures retain the most recently recorded reason. A later valid capture clears failures only in the part it covers. Missing or empty currency and ambiguous sub-unit quotations (GBp, GBX, ZAc, ILA) invalidate the dividend capture defensively; price handling is unchanged: missing chart currency fails the price fetch and empty currency is passed through to price validation. Price/FX outcomes and counts are independent of dividend validation. Failed price fetches leave events and coverage untouched. Nasdaq Nordic and default fake responses supply no dividend information and create no coverage. Repository reads provide single-source events, valid and failed coverage, and the source's dividend-reporting capability to the Opportunities ex-dividend check.
 - **Daily history top-up:** After company figures, latest refreshes automatically fetch a look-back year plus the longest recent-change window for held instruments (quantity above zero) whose latest-source series is short, has a gap beyond five weekdays, or contains closes fetched on or before a split's UTC date in the look-back. Only repairable needs trigger a request; a split alone never triggers one for a source whose split adjustment is unverified. History uses the latest close's source and the instrument's currency, following the shared opportunity-evidence rules. Each needing mapping gets one request, at most once per application-clock local day, including failed or interrupted attempts. Successful attempts atomically store prices and a JSON snapshot of the remaining needs, so an unchanged short history or gap is not retried as the window advances; a new gap, split-stale need or changed mapping can trigger another attempt. Invalid snapshots are logged and treated as unusable bookkeeping. A rate limit or provider outage stops further top-ups in the run, leaving unattempted mappings free to try later. A split-only need waits until the UTC fetch date is after the split; a successful attempt for other needs omits such not-yet-repairable splits from its remaining-needs snapshot so they can trigger a later attempt. All writes verify the refresh lease. History outcomes have their own `history` response item kind and never change price/FX status or counts or create a frontend notice. The normal 37-day window remains unchanged, exchange-rate holes are not topped up, and neither backfills nor offline demo run this pass. Added history participates in valuation as a correction and is published through the existing leased finish revision, after the earlier price/FX publication; there is no additional publication rule.
 - Fetched data is cached in SQLite and valuation reads the stored rows; refreshes fetch each enabled provider mapping and upsert its returned rows. Refresh runs as a background job at application launch and on demand from the manual refresh action; there is no scheduled fetch.
 - **Company figures:** Each instrument has a company-figures source link separate from its price mappings. Discovery verifies an enabled Yahoo listing first, then searches by ISIN or symbol when needed, preferring the same exchange for Nordic listings. Classification distinguishes companies, funds and certificates; uncertain or missing data remains explicit. Yahoo's fundamentals-timeseries endpoint supplies quarterly, annual, trailing and market-value evidence; its chart endpoint supplies classification and split events. Calls happen outside database transactions. Latest-mode refreshes fetch company figures after prices and FX; backfills do not fetch them, and demo mode remains offline. The pure company-figures result also carries EPS consistency independently of P/E and P/S. A shared evaluation compares reported EPS with net income divided by diluted shares over a caller-selected set of quarters, using one aggregate 0.02 rounding allowance, 5%/20% tolerances and summed absolute derived quarter EPS as the scale. Trailing ratios retain their existing results; company-side opportunity checks evaluate their latest/year-ago pair without inheriting unrelated valuation limitations.
-- **Pure company-side opportunity evidence:** Report timing, business health, ex-dividend evidence, room to buy and the five-rule verdict consume supplied dates and domain values without I/O. Confirmed last reports include today when figures have appeared; scheduled reports today count only as coming soon. Period-only evidence stays an interval or upper bound, and relaxed absence wording uses an earlier company-announced or Nasdaq-expected schedule when present. Unknown business reasons identify unavailable inputs or severe EPS disagreement; approximation markers remain on sub-tests. Dividend amounts are compared with the start close only when their currencies match. The readiness tool shares the report and business rules; the running application does not yet call these opportunity checks.
+- **Pure company-side opportunity evidence:** Report timing, business health, ex-dividend evidence, room to buy and the five-rule verdict consume supplied dates and domain values without I/O. Confirmed last reports include today when figures have appeared; scheduled reports today count only as coming soon. Period-only evidence stays an interval or upper bound, and relaxed absence wording uses an earlier company-announced or Nasdaq-expected schedule when present. Unknown business reasons identify unavailable inputs or severe EPS disagreement; approximation markers remain on sub-tests. Dividend amounts are compared with the start close only when their currencies match. The Opportunities API and readiness tool share the company-figures and report-evidence loader and pure report and business rules, without assembling a stock-page source panel.
 - **US report dates:** Nasdaq's per-symbol `api/analyst/{SYMBOL}/earnings-date` supplies dates for refresh targets matched by a suffix-free enabled Yahoo price symbol, or a suffix-free company-figures symbol for a USD listing. Only the report text is interpreted; analyst figures are ignored. The company-announced text form, including session and fiscal quarter, gives a confirmed date. Algorithmic dates are labelled **Nasdaq expected**, ahead of the app's estimate. Lookups use concurrency four and run at most once per local day: when there is no unresolved announcement, an unresolved date is within seven days or has passed, or the last successful lookup is over three days old. Confirmed dates continue to be checked for moves. A rate limit stops new Nasdaq requests for the rest of that run; remaining work reports `skipped_rate_limited`.
 - **Schedule reconciliation:** A different dated answer for the same explicit or baseline-implied fiscal quarter supersedes the old announcement and records its successor; a dated symbol answer also supersedes future or same-day entries with no explicit quarter; another quarter creates a separate announcement. Missing, unknown and failed per-symbol answers never withdraw dates. The by-day calendar is only a fallback presence check of a stored unresolved announcement's own day, after a missing or unknown answer or once the day arrives. Each day is attempted at most once per local day, including failures; last-success timestamps survive later failed attempts, and successful empty results withdraw missing entries. Report-day, past-day and results-layout rows prove presence without changing the recorded kind, while filling a missing fiscal quarter. There is no horizon scan or past-calendar backfill: past days lose the company-announced mark. All refresh writes verify the lease and re-derive the US ticker; figures-link identities also check link generation.
 - **Report selection and history:** The earliest active unresolved schedule stays next even after it passes, with `report_date_passed` for confirmed dates or `estimate_passed` for estimates. It keeps daily figures fetching due until closed. Resolution matches explicit or baseline-implied fiscal year and month; a later stored quarter supersedes a skipped-quarter announcement without confirming history. With no quarter baseline, resolution uses the first new quarter seen on or after the scheduled day when the fiscal quarter is absent. Confirmed last reports require a company-announced kind at resolution and figures first seen on or after the scheduled date. Nasdaq-expected schedules never become confirmed history. App estimates, including year-ago estimates, use the app's own resolved company-announced reports and observation windows of seven days or less. In the weeks after a report, US holdings show the app's estimate when no unresolved Nasdaq date remains. Announcement rows are retained through state changes. Offline demo data adds synthetic future, expected, overdue and resolved schedules to existing companies without changing portfolio totals.
@@ -159,14 +159,88 @@ Sharesight's **All Trades Report** exports to XLS/Google Sheets with trade date,
 TODO: Avanza import rows already parse and count dividends, but dividend rows are not written into the ledger yet. When dividend support lands, route them into the income/gains model instead of leaving them as import-only metadata.
 
 ### API surface (v1 sketch)
-REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/opportunities?window=7d|14d|30d` (held assets' recent share-price change over a backend-resolved window), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices` (price history, plus the instrument's running average cost segments over its whole ledger and the open position's current native average), `POST /api/import/sharesight`, `POST /api/prices/refresh`.
+REST/JSON: `GET/POST /api/transactions`, `GET /api/holdings` (derived), `GET /api/opportunities?window=7d|14d|30d` (held assets' recent share-price change over a backend-resolved window, plus evidence and a rule-based verdict for each fall), `GET /api/instruments`, `GET /api/portfolio/value-history`, `GET /api/instruments/:id/prices` (price history, plus the instrument's running average cost segments over its whole ledger and the open position's current native average), `POST /api/import/sharesight`, `POST /api/prices/refresh`.
+
+`GET /api/opportunities` keeps its existing `period`, ordered held `rows` and
+`data_revision` cache-token contract. Each row adds `evidence`, which is `null`
+unless the exact available native close-to-close change is negative (even when a
+tiny fall rounds to `0.00`). Evidence loading uses stored data only; a repository
+or decoding failure fails the request and logs instrument id, exchange, symbol,
+window and operation.
+
+The evidence object has `verdict` and `checks`. `verdict` contains `code`,
+`deciding`, `missing` and `cautions`; check references and cautions are snake_case
+strings. Verdict codes are `sentiment_dip_candidate`,
+`possible_candidate_report_timing_unknown`, `not_enough_data`,
+`fell_for_a_reason` and `normal_movement`. Candidate cautions are `loss_making`,
+`report_coming_soon`, `already_at_target` and `no_target`; the corresponding check
+carries the report's date and certainty. Unknown evidence never passes. Price
+checks decide normal movement first, then a report in the period or weakening
+business explains the fall, then usable company evidence (or positively identified
+non-company checks) permits a candidate. Unknown report timing alone permits a
+possible candidate when the business passes and price evidence is present.
+
+Every named check contains `state`, `reasons` and the following fields. Reasons
+are objects with `code` and optional `detail`; history reasons can also carry
+`start` (gap), `date` (split or invalid close), `count` and `required`. Every
+`unknown` check has at least one reason. Missing values are JSON `null`. Dates
+are ISO calendar strings. Percentage values are strings with exactly two decimals;
+closes, dividend amounts and EPS retain decimal precision.
+
+| `checks` field | States | Additional fields |
+|---|---|---|
+| `unusual_drop` | `yes`, `no`, `unknown` | `change_percent`, `adjusted_change_percent`, `usual_move_percent`, `threshold_percent`, `closes`, `sample_moves` |
+| `off_high` | `deep`, `not_deep`, `unknown` | `closes`, `latest_close`, `high_close`, `low_close`, `below_high_percent`, `above_low_percent`, `near_low` |
+| `report_in_period` | `yes`, `no`, `unknown`, `not_applicable` | `window_start`, `window_end`, `last_report`, `scheduled_report`, `no_report_expected_before` |
+| `report_coming_soon` | `yes`, `no`, `unknown`, `not_applicable` | `report` |
+| `business` | `intact`, `weakening`, `loss_making`, `unknown`, `not_applicable` | `profitable`, `sales_not_shrinking`, `earnings_not_sliding`, `eps_consistency` |
+| `market` | `fell_more_than_market`, `moved_with_market`, `fell_less_than_market`, `unknown` | `source`, `change_percent`, `reference_percent`, `difference_percent`, `margin_percent`, `count` |
+| `stopped_falling` | `yes`, `no`, `unknown` | `latest_close`, `low_close`, `low_date`, `low_age_trading_days` |
+| `ex_dividend` | `yes`, `no`, `unknown` | `events`, `amount`, `percent_of_start_close` |
+| `room_to_buy` | `room_to_buy`, `already_at_target`, `no_target`, `unknown` | `target_status` |
+
+`last_report` is a tagged object: `kind: confirmed` has `date`;
+`kind: interval` has `period_end`, `absent_on`, `first_seen`;
+`kind: upper_bound` has `period_end`, `first_seen`. Period-only knowledge never
+becomes an exact date. `scheduled_report` and `report` use the existing report-date
+shape: `certainty`, `basis`, `date`, `days_until`, `period_end`,
+`observed_between`, `reasons`. Business sub-tests contain `passes` (boolean or
+null), `value`, `year_ago_value`, `approximate`, `reasons`; margin and sales growth
+values are percentages, while earnings values are EPS. `eps_consistency` contains
+`state` (`unavailable`, `not_cross_checked`, `consistent`, `approximate`,
+`inconsistent`), `gap_percent` and `compared_quarters`, independently of valuation
+ratio limitations. Dividend `events` contain `ex_date`, `amount`, `currency`.
+`sample_moves` is null until the historical move sample has been built; a computed
+sample retains its count even when it is too small or has no price variation.
+Dividend `events` is null when coverage or input validation prevents event
+selection, an empty array when a covered interval has no events, and retains
+selected events when a currency mismatch prevents amount comparison.
+`target_status` uses the existing conviction-target status codes; target values
+and gaps remain in the row's unchanged `conviction_target` block.
+
+Price evidence uses one source (the latest close's source), fetch times, ledger
+and stored provider splits, and the source's explicit split-adjustment capability.
+Unusual drop requires 120 closes without internal gaps; off-high additionally
+requires full-year coverage and 200 closes. Report timing explicitly uses the
+relaxed no-report rule. Company checks are not applicable only for positively
+identified non-companies. A current, clearly negative business sub-test means
+weakening even if another sub-test is unknown; a usable loss-making business can
+qualify with its caution. Market context is the median change of at least five
+other held rows with available changes in the same window, excluding the row
+itself. A known ex-dividend event after the start close and on or before the end
+close adds its percentage back only for the unusual-drop comparison; the row's
+displayed change stays close-to-close. Market, stopped-falling and target context
+do not change the verdict. A verdict describes the dip and does not predict price.
 
 Each Holdings row includes an additive `fundamentals` block with `pe`, `ps`, and
 `next_report`. Its calculations reuse that row's already loaded effective close
 and FX inputs, including the already loaded ledger for split checks. Its lighter
-read path loads only the report observations needed for estimates and assembles
-only the trailing calculation quarters; it does not decode source-panel candidates or assemble
-historical display quarters. `GET /api/instruments/:id/fundamentals` returns `pe`, `ps`,
+read path shares report observations, confirmed history, independent app estimates
+and source state with Opportunities and the readiness tool, and assembles only the
+trailing calculation quarters. Holdings retains its quarterly-only observation
+read; opportunity evidence and the readiness tool also read annual observations
+for the earliest absence baseline. Holdings does not decode source-panel candidates
+or assemble historical display quarters. `GET /api/instruments/:id/fundamentals` returns `pe`, `ps`,
 `profit_margin`, `sales_growth`, the FX conversion and share-basis state, next and
 last report dates, a quarter grid with explicit missing slots between stored
 quarters (never before the earliest stored quarter), and source-panel

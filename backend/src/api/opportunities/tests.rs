@@ -7,6 +7,8 @@ use axum::http::StatusCode;
 use rust_decimal_macros::dec;
 use serde_json::{json, Value};
 
+mod evidence;
+
 fn date(value: &str) -> NaiveDate {
     value.parse().expect("date")
 }
@@ -124,6 +126,7 @@ async fn get(state: &AppState, window: &str) -> Value {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    evidence::assert_unknown_reasons(&body);
     body
 }
 
@@ -538,6 +541,7 @@ async fn demo_mode_serves_available_changes_for_every_held_row_in_every_window()
     assert_eq!(status, StatusCode::OK);
     let holdings = holdings["holdings"].as_array().expect("holdings");
     assert!(!holdings.is_empty());
+    let mut saw_fall = false;
     for window in ["7d", "14d", "30d"] {
         let body = get(&state, window).await;
         let rows = body["rows"].as_array().expect("rows");
@@ -552,6 +556,24 @@ async fn demo_mode_serves_available_changes_for_every_held_row_in_every_window()
                 opportunity["price_change"]["status"], "available",
                 "window={window}, row={opportunity}"
             );
+            let start: rust_decimal::Decimal = opportunity["price_change"]["start_close"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let end: rust_decimal::Decimal = opportunity["price_change"]["end_close"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            if end < start {
+                saw_fall = true;
+                assert!(
+                    opportunity["evidence"].is_object(),
+                    "window={window}, row={opportunity}"
+                );
+            }
+            evidence::assert_unknown_reasons(opportunity);
             assert_eq!(
                 opportunity["unrealized_gain_percent"],
                 holding["valuation"]["unrealized_gain_percent"]
@@ -562,4 +584,8 @@ async fn demo_mode_serves_available_changes_for_every_held_row_in_every_window()
             );
         }
     }
+    assert!(
+        saw_fall,
+        "demo must exercise evidence for a held row that fell"
+    );
 }

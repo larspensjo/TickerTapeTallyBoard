@@ -8,7 +8,7 @@ use chrono::Datelike;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet};
 use ticker_tape_tally_board_backend::{
-    api::load_company_figure_inputs,
+    api::{load_company_figure_inputs, CompanyFigureScope},
     clock::Clock,
     db::{self, instruments, prices, transactions},
     domain::{
@@ -323,7 +323,7 @@ pub async fn measure_as_of(
                 clock,
                 snapshot,
                 None,
-                Some(ledger),
+                CompanyFigureScope::Evidence(ledger),
             )
             .await,
         ) else {
@@ -358,24 +358,8 @@ pub async fn measure_as_of(
                 _ => "future_timestamp",
             },
         );
-        let report_inputs = async {
-            Ok::<_, Error>((
-                db::report_announcements::observations(pool, instrument.id).await?,
-                db::report_announcements::current(pool, instrument.id).await?,
-                db::fundamental_values::active_observations(pool, instrument.id, None)
-                    .await?
-                    .iter()
-                    .map(|o| o.first_seen_on)
-                    .min(),
-            ))
-        }
-        .await;
-        if let Some((observations, announcements, earliest_first_seen)) =
-            summary.evaluate("R2-R3 report observations", report_inputs)
         {
-            let mut inputs =
-                reports::ReportInputs::new(today, &loaded, &observations, &announcements);
-            inputs.earliest_first_seen = earliest_first_seen;
+            let inputs = reports::ReportInputs::from_loaded(today, &loaded);
             let region = usize::from(market != "us");
             report_knowledge[region].population += 1;
             report_knowledge[region].add(reports::knowledge(&inputs));

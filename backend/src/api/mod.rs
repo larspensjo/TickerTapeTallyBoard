@@ -41,7 +41,8 @@ use crate::state::AppState;
 pub use error::ApiError;
 // Read-only tooling reuses the same figure and source inputs as the application.
 pub use fundamentals::loading::{
-    load_inputs as load_company_figure_inputs, Loaded as CompanyFigureInputs,
+    load_inputs as load_company_figure_inputs, LoadScope as CompanyFigureScope,
+    Loaded as CompanyFigureInputs,
 };
 
 pub fn reject_demo_mutation(state: &AppState) -> Result<(), ApiError> {

@@ -65,10 +65,15 @@ fn loaded() -> CompanyFigureInputs {
     CompanyFigureInputs {
         figures,
         next_report: report_dates::next_report(today, latest, &[], &[], &source),
-        source,
+        source: source.clone(),
         link: None,
         latest,
         annual: vec![],
+        last_report: report_dates::report_dates(today, latest, &[], &[], &source).1,
+        app_next_report: report_dates::next_report(today, latest, &[], &[], &source),
+        observations: vec![],
+        earliest_first_seen: None,
+        provider_splits: vec![],
     }
 }
 fn observation(first: &str, absent: Option<&str>) -> Observation {
@@ -78,18 +83,18 @@ fn observation(first: &str, absent: Option<&str>) -> Observation {
         absent_on: absent.map(d),
     }
 }
+fn with_observations(loaded: &mut CompanyFigureInputs, observations: Vec<Observation>) {
+    loaded.earliest_first_seen = observations.iter().map(|o| o.first_seen).min();
+    loaded.observations = observations;
+}
 fn outcome(
-    loaded: &CompanyFigureInputs,
+    loaded: &mut CompanyFigureInputs,
     observation: &Observation,
     relaxed: bool,
 ) -> reports::Outcome {
+    with_observations(loaded, vec![observation.clone()]);
     reports::in_period(
-        &reports::ReportInputs::new(
-            d("2026-11-11"),
-            loaded,
-            std::slice::from_ref(observation),
-            &[],
-        ),
+        &reports::ReportInputs::from_loaded(d("2026-11-11"), loaded),
         RecentWindow::ThirtyDays,
         relaxed,
     )
@@ -100,7 +105,7 @@ fn reports_use_intervals_and_upper_bounds_without_midpoint_substitution() {
     let mut loaded = loaded();
     assert_eq!(
         outcome(
-            &loaded,
+            &mut loaded,
             &observation("2026-11-05", Some("2026-10-25")),
             false
         )
@@ -109,7 +114,7 @@ fn reports_use_intervals_and_upper_bounds_without_midpoint_substitution() {
     );
     assert_eq!(
         outcome(
-            &loaded,
+            &mut loaded,
             &observation("2026-10-15", Some("2026-09-20")),
             false
         )
@@ -117,12 +122,12 @@ fn reports_use_intervals_and_upper_bounds_without_midpoint_substitution() {
         "observed_interval_overlaps_window"
     );
     assert_eq!(
-        outcome(&loaded, &observation("2026-10-15", None), false).reason,
+        outcome(&mut loaded, &observation("2026-10-15", None), false).reason,
         "first_fetch_without_baseline"
     );
     // The widened window begins Oct 5; an earlier upper bound and unended quarter suffice.
     assert_eq!(
-        outcome(&loaded, &observation("2026-10-04", None), false).state,
+        outcome(&mut loaded, &observation("2026-10-04", None), false).state,
         "no"
     );
     loaded.latest = Some(d("2026-06-30"));
@@ -132,13 +137,13 @@ fn reports_use_intervals_and_upper_bounds_without_midpoint_substitution() {
         absent_on: None,
     };
     assert_eq!(
-        outcome(&loaded, &old, false).reason,
+        outcome(&mut loaded, &old, false).reason,
         "next_quarter_ended_no_recent_check"
     );
     loaded.source.last_success = Some(d("2026-11-10"));
-    assert_eq!(outcome(&loaded, &old, false).state, "no");
+    assert_eq!(outcome(&mut loaded, &old, false).state, "no");
     loaded.source.last_success = Some(d("2026-11-09"));
-    assert_eq!(outcome(&loaded, &old, false).state, "unknown");
+    assert_eq!(outcome(&mut loaded, &old, false).state, "unknown");
 }
 
 #[test]
@@ -150,7 +155,8 @@ fn report_history_horizon_changes_only_the_relaxed_rule_at_fourteen_days() {
         first_seen: d("2026-08-01"),
         absent_on: None,
     }];
-    let mut inputs = reports::ReportInputs::new(d("2026-11-11"), &loaded, &observations, &[]);
+    with_observations(&mut loaded, observations.into());
+    let mut inputs = reports::ReportInputs::from_loaded(d("2026-11-11"), &loaded);
     inputs.app_next.basis = Some(EstimateBasis::LastYearDate);
     inputs.app_next.date = Some(d("2026-11-25"));
     assert_eq!(
@@ -186,7 +192,7 @@ fn passed_schedules_preserve_certainty_and_today_does_not_count_as_a_past_report
     ] {
         loaded.next_report.date = Some(d("2026-11-10"));
         loaded.next_report.basis = Some(basis);
-        let result = outcome(&loaded, &old, false);
+        let result = outcome(&mut loaded, &old, false);
         assert_eq!(
             result.state,
             if matches!(
@@ -200,9 +206,10 @@ fn passed_schedules_preserve_certainty_and_today_does_not_count_as_a_past_report
         );
     }
     loaded.next_report.date = Some(d("2026-11-11"));
-    assert_eq!(outcome(&loaded, &old, false).state, "no");
+    assert_eq!(outcome(&mut loaded, &old, false).state, "no");
     let observations = [old];
-    let mut input = reports::ReportInputs::new(d("2026-11-11"), &loaded, &observations, &[]);
+    with_observations(&mut loaded, observations.into());
+    let mut input = reports::ReportInputs::from_loaded(d("2026-11-11"), &loaded);
     input.last.certainty = ReportCertainty::Confirmed;
     input.last.date = Some(d("2026-11-10"));
     assert_eq!(
@@ -218,19 +225,17 @@ fn passed_schedules_preserve_certainty_and_today_does_not_count_as_a_past_report
 
 #[test]
 fn knowledge_keeps_wide_observations_and_missing_baselines_distinct() {
-    let loaded = loaded();
+    let mut loaded = loaded();
     for (first, absent, expected) in [
         ("2026-11-10", Some("2026-11-03"), "observed_at_most_7_days"),
         ("2026-11-10", Some("2026-11-02"), "observed_wider"),
         ("2026-11-10", None, "first_fetch_without_baseline"),
     ] {
-        let observations = [observation(first, absent)];
+        with_observations(&mut loaded, vec![observation(first, absent)]);
         assert_eq!(
-            reports::knowledge(&reports::ReportInputs::new(
+            reports::knowledge(&reports::ReportInputs::from_loaded(
                 d("2026-11-11"),
                 &loaded,
-                &observations,
-                &[]
             )),
             expected
         );
@@ -685,7 +690,7 @@ async fn historical_buy_more_counts_respect_splits_closing_and_same_day_order() 
 
 #[test]
 fn first_fetch_is_distinct_from_later_missing_baselines_under_both_rules() {
-    let loaded = loaded();
+    let mut loaded = loaded();
     let mut observations = vec![observation("2026-11-05", None)];
     for earliest in ["2026-11-05", "2026-10-01"] {
         observations.push(Observation {
@@ -693,7 +698,8 @@ fn first_fetch_is_distinct_from_later_missing_baselines_under_both_rules() {
             first_seen: d(earliest),
             absent_on: None,
         });
-        let input = reports::ReportInputs::new(d("2026-11-11"), &loaded, &observations, &[]);
+        with_observations(&mut loaded, observations.clone());
+        let input = reports::ReportInputs::from_loaded(d("2026-11-11"), &loaded);
         let reason = if earliest == "2026-11-05" {
             "first_fetch_without_baseline"
         } else {
@@ -709,7 +715,8 @@ fn first_fetch_is_distinct_from_later_missing_baselines_under_both_rules() {
         observations.pop();
     }
     observations[0].absent_on = Some(d("2026-11-04"));
-    let input = reports::ReportInputs::new(d("2026-11-11"), &loaded, &observations, &[]);
+    with_observations(&mut loaded, observations);
+    let input = reports::ReportInputs::from_loaded(d("2026-11-11"), &loaded);
     assert!(!input.first_fetch_without_baseline());
 }
 
