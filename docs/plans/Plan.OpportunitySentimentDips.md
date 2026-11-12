@@ -43,6 +43,17 @@ conflicting text below:
 Outcome of the readiness measurement: the **relaxed** "no report" rule is selected (the
 strict rule answered 2 of 20 held company rows at 30 days).
 
+Outcome of the calibration replay (2026-11-11): **Calibrated**, thresholds unchanged, and
+**no measurable edge** for flagged dips over the following 20 trading days.
+
+Owner answer after the replay, relayed by the orchestrator on 2026-11-12 and to be
+confirmed by the owner in the implementation session before it enters the decision log:
+**the verdicts are shown as planned**, with a visible, honest note that a verdict describes
+the dip and does not predict the price, and the replay is repeated as history grows. The
+owner also said that 20 trading days may be too short a horizon and that more evaluations
+of this kind may be needed; see "Proposal for the owner: longer horizons and repeat
+replays" below.
+
 Settled by the session lead (open to challenge): the "no report in the period" rule is
 chosen from the readiness measurement by the data-driven rule below; the market check is
 context only and never changes the verdict tier; a possible candidate carries the same
@@ -715,8 +726,15 @@ Calibrated.
    target, no target), tier ordering and tie rules.
 3. Component: Verdict column, chip, sentence and caution chips; order control with three
    options. Styles use tokens only and the contrast rules above.
+4. The page footnote states, in readable text, that a verdict describes the dip (how
+   unusual the fall is and what is known about the company) and does not predict the price,
+   and that a replay of stored price history found no measurable difference in the
+   following month between flagged and other dips. The wording is updated when a later
+   replay changes that finding. It lands with the first slice that shows a verdict, never
+   after it.
 
-Tests: reducer and persistence tests: the default is best candidates first; with no new
+Tests: a component test by text that the note is present whenever a verdict is shown;
+reducer and persistence tests: the default is best candidates first; with no new
 key, a stored `"fallers_first"` under the old key loads best candidates first, and a stored
 `"risers_first"` loads risers first, and in both cases the new key is written and the old
 key removed; malformed or unknown old values land on best candidates first; once the new
@@ -730,7 +748,8 @@ colour against their tokens.
 Verification: frontend checks; `npm run test:browser` from Claude; bump the frontend
 version. **By-eye (owner, demo mode):** the page opens on "Best candidates first"; each
 verdict appears in at least one window; the candidate and "Fell for a reason?" chips read
-as intended and the neutral ones stay calm; the "because" sentence is easy to read; cautions
+as intended and the neutral ones stay calm; the note that a verdict does not predict the
+price is easy to find and reads as honest; the "because" sentence is easy to read; cautions
 are visible on candidates, including "loss-making"; switching order and window and
 reloading keeps the choice. Then on his own release app after updating: the page lands once
 on "Best candidates first" if it had stored "Biggest fallers" (or stays on "Biggest risers"
@@ -867,7 +886,12 @@ unusual drop with the dividend added back, while the displayed change stays clos
 close. Existing installs switch once to the new default order, except where Biggest risers
 had been chosen. Report timing cannot be replayed historically and the company checks were
 not calibrated, because stored figures are not point-in-time. During market hours "fell"
-and "stopped falling" can change before the close.
+and "stopped falling" can change before the close. The 2026-11-11 replay of stored price
+history had enough data to judge the thresholds and kept them, but found no measurable
+difference over the following 20 trading days between flagged and other dips; the owner
+chose to show the verdicts with a visible note that a verdict describes the dip and does
+not predict the price, and the replay is repeated as history grows (wording to be confirmed
+with the owner before this entry is written).
 
 **B. The Latest Refresh Tops Up A Year Of Daily History For Held Instruments — refines
 2026-10-15 The Latest Price Refresh Covers The Longest Recent-Change Window**
@@ -953,9 +977,78 @@ installer. Markets without a working symbol keep the median.
 - Topping up exchange-rate history; changing the 37-day latest window.
 - Any numeric score, alerts or notifications.
 
+## Proposal for the owner: longer horizons and repeat replays
+
+Status: **proposed, not approved, not built.** Written on 2026-11-12 at the orchestrator's
+request after the owner said that 20 trading days may be too short and that more
+evaluations of this kind may be needed. The replay of 2026-11-11 and its recorded results
+are not changed by anything here.
+
+**What is proposed.**
+
+- Later replays also measure what happened **60 and 120 trading days** after each dip
+  (about three and six months), next to the existing 5, 10 and 20.
+- The addition is written into the spike document's pre-registered method and committed
+  **before** the next real run, with the same rules as today: the same universe, the same
+  benchmark (the median of the other holdings over the same horizon, at least five), the
+  same exclusion reasons, the same suppression floors, and the same sufficiency floors
+  applied **per horizon**. A horizon that does not pass its floors is reported as counts
+  only and can support no conclusion.
+- No result for 60 or 120 days is looked at before that method is committed.
+
+**How many dips each horizon leaves on today's history. These are estimates, not
+measurements.** The replay tool has no 60- or 120-day horizon yet and the scratch copy is
+deleted, so nothing was counted. The estimate rests on the recorded 20-day figures: about
+30 weekly replay dates carry a usable 20-day outcome, each with roughly 11 to 12 usable
+dips, and the usable history is about a year because only the automatic top-up year is
+stored for most holdings. A longer horizon removes the most recent weekly dates: 8 more
+at 60 days, 20 more at 120 days.
+
+| Horizon | Distinct weeks behind the flagged dips | Usable dips per window | Usable flagged dips | Passes the floors (100 dips, 30 flagged, 26 weeks) |
+|---|---|---|---|---|
+| 20 days (measured) | 28 to 32 | 324 to 357 | 106 to 110 | Yes, the weeks floor narrowly |
+| 60 days (estimate) | about 20 to 24 | about 230 to 270 | about 75 to 85 | No: short of the 26 weeks |
+| 120 days (estimate) | about 8 to 12 | about 90 to 140 | about 30 to 45 | No: far short of the 26 weeks |
+
+The exact counts come out of the next replay itself, since counts are always printed.
+Without a backfill, 60 days reaches today's 20-day position around early January 2027 and
+120 days around the end of March 2027, simply by time passing. A backfill from the Import
+page adds older history, whose long horizons are already complete, and so helps at once.
+
+**Limits that grow with the horizon, stated before any result.** With weekly sampling a
+60-day outcome overlaps about twelve-fold and a 120-day outcome about twenty-four-fold, so
+the number of independent observations is far smaller than the event counts suggest.
+Holdings bought or sold inside the horizon, splits and source changes exclude more events.
+No significance is claimed at any horizon.
+
+**Which horizon decides a threshold change (owner question, see Open Question 3).** Today
+only the 20-day outcome can change a threshold. Choosing another deciding horizon after a
+replay showed nothing at 20 days is a second look at the same data; it is fair only if the
+choice is fixed before any 60- or 120-day result exists.
+
+**Re-run cadence.** Each replay is a new run on a fresh scratch copy under the same
+conditions as the first (production ledger never opened, aggregates only, copies deleted),
+recorded as a new dated replay, with at most one threshold change per replay. Proposed:
+the next replay not before mid-January 2027 (when 60 days is expected to pass the floors),
+then one per quarter. More frequent runs add little new data and raise the chance of acting
+on noise. The page note about the replay finding is updated after each run.
+
+**Further evaluations, listed and not designed.**
+
+- **Record the verdicts going forward.** Report timing and the business check cannot be
+  replayed historically, so the full verdict has never been evaluated. Storing each day's
+  verdict per holding from now on would let a later replay judge the whole verdict, not
+  only the price side. This needs new stored data and its own plan.
+- **Stopped falling as evidence.** Flagged dips that had already stopped falling did
+  better at 7 and 14 days in the first replay. Testing it as a pre-stated hypothesis in the
+  next replay is fair; promoting it into the verdict on the first replay's numbers is not.
+- **The company side once it becomes point-in-time**, from about November 2027, when a
+  year of the app's own observed figures exists.
+
 ## Open Questions
 
-Both questions below are conditional: each goes to the owner only if its trigger occurs.
+Questions 1 and 2 below are conditional: each goes to the owner only if its trigger occurs.
+Question 3 is open now and blocks nothing until the next replay is prepared.
 
 1. **ANSWERED 2026-11-11: the owner chose (b), add the fifth verdict.** Original question:
    **Fifth verdict if report timing is mostly unknowable** (trigger: Phase 1 shows that even
@@ -975,3 +1068,13 @@ Both questions below are conditional: each goes to the owner only if its trigger
    periodically. Under (a) the page keeps its current form for months; under (b) he sees
    verdicts with a visible caveat. Reversible either way. Recommendation: (a), because the
    owner made calibration a precondition for trusting the verdicts.
+3. **Longer horizons in later replays, and which horizon decides** (open; see the proposal
+   above). Options: (a) add 60 and 120 trading days as reported horizons and keep 20 days
+   as the only one that can change a threshold; (b) add them and make 60 days the deciding
+   horizon once it passes its floors, with 20 and 120 reported beside it; (c) leave the
+   replay as it is. Under (a) the longer horizons inform but never act; under (b) thresholds
+   follow the horizon closest to how long the owner holds what he buys on a dip; under (c)
+   nothing is learned about longer holding periods. Cheap to change before the next replay
+   is pre-registered, not after it has run. Recommendation: (b) if the owner typically holds
+   such purchases for months rather than weeks, otherwise (a); in both cases with the
+   quarterly cadence proposed above.
