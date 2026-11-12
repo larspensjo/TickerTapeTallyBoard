@@ -978,10 +978,20 @@ installer. Markets without a working symbol keep the median.
 
 ## Proposal for the owner: longer horizons and repeat replays
 
-Status: **proposed, not approved, not built.** Written on 2026-11-12 at the orchestrator's
-request after the owner said that 20 trading days may be too short and that more
-evaluations of this kind may be needed. The replay of 2026-11-11 and its recorded results
-are not changed by anything here.
+Status: **approved by the owner on 2026-11-12, not built.** Written on 2026-11-12 at the
+orchestrator's request after the owner said that 20 trading days may be too short and that
+more evaluations of this kind may be needed. The owner chose option (b) of Open Question 3:
+later replays also measure 60 and 120 trading days, and **60 trading days becomes the
+deciding horizon once it passes its floors**, with 20 and 120 reported beside it; the
+cadence below was put to him with the question. The "further evaluations" at the end are
+listed only and not approved. The replay of 2026-11-11 and its recorded results are not
+changed by anything here.
+
+Work this creates, before the next replay and not before: extend the replay tool with the
+two horizons and the deciding-horizon rule, with tests; write the change into the spike
+document's pre-registered method and commit it before any run; until 60 days passes its
+floors in a replay, no threshold changes at all (the 20-day result no longer decides).
+Recorded in `docs/TODO.md` when this plan completes.
 
 **What is proposed.**
 
@@ -1046,8 +1056,8 @@ on noise. The page note about the replay finding is updated after each run.
 
 ## Open Questions
 
-Questions 1 and 2 below are conditional: each goes to the owner only if its trigger occurs.
-Question 3 is open now and blocks nothing until the next replay is prepared.
+Questions 1 and 3 are answered. Question 2 is conditional and goes to the owner only if
+its trigger occurs.
 
 1. **ANSWERED 2026-11-11: the owner chose (b), add the fifth verdict.** Original question:
    **Fifth verdict if report timing is mostly unknowable** (trigger: Phase 1 shows that even
@@ -1067,8 +1077,8 @@ Question 3 is open now and blocks nothing until the next replay is prepared.
    periodically. Under (a) the page keeps its current form for months; under (b) he sees
    verdicts with a visible caveat. Reversible either way. Recommendation: (a), because the
    owner made calibration a precondition for trusting the verdicts.
-3. **Longer horizons in later replays, and which horizon decides** (open; see the proposal
-   above). Options: (a) add 60 and 120 trading days as reported horizons and keep 20 days
+3. **ANSWERED 2026-11-12: the owner chose (b).** Original question: **Longer horizons in
+   later replays, and which horizon decides** (see the proposal above). Options: (a) add 60 and 120 trading days as reported horizons and keep 20 days
    as the only one that can change a threshold; (b) add them and make 60 days the deciding
    horizon once it passes its floors, with 20 and 120 reported beside it; (c) leave the
    replay as it is. Under (a) the longer horizons inform but never act; under (b) thresholds
