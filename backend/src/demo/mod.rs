@@ -7,6 +7,11 @@ use crate::db::{fx_rates, instruments, prices, provider_symbols, transactions};
 use crate::domain::TransactionKind;
 use crate::providers::{FxProvider, MarketDataProvider, BASE_FX_PROVIDER};
 mod company_figures;
+mod dividends;
+mod holdings;
+mod price_paths;
+use holdings::{instruments, transactions};
+use price_paths::prices;
 
 pub const BASE_CURRENCY: &str = "SEK";
 
@@ -34,6 +39,7 @@ pub struct DemoInstrument {
     pub provider_symbol: &'static str,
     /// Required by Nasdaq Nordic on every price-history call; `None` for Yahoo.
     pub asset_class: Option<&'static str>,
+    scenario: holdings::DemoScenario,
     /// Seeded conviction as the DB string (`OTHER`/`LOW`/`MEDIUM`/`HIGH`).
     /// Applied after upsert via the conviction repository so target indicators
     /// are visible in read-only demo mode.
@@ -77,7 +83,7 @@ pub fn dataset(today: NaiveDate) -> DemoData {
     let end_date = today;
     let start_date = today - Duration::days(548);
     let instruments = instruments();
-    let transactions = transactions(start_date, &instruments);
+    let transactions = transactions(start_date, end_date, &instruments);
     let prices = prices(start_date, end_date, &instruments);
     let fx_rates = fx_rates(start_date, end_date);
 
@@ -103,7 +109,7 @@ async fn seed_for_date(
     today: NaiveDate,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let data = dataset(today);
-    let fetched_at = crate::import::now_iso8601();
+    let fetched_at = format!("{today}T12:00:00Z");
     let mut instrument_ids = Vec::with_capacity(data.instruments.len());
 
     for instrument in &data.instruments {
@@ -170,7 +176,11 @@ async fn seed_for_date(
                 date: price.date,
                 close: price.close,
                 currency: price.currency.to_owned(),
-                fetched_at: fetched_at.clone(),
+                fetched_at: price_paths::fetched_at(
+                    today,
+                    price,
+                    &data.instruments[price.instrument_index],
+                ),
             },
         )
         .await?;
@@ -192,6 +202,7 @@ async fn seed_for_date(
     }
 
     company_figures::seed(pool, today, &data, &instrument_ids).await?;
+    dividends::seed(pool, today, &data, &instrument_ids).await?;
 
     for instrument_id in instrument_ids {
         let ledger = transactions::ledger_for_instrument(pool, instrument_id).await?;
@@ -203,220 +214,8 @@ async fn seed_for_date(
     Ok(())
 }
 
-fn instruments() -> Vec<DemoInstrument> {
-    vec![
-        DemoInstrument {
-            symbol: "NOVA",
-            exchange: "NASDAQ",
-            name: "Nova Systems",
-            kind: "STOCK",
-            currency: "USD",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            provider_symbol: "NOVA",
-            conviction: "HIGH",
-        },
-        DemoInstrument {
-            symbol: "HARV",
-            exchange: "NYSE",
-            name: "Harbor Utilities",
-            kind: "STOCK",
-            currency: "USD",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            provider_symbol: "HARV",
-            conviction: "LOW",
-        },
-        DemoInstrument {
-            symbol: "NORD",
-            exchange: "STO",
-            name: "Nordic Automation",
-            kind: "STOCK",
-            currency: "SEK",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            // Synthetic suffix-free identity exercises the unresolved US date.
-            provider_symbol: "NORD",
-            conviction: "MEDIUM",
-        },
-        DemoInstrument {
-            symbol: "SKOG",
-            exchange: "STO",
-            name: "Skog & Marin",
-            kind: "STOCK",
-            currency: "SEK",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            provider_symbol: "SKOG.ST",
-            conviction: "OTHER",
-        },
-        DemoInstrument {
-            symbol: "ALBA",
-            exchange: "XETRA",
-            name: "Alba Renewables",
-            kind: "STOCK",
-            currency: "EUR",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            provider_symbol: "ALBA.DE",
-            conviction: "MEDIUM",
-        },
-        DemoInstrument {
-            symbol: "GLBL",
-            exchange: "NYSEARCA",
-            name: "Global Core ETF",
-            kind: "ETF",
-            currency: "USD",
-            isin: None,
-            provider: MarketDataProvider::Yahoo,
-            asset_class: None,
-            provider_symbol: "GLBL",
-            conviction: "HIGH",
-        },
-        DemoInstrument {
-            symbol: "VARV",
-            exchange: "AVANZA",
-            name: "Varvsgatan Industri",
-            kind: "STOCK",
-            currency: "SEK",
-            isin: Some("SE0009999901"),
-            provider: MarketDataProvider::NasdaqNordic,
-            asset_class: Some("SHARES"),
-            provider_symbol: "TX9001",
-            conviction: "MEDIUM",
-        },
-    ]
-}
-
-fn transactions(start_date: NaiveDate, instruments: &[DemoInstrument]) -> Vec<DemoTransaction> {
-    let specs: [Vec<TransactionSpec>; 7] = [
-        vec![
-            buy(20, 24, dec!(94.20)),
-            dividend(118, dec!(0.42)),
-            buy(168, 12, dec!(102.75)),
-            dividend(214, dec!(0.45)),
-            dividend(304, dec!(0.47)),
-            sell(356, 8, dec!(118.10)),
-            dividend(486, dec!(0.50)),
-        ],
-        vec![
-            buy(45, 32, dec!(38.40)),
-            dividend(126, dec!(0.31)),
-            buy(231, 18, dec!(41.25)),
-            dividend(273, dec!(0.33)),
-            dividend(365, dec!(0.35)),
-            dividend(512, dec!(0.37)),
-        ],
-        vec![
-            buy(16, 18, dec!(142.00)),
-            dividend(151, dec!(2.10)),
-            buy(238, 14, dec!(151.50)),
-            dividend(322, dec!(2.25)),
-            buy(402, 10, dec!(158.40)),
-            dividend(525, dec!(2.40)),
-        ],
-        vec![
-            buy(64, 40, dec!(76.50)),
-            dividend(184, dec!(1.15)),
-            buy(276, 18, dec!(82.80)),
-            sell(431, 16, dec!(89.25)),
-            dividend(519, dec!(1.22)),
-        ],
-        vec![
-            buy(34, 22, dec!(58.40)),
-            dividend(142, dec!(0.72)),
-            buy(312, 12, dec!(63.10)),
-            dividend(394, dec!(0.76)),
-            dividend(536, dec!(0.80)),
-        ],
-        vec![
-            buy(82, 36, dec!(49.20)),
-            dividend(246, dec!(0.18)),
-            buy(342, 20, dec!(53.65)),
-            dividend(526, dec!(0.20)),
-        ],
-        vec![
-            buy(28, 14, dec!(246.30)),
-            dividend(163, dec!(3.10)),
-            buy(299, 9, dec!(249.80)),
-            dividend(418, dec!(3.25)),
-            dividend(531, dec!(3.40)),
-        ],
-    ];
-
-    specs
-        .into_iter()
-        .enumerate()
-        .flat_map(|(instrument_index, specs)| {
-            let instrument = &instruments[instrument_index];
-            specs.into_iter().map(move |spec| {
-                let trade_date = start_date + Duration::days(spec.day_offset);
-                let fx_rate_to_base = Some(fx_rate_for_currency(instrument.currency, trade_date));
-
-                DemoTransaction {
-                    instrument_index,
-                    kind: spec.kind,
-                    trade_date,
-                    quantity: spec.quantity,
-                    price: spec.price,
-                    dividend_per_share: spec.dividend_per_share,
-                    currency: Some(instrument.currency),
-                    fx_rate_to_base,
-                    brokerage: (spec.kind != TransactionKind::Dividend).then_some(dec!(9.00)),
-                    note: Some("Demo seed"),
-                }
-            })
-        })
-        .collect()
-}
-
-fn prices(
-    start_date: NaiveDate,
-    end_date: NaiveDate,
-    instruments: &[DemoInstrument],
-) -> Vec<DemoPrice> {
-    instruments
-        .iter()
-        .enumerate()
-        .flat_map(|(instrument_index, instrument)| {
-            let seed = 17 + instrument_index as i64 * 23;
-            let mut date = start_date;
-            let mut day = 0_i64;
-            let base = match instrument.currency {
-                "SEK" => dec!(78.00) + Decimal::from(instrument_index as i64 * 28),
-                "EUR" => dec!(56.00),
-                _ => dec!(40.00) + Decimal::from(instrument_index as i64 * 13),
-            };
-            std::iter::from_fn(move || {
-                if date > end_date {
-                    return None;
-                }
-                let wave = Decimal::from(((day + seed) % 29) - 14) / dec!(100);
-                let drift = Decimal::from(day) / dec!(180);
-                let close = (base + drift + wave).round_dp(2).max(dec!(1.00));
-                let price = DemoPrice {
-                    instrument_index,
-                    provider: instrument.provider,
-                    provider_symbol: instrument.provider_symbol,
-                    date,
-                    close,
-                    currency: instrument.currency,
-                };
-                date += Duration::days(1);
-                day += 1;
-                Some(price)
-            })
-        })
-        .collect()
-}
-
 fn fx_rates(start_date: NaiveDate, end_date: NaiveDate) -> Vec<DemoFxRate> {
-    ["USD", "EUR"]
+    ["USD", "EUR", "NOK"]
         .into_iter()
         .flat_map(|currency| {
             let mut date = start_date;
@@ -443,363 +242,14 @@ fn fx_rate_for_currency(currency: &str, date: NaiveDate) -> Decimal {
     let ordinal = i64::from(date.num_days_from_ce());
     match currency {
         "USD" => (dec!(10.15) + Decimal::from(ordinal % 17) / dec!(100)).round_dp(4),
+        "NOK" => (dec!(0.94) + Decimal::from(ordinal % 13) / dec!(1000)).round_dp(4),
         "EUR" => (dec!(11.05) + Decimal::from(ordinal % 19) / dec!(100)).round_dp(4),
         BASE_CURRENCY => dec!(1),
         _ => dec!(1),
     }
 }
 
-#[derive(Clone, Debug)]
-struct TransactionSpec {
-    kind: TransactionKind,
-    day_offset: i64,
-    quantity: i64,
-    price: Option<Decimal>,
-    dividend_per_share: Option<Decimal>,
-}
-
-fn buy(day_offset: i64, quantity: i64, price: Decimal) -> TransactionSpec {
-    TransactionSpec {
-        kind: TransactionKind::Buy,
-        day_offset,
-        quantity,
-        price: Some(price),
-        dividend_per_share: None,
-    }
-}
-
-fn sell(day_offset: i64, quantity: i64, price: Decimal) -> TransactionSpec {
-    TransactionSpec {
-        kind: TransactionKind::Sell,
-        day_offset,
-        quantity: -quantity,
-        price: Some(price),
-        dividend_per_share: None,
-    }
-}
-
-fn dividend(day_offset: i64, dividend_per_share: Decimal) -> TransactionSpec {
-    TransactionSpec {
-        kind: TransactionKind::Dividend,
-        day_offset,
-        quantity: 0,
-        price: None,
-        dividend_per_share: Some(dividend_per_share),
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{
-        body::{to_bytes, Body},
-        http::{Request, StatusCode},
-    };
-    use serde_json::Value;
-    use std::collections::HashSet;
-    use tower::ServiceExt;
-
-    use crate::providers::PRICE_PROVIDER_PRECEDENCE;
-
-    #[test]
-    fn dataset_contains_expected_instrument_shape() {
-        let data = fixed_dataset();
-
-        assert_eq!(data.instruments.len(), 7);
-        assert_eq!(
-            data.instruments
-                .iter()
-                .map(|instrument| instrument.currency)
-                .collect::<HashSet<_>>(),
-            HashSet::from(["USD", "SEK", "EUR"])
-        );
-
-        for index in 0..data.instruments.len() {
-            assert!(
-                data.transactions
-                    .iter()
-                    .filter(|transaction| transaction.instrument_index == index)
-                    .count()
-                    >= 2
-            );
-            assert!(
-                data.transactions
-                    .iter()
-                    .filter(|transaction| transaction.instrument_index == index
-                        && transaction.kind == TransactionKind::Dividend)
-                    .count()
-                    >= 2
-            );
-        }
-    }
-
-    #[test]
-    fn dividend_rows_have_dividend_shape() {
-        let data = fixed_dataset();
-
-        for transaction in data
-            .transactions
-            .iter()
-            .filter(|transaction| transaction.kind == TransactionKind::Dividend)
-        {
-            assert!(transaction.dividend_per_share.is_some());
-            assert!(transaction.price.is_none());
-            assert!(transaction.brokerage.is_none());
-        }
-    }
-
-    #[test]
-    fn non_sek_transactions_carry_fx_rate() {
-        let data = fixed_dataset();
-
-        for transaction in &data.transactions {
-            let currency = data.instruments[transaction.instrument_index].currency;
-            if currency != BASE_CURRENCY {
-                assert!(transaction.fx_rate_to_base.is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn transaction_dates_are_inside_market_data_window() {
-        let data = fixed_dataset();
-
-        for transaction in &data.transactions {
-            assert!(transaction.trade_date >= data.start_date);
-            assert!(transaction.trade_date <= data.end_date);
-
-            let has_price = data.prices.iter().any(|price| {
-                price.instrument_index == transaction.instrument_index
-                    && price.date == transaction.trade_date
-            });
-            assert!(has_price);
-
-            let currency = data.instruments[transaction.instrument_index].currency;
-            if currency != BASE_CURRENCY {
-                let has_fx = data.fx_rates.iter().any(|fx_rate| {
-                    fx_rate.base == currency && fx_rate.date == transaction.trade_date
-                });
-                assert!(has_fx);
-            }
-        }
-    }
-
-    #[test]
-    fn dataset_is_deterministic_for_fixed_date() {
-        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
-
-        assert_eq!(dataset(today), dataset(today));
-    }
-
-    fn fixed_dataset() -> DemoData {
-        dataset(NaiveDate::from_ymd_opt(2026, 7, 2).expect("date"))
-    }
-
-    #[tokio::test]
-    async fn seed_writes_readable_ledgers_and_market_data() {
-        let pool = crate::db::testing::memory_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
-
-        seed_for_date(&pool, today)
-            .await
-            .expect("seed should succeed");
-
-        let instruments = crate::db::instruments::list(&pool)
-            .await
-            .expect("instruments should list");
-        assert_eq!(instruments.len(), 7);
-
-        for instrument in &instruments {
-            let ledger = crate::db::transactions::ledger_for_instrument(&pool, instrument.id)
-                .await
-                .expect("ledger should load");
-            assert!(ledger.len() >= 2);
-            crate::domain::derive_position_performance(&ledger).expect("ledger should derive");
-
-            // Resolved across every source, not read off Yahoo: the demo set
-            // deliberately contains a Nasdaq-priced instrument.
-            let latest_price = crate::market_data::effective_prices::effective_latest_on_or_before(
-                &pool,
-                instrument.id,
-                today,
-            )
-            .await
-            .expect("price lookup should succeed");
-            assert!(latest_price.is_some());
-
-            let sources =
-                crate::market_data::effective_prices::enabled_price_sources(&pool, instrument.id)
-                    .await
-                    .expect("price sources should load");
-            assert_eq!(sources.len(), 1);
-
-            // The demo set deliberately contains one Nasdaq-priced holding so
-            // the default configuration exercises multi-source resolution.
-            let expected_provider = if instrument.symbol == "VARV" {
-                PRICE_PROVIDER_PRECEDENCE[1]
-            } else {
-                PRICE_PROVIDER_PRECEDENCE[0]
-            };
-            assert_eq!(sources[0].provider, expected_provider);
-            assert_eq!(
-                latest_price.expect("price").source.as_str(),
-                expected_provider.as_str()
-            );
-        }
-
-        for currency in ["USD", "EUR"] {
-            let latest_fx = crate::db::fx_rates::find_latest_on_or_before(
-                &pool,
-                currency,
-                BASE_CURRENCY,
-                BASE_FX_PROVIDER,
-                today,
-            )
-            .await
-            .expect("fx lookup should succeed");
-            assert!(latest_fx.is_some());
-        }
-    }
-
-    #[tokio::test]
-    async fn seeded_data_is_available_through_read_endpoints() {
-        let pool = crate::db::testing::memory_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
-        seed_for_date(&pool, today)
-            .await
-            .expect("seed should succeed");
-        let state = crate::state::AppState::new(
-            pool,
-            std::sync::Arc::new(crate::market_data::MarketDataService::live()),
-        )
-        .with_mode(crate::config::Mode::Demo);
-
-        let holdings = get_json(&state, "/api/holdings").await;
-        assert_eq!(
-            holdings["holdings"]
-                .as_array()
-                .expect("holdings array")
-                .len(),
-            7
-        );
-        assert_no_missing_price_or_fx(&holdings);
-        for holding in holdings["holdings"].as_array().expect("holdings array") {
-            assert_eq!(holding["base"]["status"], "available");
-            assert_eq!(
-                holding["valuation"]["market_value_base"]["status"],
-                "available"
-            );
-        }
-
-        let gains = get_json(&state, &format!("/api/gains?end_date={today}")).await;
-        assert_eq!(gains["rows"].as_array().expect("gains rows").len(), 7);
-        assert_no_missing_price_or_fx(&gains);
-
-        let value_history = get_json(&state, "/api/portfolio/value-history").await;
-        assert!(!value_history["points"]
-            .as_array()
-            .expect("value-history points")
-            .is_empty());
-        assert_no_missing_price_or_fx(&value_history);
-
-        let instrument_id = holdings["holdings"][0]["instrument"]["id"]
-            .as_i64()
-            .expect("instrument id");
-        let prices = get_json(&state, &format!("/api/instruments/{instrument_id}/prices")).await;
-        assert!(!prices["points"]
-            .as_array()
-            .expect("price-history points")
-            .is_empty());
-        assert_no_missing_price_or_fx(&prices);
-    }
-
-    #[tokio::test]
-    async fn seeded_holdings_expose_conviction_and_targets() {
-        let pool = crate::db::testing::memory_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 7, 2).expect("date");
-        seed_for_date(&pool, today)
-            .await
-            .expect("seed should succeed");
-        let state = crate::state::AppState::new(
-            pool,
-            std::sync::Arc::new(crate::market_data::MarketDataService::live()),
-        )
-        .with_mode(crate::config::Mode::Demo);
-
-        let holdings = get_json(&state, "/api/holdings").await;
-        let holdings = holdings["holdings"].as_array().expect("holdings array");
-
-        // Representative non-Other convictions are visible.
-        let convictions: HashSet<&str> = holdings
-            .iter()
-            .map(|h| h["instrument"]["conviction"].as_str().expect("conviction"))
-            .collect();
-        assert!(convictions.contains("High"));
-        assert!(convictions.contains("Medium"));
-        assert!(convictions.contains("Low"));
-        assert!(convictions.contains("Other"));
-
-        // Convicted holdings expose an available, computed target.
-        let computed = holdings.iter().filter(|h| {
-            matches!(
-                h["conviction_target"]["status"].as_str(),
-                Some("below" | "on_target" | "above")
-            ) && h["conviction_target"]["target_value_base"]["status"] == "available"
-        });
-        assert!(
-            computed.count() >= 1,
-            "at least one holding should show a computed target indicator"
-        );
-
-        // At least one convicted holding is visibly off target.
-        let off_target = holdings.iter().any(|h| {
-            matches!(
-                h["conviction_target"]["status"].as_str(),
-                Some("below" | "above")
-            )
-        });
-        assert!(off_target, "demo data should show a below/above target");
-    }
-
-    async fn get_json(state: &crate::state::AppState, uri: &str) -> Value {
-        let response = crate::api::router(state.clone())
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-        assert_eq!(response.status(), StatusCode::OK, "{uri}");
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should be readable");
-        serde_json::from_slice(&body).expect("body should be JSON")
-    }
-
-    fn assert_no_missing_price_or_fx(value: &Value) {
-        assert_no_missing_price_or_fx_at(value, "$");
-    }
-
-    fn assert_no_missing_price_or_fx_at(value: &Value, path: &str) {
-        match value {
-            Value::String(value) => {
-                assert_ne!(value, "missing_price", "{path}");
-                assert_ne!(value, "missing_fx", "{path}");
-            }
-            Value::Array(values) => {
-                for (index, value) in values.iter().enumerate() {
-                    assert_no_missing_price_or_fx_at(value, &format!("{path}[{index}]"));
-                }
-            }
-            Value::Object(values) => {
-                for (key, value) in values {
-                    assert_no_missing_price_or_fx_at(value, &format!("{path}.{key}"));
-                }
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) => {}
-        }
-    }
-}
+mod coverage_tests;
+#[cfg(test)]
+mod tests;

@@ -748,3 +748,24 @@ async fn confirmed_report_today_and_candidate_cautions_preserve_report_certainty
         assert_eq!(soon["report"]["days_until"], 3);
     }
 }
+
+#[tokio::test]
+async fn missing_fx_holding_has_available_native_change_but_unknown_room_to_buy() {
+    let state = state().await;
+    seed(
+        &state,
+        "MISSING-FX",
+        "USD",
+        "100",
+        &[("2026-10-08", "100"), ("2026-10-15", "90")],
+    )
+    .await;
+    crate::db::testing::set_query_only(&state.pool).await;
+    let body = response(&state, "7d").await;
+    let holding = row(&body, "MISSING-FX");
+    assert_eq!(holding["price_change"]["status"], "available");
+    assert_eq!(holding["price_change"]["change_percent"], "-10.00");
+    let room = check(&body, "MISSING-FX", "room_to_buy");
+    assert_eq!(room["state"], "unknown", "{room}");
+    assert!(has_reason(room, "valuation_unavailable"), "{room}");
+}

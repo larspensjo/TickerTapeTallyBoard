@@ -436,7 +436,7 @@ mod tests {
         let instruments = db::instruments::list(&state.pool)
             .await
             .expect("seeded instruments should list");
-        assert_eq!(instruments.len(), 7);
+        assert_eq!(instruments.len(), 9);
         let seeded_revision = state.revision.current().await.expect("revision reads");
 
         let write_result = sqlx::query(
