@@ -62,12 +62,13 @@ historical moves show no variation at all; a company-confirmed report dated toda
 figures are in counts as a report in the period (only a scheduled date whose figures have
 not appeared counts as "coming soon").
 
-Settled by the orchestrator on 2026-11-11 (open to the owner), overturning the session
-lead: in the business check a sub-test that is known to be negative (sales shrinking or
-earnings sliding) makes the business `weakening` even when another sub-test is unknown,
-in line with "negative evidence beats positive evidence". The session lead's reading of
-its limit: this holds only while the figures are current; out-of-date figures, a passed
-expected report date and source-blocking reasons still give `unknown`.
+Settled by the orchestrator on 2026-11-11, overturning the session lead, and **confirmed
+by the owner on 2026-11-12** (his answer relayed by the orchestrator): in the business
+check a sub-test that is known to be negative (sales shrinking or earnings sliding) makes
+the business `weakening` even when another sub-test is unknown, in line with "negative
+evidence beats positive evidence". This holds only while the figures are current;
+out-of-date figures, a passed expected report date and source-blocking reasons still give
+`unknown`.
 
 Decision-log entries consulted and honoured: 2026-10-15 Opportunities page contract and
 latest-refresh window; 2026-11-04 company figures from free sources; 2026-11-08 company-figure
