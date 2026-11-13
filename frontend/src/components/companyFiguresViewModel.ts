@@ -17,7 +17,7 @@ export interface CompanyFigureView {
   notApplicable: boolean;
 }
 
-const REASON_TEXT: Record<FigureReasonCode, string> = {
+export const COMPANY_FIGURE_REASON_TEXT: Record<FigureReasonCode, string> = {
   fund_or_etf: "Not applicable to a fund or ETF",
   not_a_company: "Marked as not a company",
   certificate: "Not applicable to a certificate",
@@ -60,7 +60,7 @@ export function companyFigureReason(reason: FigureReason): string {
       ? `; last successful update: ${reason.detail}`
       : `: ${reason.detail}`
     : "";
-  return `${REASON_TEXT[reason.code] ?? reason.code}${detail}`;
+  return `${COMPANY_FIGURE_REASON_TEXT[reason.code] ?? reason.code}${detail}`;
 }
 
 function view(

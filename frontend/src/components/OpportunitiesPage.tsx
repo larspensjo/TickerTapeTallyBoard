@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { Fragment, useEffect, useReducer } from "react";
 import { useOpportunities } from "../api/queries";
 import {
   OPPORTUNITY_ORDERS,
@@ -15,6 +15,7 @@ import {
   opportunityOrderOptions,
   opportunityWindowOptions,
 } from "./opportunitiesViewModel";
+import type { OpportunityCheckEntry } from "./opportunityChecksViewModel";
 import {
   hasSetting,
   isOneOf,
@@ -227,89 +228,116 @@ export function OpportunitiesPage() {
                 </thead>
                 <tbody>
                   {viewModel.rows.map((row) => (
-                    <tr key={row.instrument.id}>
-                      <td>
-                        <InstrumentCell
-                          instrumentId={row.instrument.id}
-                          name={row.instrument.name}
-                          ticker={row.instrument.ticker}
-                        />
-                      </td>
-                      <td>
-                        {row.verdict ? (
-                          <div className="opportunity-verdict">
+                    <Fragment key={row.instrument.id}>
+                      <tr
+                        className={
+                          row.verdict ? "opportunity-with-evidence" : undefined
+                        }
+                      >
+                        <td
+                          aria-describedby={
+                            row.verdict
+                              ? `opportunity-evidence-${row.instrument.id}`
+                              : undefined
+                          }
+                        >
+                          <InstrumentCell
+                            instrumentId={row.instrument.id}
+                            name={row.instrument.name}
+                            ticker={row.instrument.ticker}
+                          />
+                        </td>
+                        <td>
+                          {row.verdict ? (
+                            <div className="opportunity-verdict">
+                              <span
+                                className={`status-chip opportunity-verdict-chip ${row.verdict.tone}`}
+                              >
+                                {row.verdict.label}
+                              </span>
+                              <span className="opportunity-because">
+                                {row.verdict.because}
+                              </span>
+                              {row.verdict.cautions.length > 0 ? (
+                                <div className="opportunity-cautions">
+                                  {row.verdict.cautions.map((caution) => (
+                                    <span
+                                      key={caution}
+                                      className="status-chip compact"
+                                    >
+                                      {caution}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="number">
+                          {row.changeAvailable ? (
                             <span
-                              className={`status-chip opportunity-verdict-chip ${row.verdict.tone}`}
+                              className={`number ${row.changeTone}`}
+                              title={row.changeTooltip}
                             >
-                              {row.verdict.label}
+                              {row.changeLabel}
                             </span>
-                            <span className="opportunity-because">
-                              {row.verdict.because}
+                          ) : (
+                            <span
+                              className="status-chip compact"
+                              title={row.changeTooltip}
+                            >
+                              {row.changeLabel}
                             </span>
-                            {row.verdict.cautions.length > 0 ? (
-                              <div className="opportunity-cautions">
-                                {row.verdict.cautions.map((caution) => (
-                                  <span
-                                    key={caution}
-                                    className="status-chip compact"
-                                  >
-                                    {caution}
-                                  </span>
-                                ))}
-                              </div>
+                          )}
+                        </td>
+                        <td className="number">
+                          {row.latestPrice
+                            ? latestPriceCell(row.latestPrice)
+                            : "—"}
+                        </td>
+                        <td className="number">
+                          <span className="opportunities-context">
+                            {percentCell(row.vsAverage)}
+                            {row.belowAverage ? (
+                              <span className="status-chip compact">
+                                Below your average
+                              </span>
                             ) : null}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="number">
-                        {row.changeAvailable ? (
-                          <span
-                            className={`number ${row.changeTone}`}
-                            title={row.changeTooltip}
-                          >
-                            {row.changeLabel}
                           </span>
-                        ) : (
-                          <span
-                            className="status-chip compact"
-                            title={row.changeTooltip}
-                          >
-                            {row.changeLabel}
+                        </td>
+                        <td className="number">
+                          <span className="opportunities-context">
+                            {percentCell(row.gain)}
+                            {row.gainFreshness ? (
+                              <StaleSignal
+                                kind={row.gainFreshness.kind}
+                                label={row.gainFreshness.label}
+                              />
+                            ) : null}
                           </span>
-                        )}
-                      </td>
-                      <td className="number">
-                        {row.latestPrice
-                          ? latestPriceCell(row.latestPrice)
-                          : "—"}
-                      </td>
-                      <td className="number">
-                        <span className="opportunities-context">
-                          {percentCell(row.vsAverage)}
-                          {row.belowAverage ? (
-                            <span className="status-chip compact">
-                              Below your average
-                            </span>
+                        </td>
+                        <td className="number">
+                          {row.targetBar ? (
+                            <TargetGapBarView bar={row.targetBar} />
                           ) : null}
-                        </span>
-                      </td>
-                      <td className="number">
-                        <span className="opportunities-context">
-                          {percentCell(row.gain)}
-                          {row.gainFreshness ? (
-                            <StaleSignal
-                              kind={row.gainFreshness.kind}
-                              label={row.gainFreshness.label}
+                        </td>
+                      </tr>
+                      {row.verdict ? (
+                        // biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: This continuation contains evidence text, not a second holding or interactive table row.
+                        <tr
+                          role="presentation"
+                          className="opportunity-evidence-row"
+                        >
+                          <td role="presentation" colSpan={7}>
+                            <EvidenceLine
+                              id={`opportunity-evidence-${row.instrument.id}`}
+                              checks={row.checks}
+                              name={row.instrument.name}
                             />
-                          ) : null}
-                        </span>
-                      </td>
-                      <td className="number">
-                        {row.targetBar ? (
-                          <TargetGapBarView bar={row.targetBar} />
-                        ) : null}
-                      </td>
-                    </tr>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -324,9 +352,11 @@ export function OpportunitiesPage() {
               </p>
             ) : null}
             <p className="opportunities-note">
-              Price change compares closing share prices in each asset's own
-              currency. Dividends are not added back, so a share can look like
-              it fell on the day it starts trading without its dividend.
+              Price change compares share prices in each asset's own currency,
+              without dividends added back. Ex-dividend days are detected where
+              the price source reports dividends. During market hours the latest
+              price can be intraday, so fell and stopped falling can change
+              before the close.
             </p>
           </>
         ) : null}
@@ -353,5 +383,52 @@ function latestPriceCell(price: OpportunityLatestPriceViewModel) {
       {price.label}
       <StaleSignal kind={price.freshnessKind} label={price.freshnessLabel} />
     </span>
+  );
+}
+
+function EvidenceLine({
+  id,
+  checks,
+  name,
+}: {
+  id: string;
+  checks: OpportunityCheckEntry[];
+  name: string;
+}) {
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: Evidence is a labelled text group, not form fields.
+    <div
+      id={id}
+      className="opportunity-evidence"
+      role="group"
+      aria-label={`Evidence for ${name}`}
+    >
+      {checks.map((check) => (
+        <span
+          className="opportunity-check"
+          key={check.key}
+          title={check.tooltip}
+          aria-description={check.tooltip}
+        >
+          <span className="opportunity-check-name">{check.name}: </span>
+          <span className="opportunity-check-result">
+            {check.parts.map((part) => (
+              <Fragment key={part.key}>
+                {part.accessibleLabel ? (
+                  <span className="sr-only">{part.accessibleLabel}</span>
+                ) : null}
+                <span
+                  className={`${part.figure || part.notApplicable ? "number" : ""}${part.approximate ? " approximate" : ""}${part.notApplicable ? " not-applicable" : ""}`}
+                  title={part.title}
+                  aria-hidden={part.accessibleLabel ? true : undefined}
+                >
+                  {part.text}
+                </span>
+              </Fragment>
+            ))}
+          </span>
+        </span>
+      ))}
+    </div>
   );
 }

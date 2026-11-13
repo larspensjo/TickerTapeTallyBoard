@@ -27,9 +27,9 @@ export function opportunityEvidence(
         state: "yes",
         reasons: [],
         change_percent: "-8.00",
-        adjusted_change_percent: "-8.00",
+        adjusted_change_percent: null,
         usual_move_percent: "2.00",
-        threshold_percent: "4.00",
+        threshold_percent: "-3.00",
         closes: 250,
         sample_moves: 240,
       },
@@ -53,12 +53,26 @@ export function opportunityEvidence(
         scheduled_report: null,
         no_report_expected_before: null,
       },
-      report_coming_soon: { state: "no", reasons: [], report: reportDate() },
+      report_coming_soon: {
+        state: "no",
+        reasons: [],
+        report: reportDate({
+          certainty: "estimated",
+          basis: "last_year_date",
+          date: "2026-11-15",
+          days_until: 31,
+          reasons: [],
+        }),
+      },
       business: {
         state: "intact",
         reasons: [],
-        profitable: subtest(),
-        sales_not_shrinking: subtest(),
+        profitable: { ...subtest(), value: "1.00", year_ago_value: null },
+        sales_not_shrinking: {
+          ...subtest(),
+          value: "1.00",
+          year_ago_value: null,
+        },
         earnings_not_sliding: subtest(),
         eps_consistency: {
           state: "consistent",
@@ -73,7 +87,7 @@ export function opportunityEvidence(
         change_percent: "-8.00",
         reference_percent: "-1.00",
         difference_percent: "-7.00",
-        margin_percent: "2.00",
+        margin_percent: "3.00",
         count: 8,
       },
       stopped_falling: {
@@ -104,10 +118,24 @@ export function opportunityEvidence(
       evidence.checks.report_in_period.reasons = [
         { code: "last_report_upper_bound_unavailable" },
       ];
+      evidence.checks.report_in_period.last_report = null;
       break;
     case "not_enough_data":
+      evidence.checks.unusual_drop.closes = 140;
+      evidence.checks.unusual_drop.sample_moves = 130;
       evidence.checks.unusual_drop.state = "no";
-      evidence.checks.off_high.state = "unknown";
+      evidence.checks.unusual_drop.usual_move_percent = "10.00";
+      evidence.checks.unusual_drop.threshold_percent = "-15.00";
+      Object.assign(evidence.checks.off_high, {
+        state: "unknown",
+        closes: 140,
+        latest_close: null,
+        high_close: null,
+        low_close: null,
+        below_high_percent: null,
+        above_low_percent: null,
+        near_low: null,
+      });
       evidence.checks.off_high.reasons = [
         { code: "price_history_too_short", count: 140, required: 200 },
       ];
@@ -115,6 +143,11 @@ export function opportunityEvidence(
       evidence.checks.report_in_period.reasons = [
         { code: "first_fetch_without_baseline" },
       ];
+      evidence.checks.report_in_period.last_report = {
+        kind: "upper_bound",
+        period_end: "2026-09-30",
+        first_seen: "2026-10-12",
+      };
       evidence.verdict.deciding = ["off_high", "report_in_period"];
       evidence.verdict.missing = ["off_high", "report_in_period"];
       break;
@@ -122,11 +155,19 @@ export function opportunityEvidence(
       evidence.verdict.deciding = ["report_in_period", "business"];
       evidence.checks.report_in_period.state = "yes";
       evidence.checks.report_in_period.reasons = [{ code: "confirmed_report" }];
+      evidence.checks.report_in_period.last_report = {
+        kind: "confirmed",
+        date: "2026-10-12",
+      };
       evidence.checks.business.state = "weakening";
+      evidence.checks.business.sales_not_shrinking.passes = false;
+      evidence.checks.business.sales_not_shrinking.value = "-2.00";
       break;
     case "normal_movement":
       evidence.verdict.deciding = ["unusual_drop", "off_high"];
       evidence.checks.unusual_drop.state = "no";
+      evidence.checks.unusual_drop.usual_move_percent = "10.00";
+      evidence.checks.unusual_drop.threshold_percent = "-15.00";
       break;
   }
   return evidence;
@@ -136,10 +177,6 @@ export function opportunityFixture(
   id: number,
   evidence: OpportunityEvidence | null = opportunityEvidence(),
 ): OpportunityRow {
-  const unavailable = {
-    status: "unavailable",
-    reasons: ["no_target"],
-  } as const;
   return {
     evidence,
     instrument: {
@@ -175,10 +212,10 @@ export function opportunityFixture(
     unrealized_gain_freshness: "fresh",
     conviction_target: {
       conviction: "High",
-      status: "no_target",
-      target_value_base: { ...unavailable, reasons: [...unavailable.reasons] },
-      target_gap_base: { ...unavailable, reasons: [...unavailable.reasons] },
-      target_gap_percent: { ...unavailable, reasons: [...unavailable.reasons] },
+      status: "below",
+      target_value_base: { status: "available", value: "1000.00" },
+      target_gap_base: { status: "available", value: "-80.00" },
+      target_gap_percent: { status: "available", value: "-8.00" },
     },
   };
 }
@@ -247,6 +284,8 @@ export function opportunitiesWithLongVerdicts(): OpportunityRow[] {
         date: "2026-10-12",
       };
       evidence.checks.business.state = "intact";
+      evidence.checks.business.sales_not_shrinking.passes = true;
+      evidence.checks.business.sales_not_shrinking.value = "1.00";
     }
     return row;
   });

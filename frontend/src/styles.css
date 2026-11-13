@@ -816,6 +816,41 @@ table {
   gap: var(--space-1);
 }
 
+.table-wrap.opportunities-table {
+  container-type: inline-size;
+}
+
+.opportunity-evidence {
+  /* Colspan content must not participate in the table's intrinsic column widths. */
+  width: 0;
+  min-width: min(100%, 100cqi);
+  max-width: 100cqi;
+  padding-inline: 14px;
+  position: sticky;
+  left: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.opportunity-check + .opportunity-check::before {
+  content: " · ";
+}
+
+.opportunity-check-name {
+  color: var(--text-muted);
+}
+
+.opportunity-check-result .number:not(.approximate) {
+  color: var(--text-secondary);
+}
+
+.opportunity-check-result .number {
+  font-size: inherit;
+}
+
 .rebalance-empty-state {
   margin: var(--space-4);
   border: 1px dashed var(--hairline);
@@ -938,12 +973,23 @@ th.number-head {
   color: var(--warning);
 }
 
-tbody tr:hover {
+tbody tr:hover,
+.opportunity-with-evidence:hover + .opportunity-evidence-row,
+.opportunity-with-evidence:has(+ .opportunity-evidence-row:hover) {
   background: var(--surface-2);
 }
 
 tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.opportunities-table .opportunity-with-evidence td {
+  border-bottom: 0;
+}
+
+.opportunities-table .opportunity-evidence-row td {
+  padding-top: 0;
+  padding-inline: 0;
 }
 
 .instrument-cell {

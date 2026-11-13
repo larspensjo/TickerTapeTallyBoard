@@ -8,6 +8,11 @@ import type {
 } from "../api/types";
 import { type TargetGapBar, targetGapBar } from "./holdingsConviction";
 import {
+  type OpportunityCheckEntry,
+  opportunityChecksViewModel,
+} from "./opportunityChecksViewModel";
+import { formatShortDate } from "./opportunityDateDisplay";
+import {
   type OpportunityVerdictViewModel,
   opportunityVerdictTier,
   opportunityVerdictViewModel,
@@ -49,32 +54,6 @@ const CHANGE_COLUMN_LABELS: Record<OpportunityWindow, string> = {
 
 /** Header used while the rows on screen belong to another window. */
 export const UNNAMED_CHANGE_COLUMN_LABEL = "Price change";
-
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-/** "2026-10-07" → "7 Oct". Calendar dates are formatted without a time zone. */
-export function formatShortDate(isoDate: string): string {
-  const match = isoDate.match(/^\d{4}-(\d{2})-(\d{2})$/);
-  const month = match ? MONTHS[Number(match[1]) - 1] : undefined;
-  if (!match || !month) {
-    return isoDate;
-  }
-
-  return `${Number(match[2])} ${month}`;
-}
 
 export function priceChangeReasonLabel(
   code: string,
@@ -178,6 +157,7 @@ export interface OpportunityStaleSignalViewModel {
 
 export interface OpportunityRowViewModel {
   verdict: OpportunityVerdictViewModel | null;
+  checks: OpportunityCheckEntry[];
   instrument: Instrument;
   changeAvailable: boolean;
   changeLabel: string;
@@ -311,6 +291,8 @@ function rowViewModel(
     return {
       verdict:
         row.evidence == null ? null : opportunityVerdictViewModel(row.evidence),
+      checks:
+        row.evidence == null ? [] : opportunityChecksViewModel(row.evidence),
       instrument: row.instrument,
       changeAvailable: true,
       changeLabel: formatChangePercent(change.change_percent),
@@ -332,6 +314,8 @@ function rowViewModel(
   return {
     verdict:
       row.evidence == null ? null : opportunityVerdictViewModel(row.evidence),
+    checks:
+      row.evidence == null ? [] : opportunityChecksViewModel(row.evidence),
     instrument: row.instrument,
     changeAvailable: false,
     changeLabel: label,

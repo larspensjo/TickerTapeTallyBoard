@@ -247,16 +247,47 @@ sign colour). Stale signals use the minor clock icon or the `--warning-soft`
 chip: on the latest price from its own freshness, and separately beside the SEK
 gain when its price or exchange rate is stale. "Vs target" reuses the Holdings
 diverging target-gap bar and tooltip, blank without a target. The Verdict column
-shows a verdict chip whose text carries the meaning, a one-sentence plain-language
-explanation, and neutral caution chips. At the 1258px desktop window (1180px panel),
-long explanations wrap onto two lines and instrument names are not truncated.
+follows Instrument and shows a verdict chip whose text carries the meaning,
+a wrapping one-sentence explanation, and neutral compact caution chips. The
+Sentiment-dip candidate chip uses `--up-soft` with `--up` text; Fell for a reason?
+uses `--warning-soft` with `--warning` text. These coloured chips have a matching
+text-colour border at 28% opacity. Possible candidate, report timing unknown,
+Not enough data, Normal movement and Unknown verdict use neutral status chips.
+The explanation uses Body-sm (13px) in `--text-secondary`. At the 1258px desktop
+window (1180px panel), long explanations wrap onto two lines and instrument names
+are not truncated.
 When verdicts are present, a 13px
 `--text-secondary` note below the table reads: "A verdict describes the dip: how
 unusual the fall is and what is known about the company. It does not predict the
 price. A replay of stored price history found no measurable difference in the
 following month between dips the price checks flagged and other dips; the company
-checks could not be replayed." The separate muted 12px footnote below explains
-that changes are native-currency closes without dividends added back.
+checks could not be replayed."
+
+Every row with a verdict has a full-width evidence line beneath it, spanning all
+columns, capped to the scroll area's visible width without widening the table.
+It stays in view while the data columns scroll sideways. The line
+belongs to the holding above, with no divider between them and the usual hairline
+after the evidence. Hovering either part uses `--surface-2` for both. It retains
+one accessible data row per holding; its text is reachable in a labelled evidence
+group described by the instrument cell. Rows without a verdict remain single-line. Checks appear as "Name: result" in this order: Unusual drop,
+Off its high, Report in the period, Report coming soon, Business, Market, Stopped
+falling, Ex-dividend, Room to buy. Labels may use `--text-muted`; results and
+unknown reasons use Body-sm (13px) in `--text-secondary`, with figures in mono.
+Not applicable is italic "n/a". Approximate values reuse the company-figure amber
+"~" prefix and `--warning` text; the explanation appears in both title and
+accessible label. Report dates retain source certainty, and period-only knowledge
+is an interval or bound, never a report date. The market tooltip states that the
+median mixes markets and currencies, includes funds, and can be self-referential
+in a concentrated portfolio. Results keep the usual move, dividend-adjusted change
+when supplied, compact business figures, distance below the high and the period
+low context visible. Values already shown in columns are omitted. Counts,
+thresholds, comparison margins and 1-year high/low prices belong in the entry tooltip
+and accessible description. Timing hints use the UI font.
+
+The separate muted 12px footnote explains native-currency changes without dividends
+added back, that ex-dividend days are detected where the price source reports
+dividends, and that during market hours the latest price can be intraday, so fell
+and stopped falling can change before the close.
 
 **Transaction form** — inputs on `--surface-2`, `--radius-md`, 1px `--hairline`;
 labels in Label-strong/`--text-muted`; focus = 1.5px `--accent` border + soft

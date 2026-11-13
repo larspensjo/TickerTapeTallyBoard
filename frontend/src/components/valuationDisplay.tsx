@@ -196,9 +196,22 @@ export function formatFigureNumber(
     decimal = `${sign}${digits.slice(0, split).replace(/^0+(?=\d)/, "")}.${digits.slice(split) || "0"}`;
   }
   const digits = precision === "ratio" ? 1 : 2;
-  const rounded = roundDecimal(decimal, digits);
+  return `${formatFixedNumber(decimal, digits)}${precision === "percentage" ? "%" : ""}`;
+}
+
+function formatFixedNumber(value: string, digits: number): string {
+  const rounded = roundDecimal(value, digits);
   const [whole, fraction = ""] = rounded.split(".");
-  return `${formatGroupedNumber(whole)}.${fraction.padEnd(digits, "0")}${precision === "percentage" ? "%" : ""}`;
+  return `${formatGroupedNumber(whole)}.${fraction.padEnd(digits, "0")}`;
+}
+
+/** Percentage-point inputs are already scaled by the API. */
+export function formatPercentagePoints(value: string): string {
+  return formatFixedNumber(value, 2);
+}
+
+export function formatPercent(value: string): string {
+  return `${formatPercentagePoints(value)}%`;
 }
 
 export function FormattedNumber({

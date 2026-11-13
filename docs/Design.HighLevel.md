@@ -188,11 +188,33 @@ biggest fall first, then symbol and exchange. Rows without a verdict follow in
 fallers order, with unavailable changes last. **Biggest fallers** and **Biggest
 risers** continue to order by change alone, with unavailable changes last. Cautions
 do not affect the order. The Verdict column shows a chip, a short explanation from
-the deciding or missing checks, and neutral caution chips. When a verdict is shown,
+the deciding or missing checks, and neutral caution chips. The explanation wraps.
+Beneath each verdict row, a full-width evidence line lists all nine checks in a
+fixed order: Unusual drop, Off its high, Report in the period, Report coming soon,
+Business, Market, Stopped falling, Ex-dividend and Room to buy. It wraps at the
+scroll area's visible width and stays in view during sideways scrolling without
+widening the table. The instrument cell describes its evidence group; hovering
+either part highlights both. Each holding keeps one accessible data row.
+Pure view-models map backend states, reason codes and values to readable results;
+they never compute evidence. Unknowns state their reasons, not applicable is
+italic n/a, and approximate values retain their explained certainty markers.
+Business shows profitability, sales and earnings figures and EPS cross-check
+limitations; report intervals and upper bounds never become report dates. The
+market result names the median of the other holdings, with its limitations in a
+tooltip. Results omit values already visible in columns. Counts, thresholds,
+comparison margins and 1-year high/low prices move to entry tooltips and accessible
+descriptions, leaving the usual move and compact business and price context
+visible. Unknown reasons and EPS cross-check limitations remain visible.
+Rows without a verdict remain single-line. When a verdict is shown,
 the note reads: "A verdict describes the dip: how unusual the fall is and what is
 known about the company. It does not predict the price. A replay of stored price
 history found no measurable difference in the following month between dips the
 price checks flagged and other dips; the company checks could not be replayed."
+
+The separate footnote explains that native-currency price changes exclude
+dividends, ex-dividend days are detected where the price source reports dividends,
+and the latest price can be intraday during market hours, so fell and stopped
+falling can change before the close.
 
 The window persists under `opportunities.window`; the order persists under
 `opportunities.ordering`. When the order key is absent, `opportunities.order` is

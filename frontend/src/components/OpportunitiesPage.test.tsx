@@ -366,7 +366,7 @@ describe("OpportunitiesPage", () => {
 
     expect(
       screen.getByText(
-        "Price change compares closing share prices in each asset's own currency. Dividends are not added back, so a share can look like it fell on the day it starts trading without its dividend.",
+        "Price change compares share prices in each asset's own currency, without dividends added back. Ex-dividend days are detected where the price source reports dividends. During market hours the latest price can be intraday, so fell and stopped falling can change before the close.",
       ),
     ).toBeTruthy();
   });
@@ -376,6 +376,61 @@ const verdictNote =
   "A verdict describes the dip: how unusual the fall is and what is known about the company. It does not predict the price. A replay of stored price history found no measurable difference in the following month between dips the price checks flagged and other dips; the company checks could not be replayed.";
 
 describe("Opportunities verdict presentation", () => {
+  it("exposes all evidence in the table only for a verdict row, keeping real row counts and sorting", () => {
+    useAppMode.mockReturnValue({ canMutate: false });
+    const candidate = opportunityRow(10, "Candidate Company", "-8.00");
+    candidate.evidence = opportunityEvidence();
+    const riser = opportunityRow(11, "Rising Company", "2.00");
+    useOpportunities.mockReturnValue(
+      queryResult(response("7d", [riser, candidate])),
+    );
+    renderPage();
+    const table = screen.getByRole("table", { name: "Opportunities" });
+    const line = within(table).getByRole("group", {
+      name: "Evidence for Candidate Company",
+    });
+    for (const label of [
+      "Unusual drop:",
+      "Off its high:",
+      "Report in the period:",
+      "Report coming soon:",
+      "Business:",
+      "Market:",
+      "Stopped falling:",
+      "Ex-dividend:",
+      "Room to buy:",
+    ]) {
+      expect(within(line).getByText(label)).toBeTruthy();
+    }
+    expect(line).toHaveTextContent(
+      "unknown; the dividend range is not fully covered",
+    );
+    expect(within(line).getByText("below your target")).toBeTruthy();
+    expect(
+      within(table).queryByRole("group", {
+        name: "Evidence for Rising Company",
+      }),
+    ).toBeNull();
+    expect(dataRows()).toHaveLength(2);
+    expect(
+      within(dataRows()[0]).getByRole("cell", { name: /Candidate Company/ }),
+    ).toHaveAttribute("aria-describedby", line.id);
+    const market = within(line).getByText("Market:").parentElement;
+    expect(market).toHaveAttribute(
+      "title",
+      expect.stringContaining("8 other holdings; comparison margin 3.00 pts"),
+    );
+    expect(market).toHaveAttribute("aria-description", market?.title);
+    expect(
+      within(dataRows()[0]).getByRole("link", { name: "Candidate Company" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Biggest risers" }));
+    expect(dataRows()).toHaveLength(2);
+    expect(
+      within(dataRows()[0]).getByRole("link", { name: "Rising Company" }),
+    ).toBeTruthy();
+  });
+
   it.each([
     "sentiment_dip_candidate",
     "possible_candidate_report_timing_unknown",
