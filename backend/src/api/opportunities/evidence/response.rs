@@ -132,6 +132,9 @@ impl From<EvidenceReason> for ReasonResponse {
     fn from(reason: EvidenceReason) -> Self {
         let mut out = Self::from(Reason::new(reason.as_str()));
         match reason {
+            EvidenceReason::MarketIndexUnavailable { display_name } => {
+                out.detail = Some(display_name)
+            }
             EvidenceReason::PriceHistoryGap { start } => out.start = Some(start),
             EvidenceReason::SplitInLookback { date }
             | EvidenceReason::NonPositiveClose { date } => out.date = Some(date),
@@ -392,6 +395,14 @@ impl From<BusinessOutcome> for Check<BusinessValues> {
 #[derive(Debug, Serialize)]
 pub struct MarketValues {
     source: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_start_date: Option<NaiveDate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_end_date: Option<NaiveDate>,
     change_percent: String,
     reference_percent: Option<String>,
     difference_percent: Option<String>,
@@ -400,6 +411,23 @@ pub struct MarketValues {
 }
 impl From<MarketOutcome> for Check<MarketValues> {
     fn from(v: MarketOutcome) -> Self {
+        let (source, index_code, index_name, index_start_date, index_end_date) = match v.source {
+            MarketReferenceSource::OtherHoldingsMedian => {
+                ("other_holdings_median", None, None, None, None)
+            }
+            MarketReferenceSource::MarketIndex {
+                code,
+                display_name,
+                start_date,
+                end_date,
+            } => (
+                "market_index",
+                Some(code),
+                Some(display_name),
+                Some(start_date),
+                Some(end_date),
+            ),
+        };
         Self {
             state: match v.state {
                 MarketState::FellMoreThanMarket => "fell_more_than_market",
@@ -409,9 +437,11 @@ impl From<MarketOutcome> for Check<MarketValues> {
             },
             reasons: reasons(v.reasons),
             values: MarketValues {
-                source: match v.source {
-                    MarketReferenceSource::OtherHoldingsMedian => "other_holdings_median",
-                },
+                source,
+                index_code,
+                index_name,
+                index_start_date,
+                index_end_date,
                 change_percent: money_string(v.change_percent),
                 reference_percent: percent(v.reference_percent),
                 difference_percent: percent(v.difference_percent),

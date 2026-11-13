@@ -292,7 +292,9 @@ function rowViewModel(
       verdict:
         row.evidence == null ? null : opportunityVerdictViewModel(row.evidence),
       checks:
-        row.evidence == null ? [] : opportunityChecksViewModel(row.evidence),
+        row.evidence == null
+          ? []
+          : opportunityChecksViewModel(row.evidence, change),
       instrument: row.instrument,
       changeAvailable: true,
       changeLabel: formatChangePercent(change.change_percent),

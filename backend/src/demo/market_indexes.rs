@@ -23,7 +23,19 @@ fn index(instrument: &DemoInstrument) -> Option<&'static MarketIndex> {
 
 // Calendar-day anchors keep the recent swings stable relative to the demo clock.
 fn close_at_offset(offset: i64) -> Decimal {
-    let anchors = [(0, 980), (7, 1000), (14, 990), (21, 1015), (30, 995)];
+    let anchors = [
+        (0, 970),
+        (1, 973),
+        (2, 968),
+        (3, 976),
+        (4, 975),
+        (5, 983),
+        (7, 1000),
+        (10, 1010),
+        (14, 1020),
+        (21, 1010),
+        (30, 1035),
+    ];
     for pair in anchors.windows(2) {
         let [(left_day, left), (right_day, right)] = [pair[0], pair[1]];
         if offset <= right_day {
@@ -32,7 +44,7 @@ fn close_at_offset(offset: i64) -> Decimal {
                     / Decimal::from(right_day - left_day);
         }
     }
-    Decimal::from(995) - Decimal::from(offset - 30) / Decimal::TEN
+    Decimal::from(1035) - Decimal::from(offset - 30) / Decimal::TEN
 }
 
 pub(super) async fn seed(
@@ -132,6 +144,16 @@ mod tests {
                         pair[1].close_decimal().unwrap() < pair[0].close_decimal().unwrap()
                     }));
                     let last = rows.last().unwrap().close_decimal().unwrap();
+                    let week: Vec<_> = recent
+                        .iter()
+                        .filter(|row| row.date_value().unwrap() >= today - Duration::days(7))
+                        .collect();
+                    let week_start = week.first().unwrap().close_decimal().unwrap();
+                    let weekly_drop = (week_start - last) / week_start;
+                    assert!(weekly_drop > Decimal::ZERO && weekly_drop < Decimal::new(5, 2));
+                    assert!(week.windows(2).any(|pair| {
+                        pair[1].close_decimal().unwrap() > pair[0].close_decimal().unwrap()
+                    }));
                     assert!([7, 14, 30].into_iter().any(|days| {
                         let start = rows
                             .iter()

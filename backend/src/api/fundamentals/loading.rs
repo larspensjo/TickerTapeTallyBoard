@@ -6,6 +6,10 @@ pub enum LoadScope<'a> {
     Stock,
     Holdings(&'a [LedgerTransaction]),
     Evidence(&'a [LedgerTransaction]),
+    EvidenceWithPriceSources {
+        ledger: &'a [LedgerTransaction],
+        price_sources: &'a [effective_prices::PriceSourceMapping],
+    },
 }
 
 pub struct Loaded {
@@ -46,7 +50,9 @@ pub async fn load_inputs(
 ) -> Result<Loaded, ApiError> {
     let ledger = match scope {
         LoadScope::Stock => None,
-        LoadScope::Holdings(ledger) | LoadScope::Evidence(ledger) => Some(ledger),
+        LoadScope::Holdings(ledger)
+        | LoadScope::Evidence(ledger)
+        | LoadScope::EvidenceWithPriceSources { ledger, .. } => Some(ledger),
     };
     let id = instrument.id;
     let stored = fundamental_values::active_values(pool, id).await?;
@@ -80,8 +86,15 @@ pub async fn load_inputs(
             .map(|at| local_date(clock, id, at))
             .transpose()?,
     };
-    if effective_prices::enabled_price_sources(pool, id)
-        .await?
+    let loaded_sources;
+    let price_sources = match scope {
+        LoadScope::EvidenceWithPriceSources { price_sources, .. } => price_sources,
+        _ => {
+            loaded_sources = effective_prices::enabled_price_sources(pool, id).await?;
+            &loaded_sources
+        }
+    };
+    if price_sources
         .iter()
         .any(|s| s.asset_class.as_deref() == Some("TRACKER_CERTIFICATES"))
     {
@@ -111,7 +124,7 @@ pub async fn load_inputs(
     // Only evidence needs the absence baseline across annual and quarterly periods.
     // Holdings must not decode unrelated annual observations or panel metadata.
     let observation_type = match scope {
-        LoadScope::Evidence(_) => None,
+        LoadScope::Evidence(_) | LoadScope::EvidenceWithPriceSources { .. } => None,
         _ => Some(PeriodType::Quarter),
     };
     let period_observations =

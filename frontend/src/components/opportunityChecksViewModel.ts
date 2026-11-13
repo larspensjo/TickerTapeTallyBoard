@@ -164,9 +164,14 @@ function market(check: Checks["market"]): CheckText[] {
         ];
   return [
     ...parts,
-    words(" the median of your other holdings ("),
+    words(
+      ` ${check.source === "market_index" ? check.index_name : "the median of your other holdings"} (`,
+    ),
     percent(check.reference_percent),
     words(")"),
+    ...(check.reasons.length
+      ? [words("; "), ...reasonParts(check.reasons, CHECK_NAMES.market)]
+      : []),
   ];
 }
 function stoppedFalling(check: Checks["stopped_falling"]): CheckText[] {
@@ -239,7 +244,12 @@ function checkParts(key: keyof Checks, checks: Checks): CheckText[] {
   }
 }
 
-function checkTooltip(key: keyof Checks, checks: Checks): string | undefined {
+type HoldingDates = { start_date: string; end_date: string };
+function checkTooltip(
+  key: keyof Checks,
+  checks: Checks,
+  holdingDates?: HoldingDates,
+): string | undefined {
   const check = checks[key];
   const details = [
     plainText(reasonParts(check.reasons, CHECK_NAMES[key], true)),
@@ -274,15 +284,42 @@ function checkTooltip(key: keyof Checks, checks: Checks): string | undefined {
       );
       break;
     case "market":
-      details.push(
-        MARKET_TOOLTIP,
-        plainText([
-          count(checks.market.count),
-          words(" other holdings; comparison margin "),
-          points(checks.market.margin_percent),
-          words(" pts"),
-        ]),
-      );
+      if (checks.market.source === "market_index") {
+        details.push(
+          `${checks.market.index_name} is a price index without dividends.`,
+        );
+        if (
+          !holdingDates ||
+          checks.market.index_start_date !== holdingDates.start_date ||
+          checks.market.index_end_date !== holdingDates.end_date
+        ) {
+          details.push(
+            plainText([
+              words("Index closes paired on "),
+              date(checks.market.index_start_date),
+              words(" and "),
+              date(checks.market.index_end_date),
+            ]),
+          );
+        }
+        details.push(
+          plainText([
+            words("Comparison margin "),
+            points(checks.market.margin_percent),
+            words(" pts"),
+          ]),
+        );
+      } else {
+        details.push(
+          MARKET_TOOLTIP,
+          plainText([
+            count(checks.market.count),
+            words(" other holdings; comparison margin "),
+            points(checks.market.margin_percent),
+            words(" pts"),
+          ]),
+        );
+      }
       break;
     case "stopped_falling":
       details.push(
@@ -319,6 +356,7 @@ function checkTooltip(key: keyof Checks, checks: Checks): string | undefined {
 /** Display only: state, order, dates and figures all come from the API. */
 export function opportunityChecksViewModel(
   evidence: OpportunityEvidence,
+  holdingDates?: HoldingDates,
 ): OpportunityCheckEntry[] {
   return (Object.keys(CHECK_NAMES) as (keyof Checks)[]).map((key) => ({
     key,
@@ -327,6 +365,6 @@ export function opportunityChecksViewModel(
       ...part,
       key: `${key}-${index}`,
     })),
-    tooltip: checkTooltip(key, evidence.checks),
+    tooltip: checkTooltip(key, evidence.checks, holdingDates),
   }));
 }

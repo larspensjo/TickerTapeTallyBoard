@@ -769,3 +769,153 @@ async fn missing_fx_holding_has_available_native_change_but_unknown_room_to_buy(
     assert_eq!(room["state"], "unknown", "{room}");
     assert!(has_reason(room, "valuation_unavailable"), "{room}");
 }
+
+async fn index_closes(state: &AppState, closes: &[(&str, &str)]) {
+    for (day, close) in closes {
+        crate::db::market_indexes::upsert(
+            &state.pool,
+            &crate::db::market_indexes::NewIndexClose {
+                index_code: "OMXSPI".into(),
+                provider: MarketDataProvider::Yahoo,
+                provider_symbol: "^OMXSPI".into(),
+                currency: "SEK".into(),
+                date: date(day),
+                close: close.parse().unwrap(),
+                fetched_at: "2026-10-15T12:00:00Z".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn market_sources_and_fallback_have_exact_contract_and_never_change_the_verdict() {
+    let state = state().await;
+    let id = history(&state, "CONTEXT", "72").await;
+    company(
+        &state,
+        id,
+        Company {
+            loss: true,
+            ..Company::default()
+        },
+    )
+    .await;
+    set_conviction(&state, id, "Other").await;
+    for symbol in ["PEER1", "PEER2", "PEER3", "PEER4", "PEER5"] {
+        seed(
+            &state,
+            symbol,
+            "SEK",
+            "100",
+            &[("2026-10-08", "100"), ("2026-10-15", "99")],
+        )
+        .await;
+    }
+    let median = response(&state, "7d").await;
+    let expected_median = json!({"state":"fell_more_than_market", "reasons":[],
+        "source":"other_holdings_median", "change_percent":"-28.00", "reference_percent":"-1.00",
+        "difference_percent":"-27.00", "margin_percent":"3.00", "count":5});
+    assert_eq!(check(&median, "CONTEXT", "market"), &expected_median);
+    let verdict = row(&median, "CONTEXT")["evidence"]["verdict"].clone();
+    assert!(!verdict["deciding"].as_array().unwrap().is_empty());
+    assert!(verdict["cautions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("loss_making")));
+    // Change only the synthetic listing's market; its stored closes remain identical.
+    sqlx::query(
+        "UPDATE instrument_provider_symbols SET provider_symbol='CONTEXT.ST' WHERE instrument_id=?",
+    )
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    index_closes(&state, &[("2026-10-07", "100"), ("2026-10-14", "60")]).await;
+    let indexed = response(&state, "7d").await;
+    assert_eq!(
+        check(&indexed, "CONTEXT", "market"),
+        &json!({
+            "state":"fell_less_than_market", "reasons":[], "source":"market_index",
+            "index_code":"OMXSPI", "index_name":"OMX Stockholm all-share",
+            "index_start_date":"2026-10-07", "index_end_date":"2026-10-14",
+            "change_percent":"-28.00", "reference_percent":"-40.00", "difference_percent":"12.00",
+            "margin_percent":"3.00", "count":5
+        })
+    );
+    assert_eq!(row(&indexed, "CONTEXT")["evidence"]["verdict"], verdict);
+    // A stale end is not silently paired to the fresh holding close.
+    sqlx::query("DELETE FROM market_index_closes WHERE date='2026-10-14'")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let fallback = response(&state, "7d").await;
+    let mut expected_fallback = expected_median;
+    expected_fallback["reasons"] =
+        json!([{"code":"market_index_unavailable", "detail":"OMX Stockholm all-share"}]);
+    assert_eq!(check(&fallback, "CONTEXT", "market"), &expected_fallback);
+    assert_eq!(row(&fallback, "CONTEXT")["evidence"]["verdict"], verdict);
+    sqlx::query("DELETE FROM market_index_closes")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        check(&response(&state, "7d").await, "CONTEXT", "market"),
+        &expected_fallback
+    );
+}
+
+#[tokio::test]
+async fn evidence_reuses_listing_sources_for_certificate_classification() {
+    let state = state().await;
+    let id = history(&state, "CERTIFICATE", "72").await;
+    company(&state, id, Company::default()).await;
+    sqlx::query("UPDATE instrument_provider_symbols SET asset_class='TRACKER_CERTIFICATES', provider_symbol='CERTIFICATE.ST' WHERE instrument_id=?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    index_closes(&state, &[("2026-10-08", "100"), ("2026-10-15", "99")]).await;
+    crate::db::testing::set_query_only(&state.pool).await;
+    let body = response(&state, "7d").await;
+    assert_eq!(
+        check(&body, "CERTIFICATE", "market")["source"],
+        "market_index"
+    );
+    for name in ["business", "report_in_period", "report_coming_soon"] {
+        assert_eq!(check(&body, "CERTIFICATE", name)["state"], "not_applicable");
+    }
+}
+
+#[tokio::test]
+async fn market_index_load_or_decode_failure_fails_the_endpoint_instead_of_falling_back() {
+    for corrupt in [false, true] {
+        let state = state().await;
+        let id = seed(
+            &state,
+            "INDEXED",
+            "SEK",
+            "100",
+            &[("2026-10-08", "100"), ("2026-10-15", "90")],
+        )
+        .await;
+        sqlx::query("UPDATE instrument_provider_symbols SET provider_symbol='INDEXED.ST' WHERE instrument_id=?")
+            .bind(id).execute(&state.pool).await.unwrap();
+        if corrupt {
+            index_closes(&state, &[("2026-10-08", "100")]).await;
+            sqlx::query("UPDATE market_index_closes SET close='invalid'")
+                .execute(&state.pool)
+                .await
+                .unwrap();
+        } else {
+            sqlx::query("DROP TABLE market_index_closes")
+                .execute(&state.pool)
+                .await
+                .unwrap();
+        }
+        let (status, body) = send(&state, "GET", "/api/opportunities?window=7d", Value::Null).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"]["code"], "internal_error");
+    }
+}

@@ -2,6 +2,8 @@
 mod response;
 pub use response::EvidenceResponse;
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rust_decimal::Decimal;
 
@@ -13,7 +15,7 @@ use crate::{
             business_check::business_check,
             dividend_check::went_ex_dividend,
             lookback_series::{prepare_lookback, HistoryClose},
-            market_reference::market_reference,
+            market_reference::{market_reference_with_index, IndexReference},
             parameters::{LOOKBACK_DAYS, NO_REPORT_RULE},
             price_checks::{off_high, stopped_falling, unusual_drop},
             report_timing::{report_coming_soon, report_in_period, ReportTimingInputs},
@@ -23,6 +25,7 @@ use crate::{
         },
         ConvictionTargetOutput, ProviderCode, RecentPriceChange, RecentWindow, TransactionKind,
     },
+    market_data::effective_prices::PriceSourceMapping,
     providers::MarketDataProvider,
     state::AppState,
 };
@@ -34,7 +37,7 @@ pub(super) async fn load(
     holding: &ValuedOpenHolding,
     target: &ConvictionTargetOutput,
     change: &RecentPriceChange,
-    held_changes: &[(i64, Option<Decimal>)],
+    markets: &MarketReferences,
 ) -> Result<Option<EvidenceResponse>, ApiError> {
     let RecentPriceChange::Available {
         start_date,
@@ -84,7 +87,10 @@ pub(super) async fn load(
         &state.clock,
         Some(latest),
         holding.latest_fx_snapshot(),
-        loading::LoadScope::Evidence(&holding.ledger),
+        loading::LoadScope::EvidenceWithPriceSources {
+            ledger: &holding.ledger,
+            price_sources: &markets.price_sources[&holding.instrument.id],
+        },
     )
     .await
     .map_err(|e| fail("load company figures and report evidence", e))?;
@@ -151,7 +157,14 @@ pub(super) async fn load(
         &company.source,
         &company.next_report,
     );
-    let market = market_reference(holding.instrument.id, *change_percent, window, held_changes);
+    let market = market_reference_with_index(
+        holding.instrument.id,
+        *change_percent,
+        window,
+        &markets.held_changes,
+        (*start_date, *end_date),
+        markets.index(holding.instrument.id),
+    );
     let stopped = stopped_falling(&series, *start_date, *end_date);
     let room = room_to_buy(target.status);
     let verdict = verdict(&unusual, &high, &report, &business, &soon, room);
@@ -199,4 +212,83 @@ fn log_failure(
         error
     );
     error
+}
+
+/// Request-scoped inputs: each needed stored index series is read once.
+pub(super) struct MarketReferences {
+    held_changes: Vec<(i64, Option<Decimal>)>,
+    price_sources: BTreeMap<i64, Vec<PriceSourceMapping>>,
+    listings: BTreeMap<i64, &'static crate::domain::market_index::MarketIndex>,
+    closes: BTreeMap<&'static str, Vec<(NaiveDate, Decimal)>>,
+}
+impl MarketReferences {
+    fn index(&self, instrument_id: i64) -> Option<IndexReference<'_>> {
+        let index = self.listings.get(&instrument_id)?;
+        Some(IndexReference {
+            code: index.code,
+            display_name: index.display_name,
+            closes: &self.closes[index.code],
+        })
+    }
+}
+
+pub(super) async fn load_market_references<'a>(
+    state: &AppState,
+    window: RecentWindow,
+    rows: impl Iterator<Item = (&'a ValuedOpenHolding, &'a RecentPriceChange)>,
+    held_changes: Vec<(i64, Option<Decimal>)>,
+) -> Result<MarketReferences, ApiError> {
+    use crate::domain::START_CLOSE_MAX_AGE_TRADING_DAYS;
+    use crate::{
+        db::market_indexes,
+        market_data::{effective_prices, listing_market},
+    };
+    let mut result = MarketReferences {
+        held_changes,
+        price_sources: Default::default(),
+        listings: Default::default(),
+        closes: Default::default(),
+    };
+    let mut needed = BTreeMap::new();
+    for (holding, change) in rows {
+        let RecentPriceChange::Available {
+            start_date,
+            end_date,
+            change_percent,
+            ..
+        } = change
+        else {
+            continue;
+        };
+        if *change_percent >= Decimal::ZERO {
+            continue;
+        }
+        let sources = effective_prices::enabled_price_sources(&state.pool, holding.instrument.id)
+            .await
+            .map_err(|e| log_failure(holding, window, "load listing market", e.into()))?;
+        if let Some(index) =
+            listing_market::from_sources(&sources, &holding.instrument.currency).index()
+        {
+            result.listings.insert(holding.instrument.id, index);
+            // Over-read enough calendar days for the weekday tolerance across weekends.
+            // The pure pairing rule applies the exact tolerance to both endpoints.
+            let from = *start_date - Duration::days(START_CLOSE_MAX_AGE_TRADING_DAYS * 2 + 1);
+            let range = needed.entry(index.code).or_insert((index, from, *end_date));
+            range.1 = range.1.min(from);
+            range.2 = range.2.max(*end_date);
+        }
+        result.price_sources.insert(holding.instrument.id, sources);
+    }
+    for (code, (index, from, to)) in needed {
+        let load = async {
+            market_indexes::list_in_range(&state.pool, code, MarketDataProvider::Yahoo, index.provider_symbol, from, to).await?
+                .into_iter().filter(|row| row.currency.eq_ignore_ascii_case(index.currency))
+                .map(|row| Ok((row.date_value()?, row.close_decimal()?))).collect::<Result<Vec<_>, RepoError>>()
+        }.await.map_err(|error| {
+            crate::engine_error!("opportunities evidence failed: window={} operation=load index closes index={} symbol={} range={}..{}: {}", window.as_str(), code, index.provider_symbol, from, to, error);
+            ApiError::from(error)
+        })?;
+        result.closes.insert(code, load);
+    }
+    Ok(result)
 }

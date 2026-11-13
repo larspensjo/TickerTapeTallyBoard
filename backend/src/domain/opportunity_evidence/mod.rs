@@ -25,6 +25,7 @@ pub enum EvidenceReason {
     NonPositiveClose { date: NaiveDate },
     MissingWindowCloses,
     InsufficientMarketRows { count: usize, required: usize },
+    MarketIndexUnavailable { display_name: String },
     CalculationOutOfRange,
 }
 
@@ -40,6 +41,7 @@ impl EvidenceReason {
             Self::NonPositiveClose { .. } => "non_positive_close",
             Self::MissingWindowCloses => "missing_window_closes",
             Self::InsufficientMarketRows { .. } => "insufficient_market_rows",
+            Self::MarketIndexUnavailable { .. } => "market_index_unavailable",
             Self::CalculationOutOfRange => "calculation_out_of_range",
         }
     }

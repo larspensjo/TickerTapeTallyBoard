@@ -5,6 +5,25 @@ import type {
 } from "../api/types";
 import { reportDate } from "./companyFiguresFixtures";
 
+type IndexMarket = Extract<
+  OpportunityEvidence["checks"]["market"],
+  { source: "market_index" }
+>;
+
+export function opportunityIndexMarket(
+  overrides: Partial<IndexMarket> = {},
+): IndexMarket {
+  return {
+    ...opportunityEvidence().checks.market,
+    source: "market_index",
+    index_code: "OMXSPI",
+    index_name: "OMX Stockholm all-share",
+    index_start_date: "2026-10-08",
+    index_end_date: "2026-10-14",
+    ...overrides,
+  };
+}
+
 export function opportunityEvidence(
   code: OpportunityVerdictCode = "sentiment_dip_candidate",
 ): OpportunityEvidence {

@@ -1,13 +1,21 @@
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 
 use super::{parameters::*, EvidenceReason};
-use crate::domain::RecentWindow;
+use crate::domain::{
+    market_snapshot::trading_days_stale, RecentWindow, START_CLOSE_MAX_AGE_TRADING_DAYS,
+};
 
-/// Source metadata is separate from the outcome, so adding an index source later
-/// leaves consumers of the comparison state unchanged.
+/// Reference identity and actual paired dates travel with the comparison.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarketReferenceSource {
     OtherHoldingsMedian,
+    MarketIndex {
+        code: String,
+        display_name: String,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,12 +90,96 @@ pub fn market_reference(
         return outcome;
     };
     outcome.difference_percent = Some(difference);
-    outcome.state = if difference < -outcome.margin_percent {
+    outcome.state = comparison_state(difference, outcome.margin_percent);
+    outcome
+}
+
+/// Plain stored facts supplied by the caller; listing selection belongs outside this module.
+pub struct IndexReference<'a> {
+    pub code: &'a str,
+    pub display_name: &'a str,
+    pub closes: &'a [(NaiveDate, Decimal)],
+}
+
+pub fn market_reference_with_index(
+    instrument_id: i64,
+    change_percent: Decimal,
+    window: RecentWindow,
+    held_changes: &[(i64, Option<Decimal>)],
+    dates: (NaiveDate, NaiveDate),
+    index: Option<IndexReference<'_>>,
+) -> MarketOutcome {
+    if let Some(index) = index {
+        if let Some((start, end, reference, difference)) =
+            index_comparison(&index, dates, change_percent)
+        {
+            let margin = market_margin(window);
+            return MarketOutcome {
+                state: comparison_state(difference, margin),
+                reasons: vec![],
+                source: MarketReferenceSource::MarketIndex {
+                    code: index.code.into(),
+                    display_name: index.display_name.into(),
+                    start_date: start,
+                    end_date: end,
+                },
+                change_percent,
+                reference_percent: Some(reference),
+                difference_percent: Some(difference),
+                margin_percent: margin,
+                count: held_changes
+                    .iter()
+                    .filter(|(id, change)| *id != instrument_id && change.is_some())
+                    .count(),
+            };
+        }
+        let mut median = market_reference(instrument_id, change_percent, window, held_changes);
+        median.reasons.push(EvidenceReason::MarketIndexUnavailable {
+            display_name: index.display_name.into(),
+        });
+        return median;
+    }
+    market_reference(instrument_id, change_percent, window, held_changes)
+}
+
+fn comparison_state(difference: Decimal, margin: Decimal) -> MarketState {
+    if difference < -margin {
         MarketState::FellMoreThanMarket
-    } else if difference > outcome.margin_percent {
+    } else if difference > margin {
         MarketState::FellLessThanMarket
     } else {
         MarketState::MovedWithMarket
-    };
-    outcome
+    }
 }
+
+fn index_comparison(
+    index: &IndexReference<'_>,
+    dates: (NaiveDate, NaiveDate),
+    change: Decimal,
+) -> Option<(NaiveDate, NaiveDate, Decimal, Decimal)> {
+    let pair = |date| {
+        index
+            .closes
+            .iter()
+            .filter(|(day, _)| *day <= date)
+            .max_by_key(|(day, _)| *day)
+            .filter(|(day, close)| {
+                trading_days_stale(date, *day) <= START_CLOSE_MAX_AGE_TRADING_DAYS
+                    && *close > Decimal::ZERO
+            })
+    };
+    let (start_date, start) = pair(dates.0)?;
+    let (end_date, end) = pair(dates.1)?;
+    if *end_date <= dates.0 {
+        return None;
+    }
+    let reference = end
+        .checked_sub(*start)?
+        .checked_div(*start)?
+        .checked_mul(Decimal::ONE_HUNDRED)?;
+    let difference = change.checked_sub(reference)?;
+    Some((*start_date, *end_date, reference, difference))
+}
+
+#[cfg(test)]
+mod tests;

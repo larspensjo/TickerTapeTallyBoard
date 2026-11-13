@@ -135,6 +135,12 @@ export function checkReason(
   diagnostics = false,
 ): CheckText[] {
   switch (reason.code) {
+    case "market_index_unavailable":
+      return [
+        words(
+          `${reason.detail ?? "The market index"} has no usable closes for these dates`,
+        ),
+      ];
     case "price_history_gap":
       return [words("gap in price history starting "), date(reason.start)];
     case "split_in_lookback":

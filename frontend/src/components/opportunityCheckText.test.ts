@@ -175,6 +175,14 @@ const reasons: [OpportunityEvidenceReason, string][] = [
     "the holding's value is zero or negative",
   ],
   [{ code: "no_usable_price" }, "no usable positive price"],
+  [
+    { code: "market_index_unavailable", detail: "OMX Stockholm all-share" },
+    "OMX Stockholm all-share has no usable closes for these dates",
+  ],
+  [
+    { code: "market_index_unavailable" },
+    "The market index has no usable closes for these dates",
+  ],
 ];
 
 it.each(reasons)(

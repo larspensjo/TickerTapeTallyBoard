@@ -277,9 +277,13 @@ Not applicable is italic "n/a". Approximate values reuse the company-figure ambe
 "~" prefix and `--warning` text; the explanation appears in the title and, unless
 already visible in the same check, the accessible label. Report dates retain
 source certainty, and period-only knowledge is an interval or bound, never a
-report date. The market tooltip states that the
-median mixes markets and currencies, includes funds, and can be self-referential
-in a concentrated portfolio. Results keep the usual move, dividend-adjusted change
+report date. The market sentence names the index or the median of other holdings,
+with differences in percentage points (pts). The index tooltip states that it is a
+price index without dividends and gives the paired index dates when they differ
+from the holding's dates. The median tooltip states that it mixes markets and
+currencies, includes funds, and can be self-referential in a concentrated portfolio.
+An unavailable eligible index adds "<index name> has no usable closes for these
+dates" alongside the median sentence. Results keep the usual move, dividend-adjusted change
 when supplied, compact business figures, distance below the high and the period
 low context visible. Values already shown in columns are omitted. Counts,
 thresholds, comparison margins and 1-year high/low prices belong in the entry tooltip

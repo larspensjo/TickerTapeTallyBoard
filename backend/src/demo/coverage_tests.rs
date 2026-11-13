@@ -118,6 +118,8 @@ async fn opportunities_reach_every_verdict_check_state_and_caution_for_each_week
         let mut soon_labels = BTreeSet::new();
         let mut seen_eps = BTreeSet::new();
         let mut details = BTreeSet::new();
+        let mut market_sources = BTreeSet::new();
+        let mut index_states = BTreeSet::new();
         for window in ["7d", "14d", "30d"] {
             let body =
                 super::tests::get_json(&state, &format!("/api/opportunities?window={window}"))
@@ -182,6 +184,25 @@ async fn opportunities_reach_every_verdict_check_state_and_caution_for_each_week
                     }
                 }
                 let checks = &evidence["checks"];
+                let market = &checks["market"];
+                market_sources.insert(market["source"].as_str().unwrap().to_owned());
+                assert!(
+                    !market["reasons"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|reason| reason["code"] == "market_index_unavailable"),
+                    "{today} {window} {row}"
+                );
+                if market["source"] == "market_index" {
+                    index_states.insert(market["state"].as_str().unwrap().to_owned());
+                } else {
+                    // These synthetic listings have no compatible index in the app's table.
+                    assert!(
+                        matches!(row["instrument"]["symbol"].as_str(), Some("NORD" | "SPRO")),
+                        "{row}"
+                    );
+                }
                 if let Some(near) = checks["off_high"]["near_low"].as_bool() {
                     details.insert(format!("near_low_{near}"));
                 }
@@ -222,6 +243,23 @@ async fn opportunities_reach_every_verdict_check_state_and_caution_for_each_week
                 assert!(risers > 0, "{today} {window}: no risers");
             }
         }
+        assert_eq!(
+            market_sources,
+            BTreeSet::from([
+                "market_index".to_owned(),
+                "other_holdings_median".to_owned()
+            ]),
+            "{today}"
+        );
+        assert!(
+            index_states.contains("fell_more_than_market"),
+            "{today}: {index_states:?}"
+        );
+        assert!(
+            index_states.contains("fell_less_than_market")
+                || index_states.contains("moved_with_market"),
+            "{today}: {index_states:?}"
+        );
         for (check, expected) in &required {
             let actual = seen.get(check).unwrap();
             let expected: BTreeSet<String> = expected.iter().map(|s| (*s).to_owned()).collect();

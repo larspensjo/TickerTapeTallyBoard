@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { OpportunityEvidence } from "../api/types";
 import { reportDate } from "../test/companyFiguresFixtures";
-import { opportunityEvidence } from "../test/opportunityFixtures";
+import {
+  opportunityEvidence,
+  opportunityIndexMarket,
+} from "../test/opportunityFixtures";
 import { opportunityChecksViewModel } from "./opportunityChecksViewModel";
 
 type Checks = OpportunityEvidence["checks"];
@@ -758,3 +761,85 @@ it("keeps timing words in the UI font and deep price context visible", () => {
     "deep: 32.00% below the 1-year high, near the 1-year low",
   );
 });
+
+it.each(["market_index", "other_holdings_median"] as const)(
+  "names the reference for all three market states (%s)",
+  (source) => {
+    const check =
+      source === "market_index"
+        ? opportunityIndexMarket()
+        : opportunityEvidence().checks.market;
+    const reference =
+      source === "market_index"
+        ? "OMX Stockholm all-share"
+        : "the median of your other holdings";
+    for (const [state, difference, expected] of [
+      ["fell_more_than_market", "-7.00", "fell 7.00 pts more than"],
+      ["fell_less_than_market", "7.00", "fell 7.00 pts less than"],
+      ["moved_with_market", "0.00", "moved with"],
+    ] as const) {
+      check.state = state;
+      check.difference_percent = difference;
+      const view = result("market", { market: check });
+      expect(text(view)).toBe(`${expected} ${reference} (-1.00%)`);
+      if (source === "market_index") {
+        expect(view.tooltip).toContain(
+          "OMX Stockholm all-share is a price index without dividends.",
+        );
+        expect(view.tooltip).toContain(
+          "Index closes paired on 8 Oct and 14 Oct",
+        );
+        expect(view.tooltip).not.toContain("other holdings");
+      } else {
+        expect(view.tooltip).toContain(
+          "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio.",
+        );
+        expect(view.tooltip).not.toContain("price index");
+      }
+    }
+  },
+);
+
+it("keeps the fallback reason visible alongside the median, also when unknown", () => {
+  const check = opportunityEvidence().checks.market;
+  check.reasons = [
+    { code: "market_index_unavailable", detail: "OMX Stockholm all-share" },
+  ];
+  const view = result("market", { market: check });
+  expect(text(view)).toBe(
+    "fell 7.00 pts more than the median of your other holdings (-1.00%); OMX Stockholm all-share has no usable closes for these dates",
+  );
+  expect(view.tooltip).toContain(
+    "OMX Stockholm all-share has no usable closes for these dates",
+  );
+  check.state = "unknown";
+  check.reasons.unshift({
+    code: "insufficient_market_rows",
+    count: 4,
+    required: 5,
+  });
+  expect(text(result("market", { market: check }))).toContain(
+    "OMX Stockholm all-share has no usable closes for these dates",
+  );
+});
+
+it.each([
+  ["2026-10-08", "2026-10-15", false],
+  ["2026-10-07", "2026-10-15", true],
+  ["2026-10-08", "2026-10-14", true],
+])(
+  "explains paired index dates only when different (%s, %s)",
+  (start, end, showDates) => {
+    const evidence = opportunityEvidence();
+    evidence.checks.market = opportunityIndexMarket({
+      index_start_date: start,
+      index_end_date: end,
+    });
+    const view = opportunityChecksViewModel(evidence, {
+      start_date: "2026-10-08",
+      end_date: "2026-10-15",
+    }).find((check) => check.key === "market");
+    expect(view?.tooltip).toContain("price index without dividends");
+    expect(view?.tooltip?.includes("Index closes paired on")).toBe(showDates);
+  },
+);

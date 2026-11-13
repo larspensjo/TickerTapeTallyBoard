@@ -575,13 +575,21 @@ export interface OpportunityEvidence {
       | "fell_less_than_market"
       | "unknown"
     > & {
-      source: "other_holdings_median";
       change_percent: string;
       reference_percent: string | null;
       difference_percent: string | null;
       margin_percent: string;
       count: number;
-    };
+    } & (
+        | {
+            source: "market_index";
+            index_code: string;
+            index_name: string;
+            index_start_date: string;
+            index_end_date: string;
+          }
+        | { source: "other_holdings_median" }
+      );
     stopped_falling: OpportunityCheck<OpportunityYesNoUnknown> & {
       latest_close: string | null;
       low_close: string | null;

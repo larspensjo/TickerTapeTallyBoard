@@ -159,18 +159,19 @@ pub async fn handler(
             )
         })
         .collect();
+    let markets = evidence::load_market_references(
+        &state,
+        window,
+        pending
+            .iter()
+            .map(|(holding, _, change)| (*holding, change)),
+        held_changes,
+    )
+    .await?;
     let mut rows = Vec::with_capacity(pending.len());
     for (holding, target, change) in pending {
-        let evidence = evidence::load(
-            &state,
-            today,
-            window,
-            holding,
-            target,
-            &change,
-            &held_changes,
-        )
-        .await?;
+        let evidence =
+            evidence::load(&state, today, window, holding, target, &change, &markets).await?;
         let mut row = build_opportunity_row(holding, target, change, window, start_date, &tickers)?;
         row.evidence = evidence;
         rows.push(row);
