@@ -58,9 +58,15 @@ if ([string]::IsNullOrWhiteSpace($UserAgent)) {
     $UserAgent = "$PackageName/$PackageVersion"
 }
 $LogDir = Join-Path $RepoRoot ".local/logs"
-# One folder per run, so a later run never overwrites an earlier run's responses.
-$OutDir = Join-Path $LogDir ("market-index-probe/{0}" -f (Get-Date).ToString("yyyyMMdd-HHmmss"))
-New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+# One new folder per run. The probe never writes into an existing run folder and never
+# deletes a file, so no run (a dry run included) can overwrite another run's responses.
+$RunsDir = Join-Path $LogDir "market-index-probe"
+New-Item -ItemType Directory -Force -Path $RunsDir | Out-Null
+$OutDir = Join-Path $RunsDir (Get-Date).ToString("yyyyMMdd-HHmmss")
+if (Test-Path -LiteralPath $OutDir) {
+    throw "Run folder $OutDir already exists; wait a second and start again."
+}
+New-Item -ItemType Directory -Path $OutDir | Out-Null
 $LogPath = Join-Path $LogDir "market-index-probe.log"
 
 $script:requests = 0
@@ -112,7 +118,6 @@ function Invoke-Chart {
     }
     if ($script:requests -gt 0) { Start-Sleep -Seconds $DelaySeconds }
     $script:requests++
-    if (Test-Path $BodyPath) { Remove-Item -LiteralPath $BodyPath -Force }
     $connect = [Math]::Min(10, $TimeoutSeconds)
     $written = & curl.exe --silent --show-error --globoff --path-as-is `
         --max-time $TimeoutSeconds --connect-timeout $connect `
@@ -253,6 +258,7 @@ foreach ($symbol in $Symbols) {
         $attempts = 1
         if ($response.StatusCode -eq 0 -or $response.StatusCode -ge 500) {
             Write-Line "RETRY $symbol $($form.Name): HTTP $($response.StatusCode) $($response.Transport)"
+            $bodyPath = Join-Path $OutDir ("{0}_{1}_retry.json" -f $safe, $form.Name)
             $retry = Invoke-Chart -Url $url -BodyPath $bodyPath
             if (-not $retry.Skipped) {
                 $response = $retry
