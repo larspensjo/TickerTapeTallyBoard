@@ -316,7 +316,7 @@ describe("readable opportunity checks", () => {
       "fell 7.00 pts more than the median of your other holdings (-1.00%)",
     );
     expect(result("market").tooltip).toBe(
-      "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio.; 8 other holdings; comparison margin 3.00 pts",
+      "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio; 8 other holdings; comparison margin 3.00 pts",
     );
   });
 
@@ -784,7 +784,7 @@ it.each(["market_index", "other_holdings_median"] as const)(
       expect(text(view)).toBe(`${expected} ${reference} (-1.00%)`);
       if (source === "market_index") {
         expect(view.tooltip).toContain(
-          "OMX Stockholm all-share is a price index without dividends.",
+          "OMX Stockholm all-share is a price index without dividends; ",
         );
         expect(view.tooltip).toContain(
           "Index closes paired on 8 Oct and 14 Oct",
@@ -792,7 +792,7 @@ it.each(["market_index", "other_holdings_median"] as const)(
         expect(view.tooltip).not.toContain("other holdings");
       } else {
         expect(view.tooltip).toContain(
-          "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio.",
+          "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio; ",
         );
         expect(view.tooltip).not.toContain("price index");
       }

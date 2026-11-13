@@ -34,7 +34,7 @@ const CHECK_NAMES = {
   room_to_buy: "Room to buy",
 } as const;
 const MARKET_TOOLTIP =
-  "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio.";
+  "The median mixes markets and currencies, includes funds, and can be self-referential in a concentrated portfolio";
 
 function unusualDrop(check: Checks["unusual_drop"]): CheckText[] {
   if (check.state === "unknown")
@@ -286,7 +286,7 @@ function checkTooltip(
     case "market":
       if (checks.market.source === "market_index") {
         details.push(
-          `${checks.market.index_name} is a price index without dividends.`,
+          `${checks.market.index_name} is a price index without dividends`,
         );
         if (
           !holdingDates ||
