@@ -723,9 +723,11 @@ phone (30-day page in the default order, verdict colours, explanations with caut
 the note) and approved, relayed by the Coordinator in his words: "I had a look at the
 tickertapetallyboard, and approve." The approved chip styling is therefore the one to record
 in `docs/VisualDesign.DarkTheme.md`. Two layout observations from the capture were shown on
-the review page and not addressed in his answer, so they stay open with him: company names
-are shortened because the verdict column takes the room, and at a 1258 px window the table
-is about 110 px wider than the window. Letting long explanations wrap would fix both.
+the review page: company names were shortened because the verdict column took the room, and
+at a 1258 px window the table was about 110 px wider than the window. His answer, relayed in
+his words: "I want the explanations to wrap onto two lines." Done the same day: long
+explanations wrap, names show in full and the table fits that window, guarded by a browser
+layout check.
 
 1. Types for `evidence`; `OPPORTUNITY_ORDERS` gains `best_candidates_first` as default; new
    storage key `opportunities.ordering` with the one-time carry-over described under
