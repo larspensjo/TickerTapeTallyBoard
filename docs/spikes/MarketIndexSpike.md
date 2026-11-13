@@ -114,8 +114,11 @@ only the selected window plus the start-close tolerance, so depth is not a const
 - It used `curl`, not the app's own HTTP client. The address, query, user agent, timeouts
   and protocol version (HTTP/1.1) match the app's. The TLS library differs, `curl` follows
   no redirects where the app follows up to ten, and `curl` honours proxy environment
-  variables where the app does not. The first live refresh that fetches an index through
-  the app, on a scratch ledger copy, confirms the rest.
+  variables where the app does not. **Confirmed the same day through the app itself:** one
+  latest refresh on a scratch copy of a ledger backup fetched the three indexes its
+  holdings needed (`^GSPC`, `^OMXSPI`, `^AEX`) with the app's own client and the unencoded
+  `^`, stored 27 or 28 closes for each, reported no index failure and left the refresh
+  status as it was (succeeded, no failed items). The copy was deleted afterwards.
 - It is one run on one day. An index that answers today can be withdrawn later; the app
   must treat a missing or failing index as "no index for this market" and fall back to the
   median.

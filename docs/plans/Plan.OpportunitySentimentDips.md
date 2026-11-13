@@ -831,6 +831,13 @@ none.
 
 Implementation pipeline.
 
+**Built, reviewed and verified 2026-11-13** (backend 0.31.0). The live check ran the same
+day on a scratch copy of the newest ledger backup, deleted afterwards: one latest refresh
+fetched the three needed indexes through the app's own client, stored 27 or 28 closes
+each, reported no index failure and left the refresh status unchanged. Until the owner has
+approved decision-log entry E and the Coordinator has given a go, migration `0014` runs
+only on test databases and scratch copies.
+
 1. Migration `0014`: market index closes keyed by index code, provider and date, separate
    from instruments.
 2. Listing-market derivation and the market-to-index mapping in the domain;
