@@ -718,6 +718,15 @@ Phase 9). Propose decision-log entry D.
 Implementation pipeline; by-eye approval by the owner. Starts only after Phase 5 ended
 Calibrated.
 
+**By-eye approval given 2026-11-13.** The owner looked at a demo-data review page on his
+phone (30-day page in the default order, verdict colours, explanations with caution markers,
+the note) and approved, relayed by the Coordinator in his words: "I had a look at the
+tickertapetallyboard, and approve." The approved chip styling is therefore the one to record
+in `docs/VisualDesign.DarkTheme.md`. Two layout observations from the capture were shown on
+the review page and not addressed in his answer, so they stay open with him: company names
+are shortened because the verdict column takes the room, and at a 1258 px window the table
+is about 110 px wider than the window. Letting long explanations wrap would fix both.
+
 1. Types for `evidence`; `OPPORTUNITY_ORDERS` gains `best_candidates_first` as default; new
    storage key `opportunities.ordering` with the one-time carry-over described under
    Ordering.
