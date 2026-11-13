@@ -263,9 +263,56 @@ pub(super) async fn execute_refresh(
         Default::default()
     };
 
+    let mut history_provider_stopped = false;
     if request.mode == RefreshMode::Latest {
-        if let Err(error) = super::history_topup::run(
+        match super::history_topup::run(
             providers, pool, &targets, &grouped, clock, lease, &mut items,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                history_provider_stopped =
+                    outcome == super::history_topup::PassOutcome::ProviderStopped
+            }
+            Err(error) => {
+                if matches!(error, MarketDataError::LeaseLost) {
+                    return Ok(RefreshOutcome {
+                        fundamentals,
+                        ..RefreshOutcome::lease_lost(
+                            prices_written,
+                            fx_rates_written,
+                            unmapped_instruments,
+                            failed_items,
+                            items,
+                        )
+                    });
+                }
+                // The history pass logs the failing operation with its instrument context.
+                items.push(RefreshItem {
+                    kind: RefreshItemKind::History,
+                    instrument_id: None,
+                    provider: None,
+                    symbol_or_pair: String::new(),
+                    status: RefreshItemStatus::Failed,
+                    reason: Some("repository_error".to_owned()),
+                    rows_written: 0,
+                });
+            }
+        }
+    }
+
+    if request.mode == RefreshMode::Latest && !history_provider_stopped {
+        if let Err(error) = super::market_index_refresh::run(
+            super::market_index_refresh::IndexRefresh {
+                providers,
+                pool,
+                clock,
+                window: &target_window,
+                lease,
+            },
+            &targets,
+            &grouped,
+            &mut items,
         )
         .await
         {
@@ -281,11 +328,11 @@ pub(super) async fn execute_refresh(
                     )
                 });
             }
-            // The history pass logs the failing operation with its instrument context.
+            crate::engine_warn!("market index refresh failure run_id={} index=unknown provider=YAHOO symbol=unknown start={} end={} reason=repository_error message={}", lease.run_id, target_window.start, target_window.end, error);
             items.push(RefreshItem {
-                kind: RefreshItemKind::History,
+                kind: RefreshItemKind::MarketIndex,
                 instrument_id: None,
-                provider: None,
+                provider: Some(MarketDataProvider::Yahoo.to_string()),
                 symbol_or_pair: String::new(),
                 status: RefreshItemStatus::Failed,
                 reason: Some("repository_error".to_owned()),

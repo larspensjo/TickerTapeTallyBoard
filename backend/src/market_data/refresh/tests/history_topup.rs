@@ -133,9 +133,9 @@ async fn each_repairable_need_makes_one_request_for_year_plus_longest_window() {
         price.push_response(Ok(vec![close("TEST.ST", day())]));
         price.push_response(Ok(vec![close("TEST.ST", day())]));
         let response = refresh(&pool, &service, day()).await;
-        assert_eq!(price.calls().len(), 2, "{need}");
-        assert_eq!(price.calls()[0].start, day() - Duration::days(37));
-        assert_range(&price.calls()[1], day());
+        assert_eq!(price.price_calls().len(), 2, "{need}");
+        assert_eq!(price.price_calls()[0].start, day() - Duration::days(37));
+        assert_range(&price.price_calls()[1], day());
         assert_eq!(history_items(&response).len(), 1);
         assert_eq!(response.status, RefreshRunStatus::Succeeded);
         assert_eq!(response.prices_written, 1);
@@ -149,17 +149,17 @@ async fn recently_listed_history_and_leading_gap_do_not_retry_as_days_advance() 
     for offset in [0, 0, 1, 2, 3, 10] {
         let today = day() + Duration::days(offset);
         price.push_response(Ok(vec![close("TEST.ST", today)]));
-        if price.calls().is_empty() {
+        if price.price_calls().is_empty() {
             price.push_response(Ok(vec![close("TEST.ST", day())]));
         }
         let result = refresh(&pool, &service, today).await;
         assert_eq!(
             history_items(&result).len(),
-            usize::from(offset == 0 && price.calls().len() == 2)
+            usize::from(offset == 0 && price.price_calls().len() == 2)
         );
     }
-    assert_eq!(price.calls().len(), 7); // Six latest requests and just one top-up.
-    assert_range(&price.calls()[1], day());
+    assert_eq!(price.price_calls().len(), 7); // Six latest requests and just one top-up.
+    assert_range(&price.price_calls()[1], day());
 }
 
 #[tokio::test]
@@ -194,9 +194,9 @@ async fn new_gap_retries_but_shrinking_or_aged_out_needs_do_not() {
             usize::from(offset == 0 || offset == 2)
         );
     }
-    assert_eq!(price.calls().len(), 6);
-    assert_range(&price.calls()[1], day());
-    assert_range(&price.calls()[4], day() + Duration::days(2));
+    assert_eq!(price.price_calls().len(), 6);
+    assert_range(&price.price_calls()[1], day());
+    assert_range(&price.price_calls()[4], day() + Duration::days(2));
 }
 
 #[tokio::test]
@@ -254,9 +254,9 @@ async fn failures_retry_only_on_a_later_local_day_and_never_change_price_outcome
                 );
             }
         }
-        assert_eq!(price.calls().len(), 6);
-        assert_range(&price.calls()[2], day());
-        assert_range(&price.calls()[5], day().succ_opt().unwrap());
+        assert_eq!(price.price_calls().len(), 6);
+        assert_range(&price.price_calls()[2], day());
+        assert_range(&price.price_calls()[5], day().succ_opt().unwrap());
     }
 }
 
@@ -291,7 +291,13 @@ async fn rate_limit_and_outage_stop_later_topups_even_when_bookkeeping_fails() {
                     reason.as_str()
                 })
             );
-            assert_eq!(price.calls().len(), 3);
+            assert_eq!(price.price_calls().len(), 3);
+            // No requests or response items for the skipped index pass.
+            assert_eq!(price.calls().len(), price.price_calls().len());
+            assert!(!result
+                .items
+                .iter()
+                .any(|item| item.kind == RefreshItemKind::MarketIndex));
             let attempts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history_topup_attempts")
                 .fetch_one(&pool)
                 .await
@@ -304,7 +310,7 @@ async fn rate_limit_and_outage_stop_later_topups_even_when_bookkeeping_fails() {
             let next = refresh(&pool, &service, day()).await;
             assert_eq!(history_items(&next).len(), 1);
             assert_eq!(history_items(&next)[0].symbol_or_pair, "TEST.ST");
-            assert_eq!(price.calls().len(), 6);
+            assert_eq!(price.price_calls().len(), 6);
         }
     }
 }
@@ -387,7 +393,7 @@ async fn corrupt_snapshot_retries_explicitly_without_panicking() {
                 .unwrap();
         }
     }
-    assert_eq!(price.calls().len(), 4);
+    assert_eq!(price.price_calls().len(), 4);
 }
 
 #[tokio::test]
@@ -416,15 +422,24 @@ async fn changed_mapping_and_new_split_are_new_needs_after_success() {
             .execute(&pool)
             .await
             .unwrap();
+            // The ordinary price pass timestamps with the system clock. Keep this
+            // historical fixture older than its split regardless of the run date.
+            sqlx::query(
+                "UPDATE prices SET fetched_at='2026-11-11T00:00:00Z' WHERE instrument_id=?",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
         }
         let tomorrow = day().succ_opt().unwrap();
         price.push_response(Ok(vec![close(symbol, tomorrow)]));
         price.push_response(Ok(Vec::new()));
         let result = refresh(&pool, &service, tomorrow).await;
         assert_eq!(history_items(&result).len(), 1, "{change}");
-        assert_eq!(price.calls().len(), 4);
-        assert_eq!(price.calls()[3].symbol, symbol);
-        assert_eq!(price.calls()[3].start, tomorrow - Duration::days(395));
+        assert_eq!(price.price_calls().len(), 4);
+        assert_eq!(price.price_calls()[3].symbol, symbol);
+        assert_eq!(price.price_calls()[3].start, tomorrow - Duration::days(395));
     }
 }
 
@@ -595,7 +610,7 @@ async fn price_write_failure_rolls_back_prices_and_success_snapshot_together() {
     // The reserved attempt survives the failed result transaction: no second call today.
     price.push_response(Ok(vec![close("TEST.ST", day())]));
     assert!(history_items(&refresh(&pool, &service, day()).await).is_empty());
-    assert_eq!(price.calls().len(), 3);
+    assert_eq!(price.price_calls().len(), 3);
 }
 
 #[tokio::test]
@@ -697,8 +712,8 @@ async fn split_day_defers_only_unfixable_need_without_reserving_and_retries_tomo
         price.push_response(Ok(Vec::new()));
         let second = refresh(&pool, &service, tomorrow).await;
         assert_eq!(history_items(&second).len(), 1);
-        assert_range(price.calls().last().unwrap(), tomorrow);
-        assert_eq!(price.calls().len(), 3 + usize::from(other_need));
+        assert_range(price.price_calls().last().unwrap(), tomorrow);
+        assert_eq!(price.price_calls().len(), 3 + usize::from(other_need));
     }
 }
 

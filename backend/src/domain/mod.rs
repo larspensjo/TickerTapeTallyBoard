@@ -10,6 +10,7 @@ mod cash_flow;
 mod conviction;
 mod day_change;
 mod holding_period_return;
+pub mod market_index;
 mod market_snapshot;
 mod money_weighted_return;
 pub mod opportunity_evidence;

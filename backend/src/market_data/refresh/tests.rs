@@ -6,6 +6,7 @@ mod fundamentals;
 mod history_topup;
 mod instrument_selection;
 mod lease_coordination;
+mod market_indexes;
 mod multi_provider;
 
 pub(crate) use multi_provider::{
@@ -24,6 +25,23 @@ use crate::{
 };
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
+
+/// Instrument-price assertions stay independent of the configured market indexes.
+trait PriceCalls {
+    fn price_calls(&self) -> Vec<crate::providers::PriceHistoryRequest>;
+}
+impl PriceCalls for FakePriceProvider {
+    fn price_calls(&self) -> Vec<crate::providers::PriceHistoryRequest> {
+        self.calls()
+            .into_iter()
+            .filter(|call| {
+                !crate::domain::market_index::MARKET_INDEXES
+                    .iter()
+                    .any(|index| index.provider_symbol == call.symbol)
+            })
+            .collect()
+    }
+}
 
 fn system_today() -> NaiveDate {
     Clock::System.today()

@@ -11,6 +11,7 @@ pub mod import_batches;
 pub mod instrument_tickers;
 pub mod instruments;
 pub mod market_data_runs;
+pub mod market_indexes;
 pub mod prices;
 pub mod provider_symbols;
 pub mod report_announcements;

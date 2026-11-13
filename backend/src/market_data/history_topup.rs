@@ -151,6 +151,13 @@ impl HistoryContext<'_> {
     }
 }
 
+/// A provider stop applies only to this refresh, including its later index pass.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PassOutcome {
+    Completed,
+    ProviderStopped,
+}
+
 pub(super) async fn run(
     providers: &ProviderSet,
     pool: &SqlitePool,
@@ -159,7 +166,7 @@ pub(super) async fn run(
     clock: &Clock,
     lease: &RefreshLease,
     items: &mut Vec<RefreshItem>,
-) -> Result<(), MarketDataError> {
+) -> Result<PassOutcome, MarketDataError> {
     let (start, today) = request_range(clock.today());
     for target in targets {
         let context = HistoryContext {
@@ -253,11 +260,11 @@ pub(super) async fn run(
             }
             // Stop on throttling or outage even if persisting its outcome failed.
             if stop_pass {
-                return Ok(());
+                return Ok(PassOutcome::ProviderStopped);
             }
         }
     }
-    Ok(())
+    Ok(PassOutcome::Completed)
 }
 
 async fn load_series(

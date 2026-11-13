@@ -39,6 +39,35 @@ describe("priceRefreshStatus", () => {
       expect(backfillOutcome(result)).toEqual(backfillOutcome(baseline));
     },
   );
+  it("does not show a notice or change price/FX status text for a failed market index item", () => {
+    const baseline = refreshResult("succeeded");
+    const result = {
+      ...baseline,
+      items: [
+        {
+          kind: "market_index" as const,
+          instrument_id: null,
+          provider: "YAHOO",
+          symbol_or_pair: "SP500",
+          status: "failed" as const,
+          reason: "provider_error",
+          rows_written: 0,
+        },
+      ],
+    };
+    const feedback = priceRefreshFeedbackReducer(initialPriceRefreshFeedback, {
+      type: "requestSucceeded",
+      result,
+    });
+    expect(
+      priceRefreshStatus({
+        serverRefreshing: false,
+        requestInFlight: false,
+        feedback,
+      }),
+    ).toEqual({ running: false, warning: null });
+    expect(backfillOutcome(result)).toEqual(backfillOutcome(baseline));
+  });
   it.each([
     [true, false, true],
     [false, true, true],

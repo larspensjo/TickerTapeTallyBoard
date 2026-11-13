@@ -524,6 +524,13 @@ mod tests {
     use chrono::NaiveDate;
 
     #[test]
+    fn index_chart_address_preserves_literal_caret() {
+        let client = YahooChartClient::new();
+        assert_eq!(client.url("^GSPC", "2026-10-07".parse().unwrap(), "2026-11-12".parse().unwrap()),
+            "https://query1.finance.yahoo.com/v8/finance/chart/^GSPC?period1=1791331200&period2=1794528000&interval=1d&events=div%2Csplits");
+    }
+
+    #[test]
     fn dividend_fixtures_preserve_closes_and_chart_currency() {
         for (symbol, body, count, date, amount, currency) in [
             (

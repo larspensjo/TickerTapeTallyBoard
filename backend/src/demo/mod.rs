@@ -9,6 +9,7 @@ use crate::providers::{FxProvider, MarketDataProvider, BASE_FX_PROVIDER};
 mod company_figures;
 mod dividends;
 mod holdings;
+mod market_indexes;
 mod price_paths;
 use holdings::{instruments, transactions};
 use price_paths::prices;
@@ -203,6 +204,7 @@ async fn seed_for_date(
 
     company_figures::seed(pool, today, &data, &instrument_ids).await?;
     dividends::seed(pool, today, &data, &instrument_ids).await?;
+    market_indexes::seed(pool, today, &data).await?;
 
     for instrument_id in instrument_ids {
         let ledger = transactions::ledger_for_instrument(pool, instrument_id).await?;

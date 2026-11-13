@@ -459,8 +459,8 @@ async fn topup_stores_dividend_capture_with_history_without_changing_price_count
         }));
         let response = refresh(&pool, &service, RefreshMode::Latest).await;
         assert_eq!(counts(&response), (RefreshRunStatus::Succeeded, 1, 0, 0, 0));
-        assert_eq!(fake.calls().len(), 2);
-        let topup = &fake.calls()[1];
+        assert_eq!(fake.price_calls().len(), 2);
+        let topup = &fake.price_calls()[1];
         let data = read(&pool, id).await;
         assert_eq!(data.coverage.len(), 1);
         assert_eq!(data.coverage[0].start, topup.start);
