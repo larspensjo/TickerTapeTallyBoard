@@ -860,6 +860,14 @@ unchanged. Propose decision-log entry E.
 
 Implementation pipeline; by-eye approval by the owner.
 
+**By-eye approval given 2026-11-13.** The owner looked at a demo-data review page (holdings
+whose market has an index in the three forms "fell more than", "moved with" and "fell less
+than"; a holding compared with the median of the other holdings; the whole page) and
+approved it as it is, in the working session. The sentence gives the difference in
+percentage points ("fell 7.00 pts more than OMX Stockholm all-share (-1.00%)"), not the
+"6.10% more" of step 2. One punctuation slip in the market entry's hover text (".;") is
+tidied as a follow-up.
+
 1. `market_reference` gains the index source: index closes paired on or before the asset's
    own start and end close dates within the start-close tolerance; otherwise fall back to
    the median with reason `market_index_unavailable`.
