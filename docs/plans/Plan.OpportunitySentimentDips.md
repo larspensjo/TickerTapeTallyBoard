@@ -770,6 +770,16 @@ if he had chosen that), and his next choice sticks.
 
 Implementation pipeline; by-eye approval by the owner.
 
+**By-eye approval given 2026-11-13.** The owner looked at a demo-data review page (the whole
+30-day page, a candidate and a "Fell for a reason?" with their evidence, the unknown,
+approximate and n/a states, and a 700 px window) and approved it as it is, in the working
+session. What he approved differs from step 1 in one way, settled by the session lead after
+the review: each result is shortened to what explains the verdict, and diagnostic figures
+(close and move counts, the threshold, the comparison margin, the year's high and low
+prices) sit in the entry's hover text. Three wording blemishes listed on the review page
+are tidied as a follow-up: stray decimals in some prices, an approximate sales figure
+reading "~+20.00%", and two near-identical reasons in one business check.
+
 1. View-model sentences for every check state and reason code, with values formatted by
    the existing precision rules (percentages two decimals); approximation markers and their
    explanations (including "EPS not cross-checked" and EPS disagreement gaps); market-check
