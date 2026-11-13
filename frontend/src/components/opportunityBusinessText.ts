@@ -15,10 +15,33 @@ import {
   words,
 } from "./opportunityCheckText";
 
+/** Reasons that tell the reader the same thing are stated once. */
+function reasonsWithDistinctMeaning(
+  reasons: OpportunityEvidenceReason[],
+  visibleReasons: OpportunityEvidenceReason[],
+): OpportunityEvidenceReason[] {
+  const reportAlreadyPassed = visibleReasons.some(
+    ({ code }) => code === "expected_report_passed",
+  );
+  return reasons.filter(
+    ({ code }) => !reportAlreadyPassed || code !== "newer_report_expected",
+  );
+}
+
+function speakVisibleExplanationsOnce(parts: CheckText[]): CheckText[] {
+  const visibleText = plainText(parts);
+  return parts.map((part) =>
+    part.approximate && part.title && visibleText.includes(part.title)
+      ? { ...part, accessibleLabel: `approximately ${part.text.slice(1)}` }
+      : part,
+  );
+}
+
 function subtest(
   test: OpportunityBusinessSubtest,
   label: "margin" | "sales" | "EPS",
   parentReasons: OpportunityEvidenceReason[],
+  visibleReasonsInCheck: OpportunityEvidenceReason[],
 ): CheckText[] {
   const explanation =
     plainText(reasonParts(test.reasons, label)) || "Approximate company figure";
@@ -26,6 +49,7 @@ function subtest(
     let part = label === "EPS" ? price(value) : percent(value);
     if (
       label === "sales" &&
+      !test.approximate &&
       value !== null &&
       !value.startsWith("-") &&
       !/^0(?:\.0*)?$/.test(value)
@@ -35,7 +59,10 @@ function subtest(
       ? approximate(part, explanation)
       : part;
   };
-  const visibleReasons = test.reasons.filter(
+  const visibleReasons = reasonsWithDistinctMeaning(
+    test.reasons,
+    visibleReasonsInCheck,
+  ).filter(
     (reason) =>
       !parentReasons.some(
         (parent) =>
@@ -67,18 +94,39 @@ function subtest(
 export function businessText(
   check: OpportunityEvidence["checks"]["business"],
 ): CheckText[] {
+  const visibleReasons = [
+    ...(check.state === "unknown" ? check.reasons : []),
+    ...[
+      check.profitable,
+      check.sales_not_shrinking,
+      check.earnings_not_sliding,
+    ].flatMap((test) => (test.passes === null ? test.reasons : [])),
+  ];
   // Not-applicable checks are handled before this formatter is called.
   const parts =
     check.state === "unknown"
-      ? unknownParts("Business", check.reasons)
+      ? unknownParts(
+          "Business",
+          reasonsWithDistinctMeaning(check.reasons, visibleReasons),
+        )
       : [words(check.state === "loss_making" ? "loss-making" : check.state)];
   parts.push(
     words(check.state === "unknown" ? "; " : ": "),
-    ...subtest(check.profitable, "margin", check.reasons),
+    ...subtest(check.profitable, "margin", check.reasons, visibleReasons),
     words(", "),
-    ...subtest(check.sales_not_shrinking, "sales", check.reasons),
+    ...subtest(
+      check.sales_not_shrinking,
+      "sales",
+      check.reasons,
+      visibleReasons,
+    ),
     words(", "),
-    ...subtest(check.earnings_not_sliding, "EPS", check.reasons),
+    ...subtest(
+      check.earnings_not_sliding,
+      "EPS",
+      check.reasons,
+      visibleReasons,
+    ),
   );
   const eps = check.eps_consistency;
   if (eps.state === "not_cross_checked")
@@ -88,5 +136,5 @@ export function businessText(
     if (eps.state === "inconsistent")
       parts.push(words("; earnings comparison unavailable"));
   }
-  return parts;
+  return speakVisibleExplanationsOnce(parts);
 }

@@ -520,7 +520,11 @@ describe("readable opportunity checks", () => {
     );
     for (const part of view.parts.filter((p) => p.approximate)) {
       expect(part.title).toBeTruthy();
-      expect(part.accessibleLabel).toContain(part.title);
+      expect(part.accessibleLabel).toBe(
+        part.title === "EPS disagreement 12.34%"
+          ? `approximately ${part.text.slice(1)}`
+          : `approximately ${part.text.slice(1)}; ${part.title}`,
+      );
     }
     check.earnings_not_sliding.reasons = [{ code: "eps_not_cross_checked" }];
     check.earnings_not_sliding.approximate = false;
@@ -579,16 +583,104 @@ it.each(["newer_report_expected", "source_unreachable"])(
         ? "company figures source could not be reached"
         : "a newer report was expected; figures have not appeared yet";
     expect(text(view)).toBe(
-      `unknown; ${reason}; margin ~1.00%, sales ~+1.00% vs a year ago, EPS ~1 vs ~1 a year ago`,
+      `unknown; ${reason}; margin ~1.00%, sales ~1.00% vs a year ago, EPS ~1 vs ~1 a year ago`,
     );
     for (const part of view.parts.filter((p) => p.approximate)) {
       expect(part.title).toBe(reason);
-      expect(part.accessibleLabel).toContain(reason);
+      expect(part.accessibleLabel).toBe(`approximately ${part.text.slice(1)}`);
     }
     check.earnings_not_sliding.passes = null;
     expect(
       text(result("business", { business: check })).split(reason),
     ).toHaveLength(2);
+  },
+);
+
+it.each([
+  ["20.00", true, "~20.00%"],
+  ["-20.00", true, "~-20.00%"],
+  ["0.00", true, "~0.00%"],
+  ["20.00", false, "+20.00%"],
+  ["-20.00", false, "-20.00%"],
+  ["0.00", false, "0.00%"],
+] as const)(
+  "renders sales %s with approximate=%s as %s",
+  (value, approximate, expected) => {
+    const check = opportunityEvidence().checks.business;
+    check.sales_not_shrinking = {
+      passes: !value.startsWith("-"),
+      value,
+      year_ago_value: null,
+      approximate,
+      reasons: approximate ? [{ code: "ttm_from_three_quarters" }] : [],
+    };
+    expect(text(result("business", { business: check }))).toContain(
+      `sales${value.startsWith("-") ? " shrinking" : ""} ${expected} vs a year ago`,
+    );
+  },
+);
+
+it.each([false, true])(
+  "states overlapping report reasons once (newer reason in sub-test=%s)",
+  (inSubtest) => {
+    const check = opportunityEvidence().checks.business;
+    check.state = "unknown";
+    check.reasons = [{ code: "expected_report_passed" }];
+    if (inSubtest) {
+      check.profitable.passes = null;
+      check.profitable.reasons = [{ code: "newer_report_expected" }];
+    } else {
+      // Deliberately reverse the order: the more specific reason still wins.
+      check.reasons.unshift({ code: "newer_report_expected" });
+    }
+    const view = result("business", { business: check });
+    const retained =
+      "expected report date has passed; newer figures not seen yet";
+    const omitted =
+      "a newer report was expected; figures have not appeared yet";
+    expect(text(view)).toContain(`unknown; ${retained}; margin`);
+    expect(text(view).split(retained)).toHaveLength(2);
+    expect(text(view)).not.toContain(omitted);
+    expect(view.tooltip).toContain(retained);
+    expect(view.tooltip).toContain(omitted);
+  },
+);
+
+it.each([true, false])(
+  "keeps EPS hover explanations and speaks them only when absent (visible=%s)",
+  (visible) => {
+    const check = opportunityEvidence().checks.business;
+    check.earnings_not_sliding = {
+      passes: true,
+      value: "1.12",
+      year_ago_value: "1.12",
+      approximate: true,
+      reasons: visible
+        ? [{ code: "eps_disagree", detail: "11.00" }]
+        : [{ code: "eps_derived_from_net_income" }],
+    };
+    check.eps_consistency = {
+      state: visible ? "approximate" : "not_cross_checked",
+      gap_percent: visible ? "11.00" : null,
+      compared_quarters: visible ? 2 : 1,
+    };
+    const view = result("business", { business: check });
+    expect(text(view)).toContain("EPS ~1.12 vs ~1.12 a year ago");
+    expect(text(view).includes("EPS disagreement 11.00%")).toBe(visible);
+    const figures = view.parts.filter((part) => part.approximate);
+    expect(figures).toHaveLength(2);
+    for (const figure of figures) {
+      expect(figure.title).toBe(
+        visible
+          ? "EPS disagreement 11.00%"
+          : "earnings per share derived from net income and share count",
+      );
+      expect(figure.accessibleLabel).toBe(
+        visible
+          ? "approximately 1.12"
+          : "approximately 1.12; earnings per share derived from net income and share count",
+      );
+    }
   },
 );
 

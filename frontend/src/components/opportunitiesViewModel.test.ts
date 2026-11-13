@@ -143,6 +143,45 @@ describe("sortOpportunityRows", () => {
 });
 
 describe("buildOpportunitiesViewModel", () => {
+  it.each(["70.0", "53.7840", "168.716301"])(
+    "formats a period low like the Latest price column for %s",
+    (value) => {
+      const row = opportunityRow("A", "-8.00");
+      const evidence = opportunityEvidence();
+      row.evidence = evidence;
+      const priceRow = opportunityRow("B", "-8.00");
+      if (!row.latest_close || !priceRow.latest_close)
+        throw new Error("Missing fixture latest close");
+      row.latest_close.close = "200";
+      priceRow.latest_close.close = value;
+      evidence.checks.stopped_falling = {
+        state: "yes",
+        reasons: [],
+        latest_close: "200",
+        low_close: value,
+        low_date: "2026-10-12",
+        low_age_trading_days: 3,
+      };
+      const model = buildOpportunitiesViewModel({
+        response: response([row, priceRow]),
+        requestedWindow: "7d",
+        order: "fallers_first",
+        isError: false,
+        errorMessage: null,
+      });
+      const rendered = model.rows[0];
+      const low = rendered.checks.find(
+        (check) => check.key === "stopped_falling",
+      );
+      const lowPrice = low?.parts.find((part) => part.figure)?.text;
+      expect(lowPrice).toBeTruthy();
+      expect(model.rows[1].latestPrice?.label).toBe(`SEK ${lowPrice}`);
+      expect(low?.parts.map((part) => part.text).join("")).toBe(
+        `yes: up from the period low of ${lowPrice} on 12 Oct`,
+      );
+    },
+  );
+
   it("names the column from the response window when it matches the request", () => {
     for (const [window, label, subtitle] of [
       ["7d", "1-week price change", "Closes from 8 Oct to 15 Oct"],

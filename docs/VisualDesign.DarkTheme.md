@@ -274,9 +274,10 @@ Off its high, Report in the period, Report coming soon, Business, Market, Stoppe
 falling, Ex-dividend, Room to buy. Labels may use `--text-muted`; results and
 unknown reasons use Body-sm (13px) in `--text-secondary`, with figures in mono.
 Not applicable is italic "n/a". Approximate values reuse the company-figure amber
-"~" prefix and `--warning` text; the explanation appears in both title and
-accessible label. Report dates retain source certainty, and period-only knowledge
-is an interval or bound, never a report date. The market tooltip states that the
+"~" prefix and `--warning` text; the explanation appears in the title and, unless
+already visible in the same check, the accessible label. Report dates retain
+source certainty, and period-only knowledge is an interval or bound, never a
+report date. The market tooltip states that the
 median mixes markets and currencies, includes funds, and can be self-referential
 in a concentrated portfolio. Results keep the usual move, dividend-adjusted change
 when supplied, compact business figures, distance below the high and the period
