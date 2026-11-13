@@ -182,3 +182,72 @@ export function opportunityFixture(
     },
   };
 }
+
+/** Long demo-style labels with populated numeric columns and target bars. */
+export function opportunitiesWithLongVerdicts(): OpportunityRow[] {
+  const cases = [
+    ["Alba Renewables", "sentiment_dip_candidate"],
+    ["Harbor Utilities", "possible_candidate_report_timing_unknown"],
+    ["Nordic Automation", "not_enough_data"],
+    ["Sprout Diagnostics", "fell_for_a_reason"],
+    ["Varvsgatan Industri", "normal_movement"],
+  ] as const;
+  return cases.map(([name, code], index) => {
+    const evidence = opportunityEvidence(code);
+    const row = opportunityFixture(index + 1, evidence);
+    row.instrument.name = name;
+    row.conviction_target = {
+      conviction: "High",
+      status: "below",
+      target_value_base: { status: "available", value: "1000.00" },
+      target_gap_base: { status: "available", value: "-80.00" },
+      target_gap_percent: { status: "available", value: "-8.00" },
+    };
+    if (code === "sentiment_dip_candidate") {
+      evidence.verdict.deciding = [
+        "unusual_drop",
+        "off_high",
+        "report_in_period",
+        "business",
+      ];
+      evidence.checks.off_high.state = "deep";
+      evidence.checks.off_high.high_close = "140";
+      evidence.checks.off_high.below_high_percent = "34.29";
+      evidence.checks.business.state = "loss_making";
+      evidence.checks.business.profitable.passes = false;
+      evidence.checks.business.profitable.value = "-1.00";
+      evidence.checks.business.profitable.year_ago_value = null;
+      evidence.checks.business.earnings_not_sliding.value = "-0.80";
+      evidence.checks.business.earnings_not_sliding.year_ago_value = "-1.00";
+      evidence.verdict.cautions = ["loss_making"];
+    } else if (code === "possible_candidate_report_timing_unknown") {
+      evidence.verdict.cautions = ["report_coming_soon", "already_at_target"];
+      evidence.checks.report_coming_soon.state = "yes";
+      evidence.checks.report_coming_soon.report = reportDate({
+        certainty: "estimated",
+        basis: "nasdaq_expected",
+        date: "2026-10-20",
+        days_until: 5,
+        reasons: [],
+      });
+      evidence.checks.room_to_buy.state = "already_at_target";
+      evidence.checks.room_to_buy.target_status = "above";
+      row.conviction_target = {
+        conviction: "High",
+        status: "above",
+        target_value_base: { status: "available", value: "900.00" },
+        target_gap_base: { status: "available", value: "20.00" },
+        target_gap_percent: { status: "available", value: "2.22" },
+      };
+    } else if (code === "fell_for_a_reason") {
+      // A report alone can decide this verdict, giving a short explanation.
+      evidence.verdict.deciding = ["report_in_period"];
+      evidence.checks.report_in_period.last_report = {
+        kind: "confirmed",
+        date: "2026-10-12",
+      };
+      evidence.checks.business.state = "intact";
+    }
+    return row;
+  });
+}

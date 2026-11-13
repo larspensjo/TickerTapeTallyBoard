@@ -248,7 +248,9 @@ chip: on the latest price from its own freshness, and separately beside the SEK
 gain when its price or exchange rate is stale. "Vs target" reuses the Holdings
 diverging target-gap bar and tooltip, blank without a target. The Verdict column
 shows a verdict chip whose text carries the meaning, a one-sentence plain-language
-explanation, and neutral caution chips. When verdicts are present, a 13px
+explanation, and neutral caution chips. At the 1258px desktop window (1180px panel),
+long explanations wrap onto two lines and instrument names are not truncated.
+When verdicts are present, a 13px
 `--text-secondary` note below the table reads: "A verdict describes the dip: how
 unusual the fall is and what is known about the company. It does not predict the
 price. A replay of stored price history found no measurable difference in the

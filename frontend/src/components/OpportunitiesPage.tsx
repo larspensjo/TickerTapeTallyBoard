@@ -208,7 +208,7 @@ export function OpportunitiesPage() {
 
         {viewModel.status === "available" ? (
           <>
-            <div className="table-wrap">
+            <div className="table-wrap opportunities-table">
               <table aria-label="Opportunities">
                 <thead>
                   <tr>

@@ -807,7 +807,7 @@ table {
 }
 
 .opportunity-because {
-  white-space: nowrap;
+  max-width: 48ch;
 }
 
 .opportunity-cautions {
@@ -979,6 +979,11 @@ tbody tr:last-child td {
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.opportunities-table .instrument-cell {
+  /* Reserve the full name's width without changing other pages' ellipsis. */
+  grid-template-columns: max-content;
 }
 
 .metric-stack {
