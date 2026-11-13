@@ -15,7 +15,13 @@ import {
   opportunityOrderOptions,
   opportunityWindowOptions,
 } from "./opportunitiesViewModel";
-import { isOneOf, loadSetting, saveSetting } from "./persistence";
+import {
+  hasSetting,
+  isOneOf,
+  loadSetting,
+  removeSetting,
+  saveSetting,
+} from "./persistence";
 import { TargetGapBarView } from "./TargetGapBarView";
 import { useAppMode } from "./useAppMode";
 import { StaleSignal } from "./valuationDisplay";
@@ -31,13 +37,30 @@ export type OpportunitiesPageAction =
 
 export const initialOpportunitiesPageState: OpportunitiesPageState = {
   window: "7d",
-  order: "fallers_first",
+  order: "best_candidates_first",
 };
 
 const WINDOW_KEY = "opportunities.window";
-const ORDER_KEY = "opportunities.order";
+const ORDER_KEY = "opportunities.ordering";
+const RETIRED_ORDER_KEY = "opportunities.order";
 const isOpportunityWindow = isOneOf(OPPORTUNITY_WINDOWS);
 const isOpportunityOrder = isOneOf(OPPORTUNITY_ORDERS);
+
+function loadOpportunityOrder(): OpportunityOrder {
+  if (hasSetting(ORDER_KEY)) {
+    return loadSetting(ORDER_KEY, isOpportunityOrder, "best_candidates_first");
+  }
+  const retiredOrder = loadSetting(
+    RETIRED_ORDER_KEY,
+    isOpportunityOrder,
+    "best_candidates_first",
+  );
+  const order =
+    retiredOrder === "risers_first" ? "risers_first" : "best_candidates_first";
+  saveSetting(ORDER_KEY, order, isOpportunityOrder);
+  removeSetting(RETIRED_ORDER_KEY);
+  return order;
+}
 
 export function loadOpportunitiesPageState(): OpportunitiesPageState {
   return {
@@ -46,11 +69,7 @@ export function loadOpportunitiesPageState(): OpportunitiesPageState {
       isOpportunityWindow,
       initialOpportunitiesPageState.window,
     ),
-    order: loadSetting(
-      ORDER_KEY,
-      isOpportunityOrder,
-      initialOpportunitiesPageState.order,
-    ),
+    order: loadOpportunityOrder(),
   };
 }
 
@@ -194,6 +213,7 @@ export function OpportunitiesPage() {
                 <thead>
                   <tr>
                     <th>Instrument</th>
+                    <th>Verdict</th>
                     <th className="number-head">
                       {viewModel.changeColumnLabel}
                     </th>
@@ -214,6 +234,32 @@ export function OpportunitiesPage() {
                           name={row.instrument.name}
                           ticker={row.instrument.ticker}
                         />
+                      </td>
+                      <td>
+                        {row.verdict ? (
+                          <div className="opportunity-verdict">
+                            <span
+                              className={`status-chip opportunity-verdict-chip ${row.verdict.tone}`}
+                            >
+                              {row.verdict.label}
+                            </span>
+                            <span className="opportunity-because">
+                              {row.verdict.because}
+                            </span>
+                            {row.verdict.cautions.length > 0 ? (
+                              <div className="opportunity-cautions">
+                                {row.verdict.cautions.map((caution) => (
+                                  <span
+                                    key={caution}
+                                    className="status-chip compact"
+                                  >
+                                    {caution}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="number">
                         {row.changeAvailable ? (
@@ -268,6 +314,15 @@ export function OpportunitiesPage() {
                 </tbody>
               </table>
             </div>
+            {viewModel.hasVerdicts ? (
+              <p className="opportunities-note opportunities-verdict-note">
+                A verdict describes the dip: how unusual the fall is and what is
+                known about the company. It does not predict the price. A replay
+                of stored price history found no measurable difference in the
+                following month between dips the price checks flagged and other
+                dips; the company checks could not be replayed.
+              </p>
+            ) : null}
             <p className="opportunities-note">
               Price change compares closing share prices in each asset's own
               currency. Dividends are not added back, so a share can look like

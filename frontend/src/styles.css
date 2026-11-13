@@ -779,6 +779,43 @@ table {
   max-width: 78ch;
 }
 
+/* Verdicts describe supplied evidence; ordinary states and cautions stay neutral. */
+.opportunity-verdict {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.status-chip.opportunity-verdict-chip.candidate {
+  border-color: rgb(from var(--up) r g b / 28%);
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.status-chip.opportunity-verdict-chip.reason {
+  border-color: rgb(from var(--warning) r g b / 28%);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.opportunity-because,
+.opportunities-verdict-note {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.opportunity-because {
+  white-space: nowrap;
+}
+
+.opportunity-cautions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
 .rebalance-empty-state {
   margin: var(--space-4);
   border: 1px dashed var(--hairline);

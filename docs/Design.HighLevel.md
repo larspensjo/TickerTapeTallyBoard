@@ -181,6 +181,26 @@ business explains the fall, then usable company evidence (or positively identifi
 non-company checks) permits a candidate. Unknown report timing alone permits a
 possible candidate when the business passes and price evidence is present.
 
+The Opportunities page defaults to **Best candidates first**: Sentiment-dip
+candidate; Possible candidate, report timing unknown; Not enough data; Fell for a
+reason?; then Normal movement. Within each tier it orders the displayed change
+biggest fall first, then symbol and exchange. Rows without a verdict follow in
+fallers order, with unavailable changes last. **Biggest fallers** and **Biggest
+risers** continue to order by change alone, with unavailable changes last. Cautions
+do not affect the order. The Verdict column shows a chip, a short explanation from
+the deciding or missing checks, and neutral caution chips. When a verdict is shown,
+the note reads: "A verdict describes the dip: how unusual the fall is and what is
+known about the company. It does not predict the price. A replay of stored price
+history found no measurable difference in the following month between dips the
+price checks flagged and other dips; the company checks could not be replayed."
+
+The window persists under `opportunities.window`; the order persists under
+`opportunities.ordering`. When the order key is absent, `opportunities.order` is
+read once: only `risers_first` carries over; all other values select Best candidates
+first. The new key is written and the retired key removed. Once the new key exists,
+the retired key is ignored. Missing, malformed or unknown new values fall back to
+Best candidates first.
+
 Every named check contains `state`, `reasons` and the following fields. Reasons
 are objects with `code` and optional `detail`; history reasons can also carry
 `start` (gap), `date` (split or invalid close), `count` and `required`. Every

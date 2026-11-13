@@ -14,6 +14,7 @@ import type {
   OpportunityRow,
   OpportunityWindow,
 } from "../api/types";
+import { opportunityEvidence } from "../test/opportunityFixtures";
 import { OpportunitiesPage } from "./OpportunitiesPage";
 
 const useOpportunities = vi.fn();
@@ -33,6 +34,7 @@ function opportunityRow(
   change: string | string[],
 ): OpportunityRow {
   return {
+    evidence: null,
     instrument: {
       id,
       symbol: name.slice(0, 3).toUpperCase(),
@@ -173,8 +175,15 @@ describe("OpportunitiesPage", () => {
     renderPage();
 
     expect(
-      screen.getByRole("button", { name: "Biggest fallers" }),
+      screen.getByRole("button", { name: "Best candidates first" }),
     ).toHaveAttribute("aria-pressed", "true");
+    const fallers = screen.getByRole("button", { name: "Biggest fallers" });
+    expect(fallers).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.getByRole("button", { name: "Biggest risers" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(fallers);
+    expect(fallers).toHaveAttribute("aria-pressed", "true");
     let rows = dataRows();
     expect(within(rows[0]).getByText("Faller Inc")).toBeTruthy();
     expect(within(rows[2]).getByText("Gap Holdings")).toBeTruthy();
@@ -209,7 +218,10 @@ describe("OpportunitiesPage", () => {
 
   it("restores the persisted window and order", () => {
     localStorage.setItem("opportunities.window", JSON.stringify("14d"));
-    localStorage.setItem("opportunities.order", JSON.stringify("risers_first"));
+    localStorage.setItem(
+      "opportunities.ordering",
+      JSON.stringify("risers_first"),
+    );
     useAppMode.mockReturnValue({ canMutate: true });
     useOpportunities.mockImplementation((window: OpportunityWindow) =>
       queryResult(response(window)),
@@ -357,5 +369,53 @@ describe("OpportunitiesPage", () => {
         "Price change compares closing share prices in each asset's own currency. Dividends are not added back, so a share can look like it fell on the day it starts trading without its dividend.",
       ),
     ).toBeTruthy();
+  });
+});
+
+const verdictNote =
+  "A verdict describes the dip: how unusual the fall is and what is known about the company. It does not predict the price. A replay of stored price history found no measurable difference in the following month between dips the price checks flagged and other dips; the company checks could not be replayed.";
+
+describe("Opportunities verdict presentation", () => {
+  it.each([
+    "sentiment_dip_candidate",
+    "possible_candidate_report_timing_unknown",
+    "not_enough_data",
+    "fell_for_a_reason",
+    "normal_movement",
+  ] as const)("shows the honest note when a %s verdict is shown", (code) => {
+    useAppMode.mockReturnValue({ canMutate: false });
+    const row = opportunityRow(10, "Verdict Company", "-8.00");
+    row.evidence = opportunityEvidence(code);
+    useOpportunities.mockReturnValue(queryResult(response("7d", [row])));
+    renderPage();
+    expect(screen.getByRole("columnheader", { name: "Verdict" })).toBeTruthy();
+    expect(screen.getByText(verdictNote)).toBeTruthy();
+  });
+
+  it("leaves the verdict empty and omits its note when no evidence is supplied", () => {
+    useAppMode.mockReturnValue({ canMutate: false });
+    useOpportunities.mockReturnValue(queryResult(response("7d")));
+    renderPage();
+    expect(screen.queryByText(verdictNote)).toBeNull();
+    expect(screen.queryByText("Sentiment-dip candidate")).toBeNull();
+    expect(screen.queryByText("Normal movement")).toBeNull();
+  });
+
+  it("renders the explanation and caution labels supplied by the view-model", () => {
+    useAppMode.mockReturnValue({ canMutate: false });
+    const row = opportunityRow(10, "Candidate Company", "-8.00");
+    row.evidence = opportunityEvidence();
+    row.evidence.verdict.cautions = ["loss_making", "no_target"];
+    row.evidence.checks.business.state = "loss_making";
+    useOpportunities.mockReturnValue(queryResult(response("7d", [row])));
+    renderPage();
+    expect(screen.getByText("Sentiment-dip candidate")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Unusual drop, no report in the period, sales and earnings holding up",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Loss-making")).toBeTruthy();
+    expect(screen.getByText("No target")).toBeTruthy();
   });
 });

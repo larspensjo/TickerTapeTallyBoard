@@ -53,6 +53,24 @@ export function saveSetting<T>(
   }
 }
 
+/** Whether a setting exists, including a malformed value. */
+export function hasSetting(key: string): boolean {
+  try {
+    return storage()?.getItem(key) != null;
+  } catch {
+    return false;
+  }
+}
+
+/** Retire a setting without preventing the page from opening if storage fails. */
+export function removeSetting(key: string): void {
+  try {
+    storage()?.removeItem(key);
+  } catch {
+    // The setting still applies for this session.
+  }
+}
+
 /** Validator for a value drawn from a fixed set of string options. */
 export function isOneOf<T extends string>(
   allowed: readonly T[],

@@ -437,7 +437,11 @@ export interface RebalanceBalanceEntry {
 export const OPPORTUNITY_WINDOWS = ["7d", "14d", "30d"] as const;
 export type OpportunityWindow = (typeof OPPORTUNITY_WINDOWS)[number];
 
-export const OPPORTUNITY_ORDERS = ["fallers_first", "risers_first"] as const;
+export const OPPORTUNITY_ORDERS = [
+  "best_candidates_first",
+  "fallers_first",
+  "risers_first",
+] as const;
 export type OpportunityOrder = (typeof OPPORTUNITY_ORDERS)[number];
 
 /** The period the backend resolved for the requested window. */
@@ -462,7 +466,143 @@ export type PriceChange =
     }
   | { status: "unavailable"; reasons: string[] };
 
+export type OpportunityVerdictCode =
+  | "sentiment_dip_candidate"
+  | "possible_candidate_report_timing_unknown"
+  | "not_enough_data"
+  | "fell_for_a_reason"
+  | "normal_movement";
+export type OpportunityDecidingCheck =
+  | "unusual_drop"
+  | "off_high"
+  | "report_in_period"
+  | "business";
+export type OpportunityCaution =
+  | "loss_making"
+  | "report_coming_soon"
+  | "already_at_target"
+  | "no_target";
+
+export interface OpportunityEvidenceReason {
+  code: string;
+  detail?: string;
+  start?: string;
+  date?: string;
+  count?: number;
+  required?: number;
+}
+
+export interface OpportunityCheck<State extends string> {
+  state: State;
+  reasons: OpportunityEvidenceReason[];
+}
+type OpportunityYesNoUnknown = "yes" | "no" | "unknown";
+type OpportunityCompanyCheckState = OpportunityYesNoUnknown | "not_applicable";
+
+export type OpportunityLastReport =
+  | { kind: "confirmed"; date: string }
+  | {
+      kind: "interval";
+      period_end: string;
+      absent_on: string;
+      first_seen: string;
+    }
+  | { kind: "upper_bound"; period_end: string; first_seen: string };
+
+export interface OpportunityBusinessSubtest {
+  passes: boolean | null;
+  value: string | null;
+  year_ago_value: string | null;
+  approximate: boolean;
+  reasons: OpportunityEvidenceReason[];
+}
+
+export interface OpportunityEvidence {
+  verdict: {
+    code: OpportunityVerdictCode;
+    deciding: OpportunityDecidingCheck[];
+    missing: OpportunityDecidingCheck[];
+    cautions: OpportunityCaution[];
+  };
+  checks: {
+    unusual_drop: OpportunityCheck<OpportunityYesNoUnknown> & {
+      change_percent: string;
+      adjusted_change_percent: string | null;
+      usual_move_percent: string | null;
+      threshold_percent: string | null;
+      closes: number;
+      sample_moves: number | null;
+    };
+    off_high: OpportunityCheck<"deep" | "not_deep" | "unknown"> & {
+      closes: number;
+      latest_close: string | null;
+      high_close: string | null;
+      low_close: string | null;
+      below_high_percent: string | null;
+      above_low_percent: string | null;
+      near_low: boolean | null;
+    };
+    report_in_period: OpportunityCheck<OpportunityCompanyCheckState> & {
+      window_start: string;
+      window_end: string;
+      last_report: OpportunityLastReport | null;
+      scheduled_report: ReportDate | null;
+      no_report_expected_before: string | null;
+    };
+    report_coming_soon: OpportunityCheck<OpportunityCompanyCheckState> & {
+      report: ReportDate;
+    };
+    business: OpportunityCheck<
+      "intact" | "weakening" | "loss_making" | "unknown" | "not_applicable"
+    > & {
+      profitable: OpportunityBusinessSubtest;
+      sales_not_shrinking: OpportunityBusinessSubtest;
+      earnings_not_sliding: OpportunityBusinessSubtest;
+      eps_consistency: {
+        state:
+          | "unavailable"
+          | "not_cross_checked"
+          | "consistent"
+          | "approximate"
+          | "inconsistent";
+        gap_percent: string | null;
+        compared_quarters: number;
+      };
+    };
+    market: OpportunityCheck<
+      | "fell_more_than_market"
+      | "moved_with_market"
+      | "fell_less_than_market"
+      | "unknown"
+    > & {
+      source: "other_holdings_median";
+      change_percent: string;
+      reference_percent: string | null;
+      difference_percent: string | null;
+      margin_percent: string;
+      count: number;
+    };
+    stopped_falling: OpportunityCheck<OpportunityYesNoUnknown> & {
+      latest_close: string | null;
+      low_close: string | null;
+      low_date: string | null;
+      low_age_trading_days: number | null;
+    };
+    ex_dividend: OpportunityCheck<OpportunityYesNoUnknown> & {
+      events: { ex_date: string; amount: string; currency: string }[] | null;
+      amount: string | null;
+      percent_of_start_close: string | null;
+    };
+    room_to_buy: OpportunityCheck<
+      "room_to_buy" | "already_at_target" | "no_target" | "unknown"
+    > & {
+      target_status: TargetStatus;
+    };
+  };
+}
+
 export interface OpportunityRow {
+  evidence: OpportunityEvidence | null;
   instrument: Instrument;
   quantity: number;
   latest_close: PriceSnapshot | null;

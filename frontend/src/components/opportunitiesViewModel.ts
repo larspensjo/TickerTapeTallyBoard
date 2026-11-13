@@ -8,6 +8,11 @@ import type {
 } from "../api/types";
 import { type TargetGapBar, targetGapBar } from "./holdingsConviction";
 import {
+  type OpportunityVerdictViewModel,
+  opportunityVerdictTier,
+  opportunityVerdictViewModel,
+} from "./opportunityEvidenceViewModel";
+import {
   type FreshnessKind,
   formatGroupedNumber,
   formatUnitPrice,
@@ -31,6 +36,7 @@ export const opportunityOrderOptions: ReadonlyArray<{
   value: OpportunityOrder;
   label: string;
 }> = [
+  { value: "best_candidates_first", label: "Best candidates first" },
   { value: "fallers_first", label: "Biggest fallers" },
   { value: "risers_first", label: "Biggest risers" },
 ];
@@ -119,16 +125,22 @@ function compareInstruments(left: Instrument, right: Instrument): number {
 }
 
 /**
- * Orders rows by the 2-decimal change (parsed for ordering only): ascending
- * for fallers first, descending for risers first, ties by symbol then
- * exchange. Rows without a change follow every row with one, in both orders.
+ * Best candidates first uses backend verdict tiers, then the displayed change.
+ * Fallers and risers use only the displayed change. All ties use symbol then
+ * exchange; unavailable changes follow available changes.
  */
 export function sortOpportunityRows(
   rows: readonly OpportunityRow[],
   order: OpportunityOrder,
 ): OpportunityRow[] {
-  const direction = order === "fallers_first" ? 1 : -1;
+  const direction = order === "risers_first" ? -1 : 1;
   return [...rows].sort((left, right) => {
+    if (order === "best_candidates_first") {
+      const tierDifference =
+        opportunityVerdictTier(left.evidence) -
+        opportunityVerdictTier(right.evidence);
+      if (tierDifference !== 0) return tierDifference;
+    }
     const leftChange = changeValue(left);
     const rightChange = changeValue(right);
     if (leftChange === null || rightChange === null) {
@@ -165,6 +177,7 @@ export interface OpportunityStaleSignalViewModel {
 }
 
 export interface OpportunityRowViewModel {
+  verdict: OpportunityVerdictViewModel | null;
   instrument: Instrument;
   changeAvailable: boolean;
   changeLabel: string;
@@ -187,6 +200,7 @@ export type OpportunitiesPageStatus =
   | "available";
 
 export interface OpportunitiesViewModel {
+  hasVerdicts: boolean;
   status: OpportunitiesPageStatus;
   message: string | null;
   changeColumnLabel: string;
@@ -295,6 +309,8 @@ function rowViewModel(
 
   if (change.status === "available") {
     return {
+      verdict:
+        row.evidence == null ? null : opportunityVerdictViewModel(row.evidence),
       instrument: row.instrument,
       changeAvailable: true,
       changeLabel: formatChangePercent(change.change_percent),
@@ -314,6 +330,8 @@ function rowViewModel(
   );
   const label = reasons.length > 0 ? reasons.join(", ") : "Unavailable";
   return {
+    verdict:
+      row.evidence == null ? null : opportunityVerdictViewModel(row.evidence),
     instrument: row.instrument,
     changeAvailable: false,
     changeLabel: label,
@@ -338,6 +356,7 @@ export function buildOpportunitiesViewModel(
       periodSubtitle: null,
       isUpdating: false,
       rows: [],
+      hasVerdicts: false,
     };
   }
 
@@ -354,6 +373,7 @@ export function buildOpportunitiesViewModel(
       periodSubtitle: null,
       isUpdating: false,
       rows: [],
+      hasVerdicts: false,
     };
   }
   const changeColumnLabel = isUpdating
@@ -372,6 +392,7 @@ export function buildOpportunitiesViewModel(
     changeColumnLabel,
     periodSubtitle,
     isUpdating,
+    hasVerdicts: response.rows.some((row) => row.evidence != null),
     rows: sortOpportunityRows(response.rows, input.order).map((row) =>
       rowViewModel(row, response.period.start_date),
     ),

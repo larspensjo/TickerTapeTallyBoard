@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type {
   OpportunitiesResponse,
   OpportunityRow,
+  OpportunityVerdictCode,
   OpportunityWindow,
   PriceChange,
 } from "../api/types";
+import { opportunityEvidence } from "../test/opportunityFixtures";
 import {
   buildOpportunitiesViewModel,
   priceChangeReasonLabel,
@@ -30,6 +32,7 @@ function opportunityRow(
         change_percent: change,
       };
   return {
+    evidence: null,
     instrument: {
       id,
       symbol,
@@ -534,5 +537,209 @@ describe("opportunity context columns", () => {
     expect(rows.get("NOTARGET")?.targetBar).toBeNull();
     expect(rows.get("EXCLUDED")?.targetBar).toBeNull();
     expect(rows.get("UNAVAILABLE")?.targetBar).toBeNull();
+  });
+});
+
+describe("best candidates first", () => {
+  const codes: OpportunityVerdictCode[] = [
+    "sentiment_dip_candidate",
+    "possible_candidate_report_timing_unknown",
+    "not_enough_data",
+    "fell_for_a_reason",
+    "normal_movement",
+  ];
+  function withVerdict(
+    symbol: string,
+    change: string,
+    code: OpportunityVerdictCode,
+  ): OpportunityRow {
+    return {
+      ...opportunityRow(symbol, change),
+      evidence: opportunityEvidence(code),
+    };
+  }
+
+  it("orders every tier before rows without verdicts, then unavailable rows", () => {
+    const rows = [
+      opportunityRow("UNAVAILABLE", ["no_price_source"]),
+      opportunityRow("RISER", "1.00"),
+      opportunityRow("FLAT", "0.00"),
+      opportunityRow("BIGGER_RISER", "5.00"),
+      ...codes
+        .map((code, i) => withVerdict(code, `${-i - 1}.00`, code))
+        .reverse(),
+    ];
+    expect(symbols(sortOpportunityRows(rows, "best_candidates_first"))).toEqual(
+      [...codes, "FLAT", "RISER", "BIGGER_RISER", "UNAVAILABLE"],
+    );
+  });
+
+  it.each([{ change: "-8.00" }, { change: ["no_price_source"] }] as const)(
+    "treats a missing evidence property like null for change $change",
+    ({ change }) => {
+      const legacy = opportunityRow(
+        "LEGACY",
+        typeof change === "string" ? change : [...change],
+      );
+      Reflect.deleteProperty(legacy, "evidence");
+      const model = buildOpportunitiesViewModel({
+        response: response([
+          legacy,
+          withVerdict("NORMAL", "-1.00", "normal_movement"),
+        ]),
+        requestedWindow: "7d",
+        order: "best_candidates_first",
+        isError: false,
+        errorMessage: null,
+      });
+      expect(model.rows.map((row) => row.instrument.symbol)).toEqual([
+        "NORMAL",
+        "LEGACY",
+      ]);
+      expect(model.rows[1].verdict).toBeNull();
+      const noVerdicts = buildOpportunitiesViewModel({
+        response: response([legacy, opportunityRow("RISER", "1.00")]),
+        requestedWindow: "7d",
+        order: "best_candidates_first",
+        isError: false,
+        errorMessage: null,
+      });
+      expect(noVerdicts.hasVerdicts).toBe(false);
+      expect(noVerdicts.rows.every((row) => row.verdict === null)).toBe(true);
+      expect(noVerdicts.rows.map((row) => row.instrument.symbol)).toEqual(
+        typeof change === "string" ? ["LEGACY", "RISER"] : ["RISER", "LEGACY"],
+      );
+    },
+  );
+
+  it.each(["future_verdict", "toString", "__proto__"])(
+    "shows unknown code %s neutrally after Normal movement and before absent verdicts",
+    (code) => {
+      const model = buildOpportunitiesViewModel({
+        response: response([
+          opportunityRow("NO_VERDICT", "-30.00"),
+          withVerdict("UNKNOWN", "-20.00", code as OpportunityVerdictCode),
+          withVerdict("NORMAL", "-1.00", "normal_movement"),
+        ]),
+        requestedWindow: "7d",
+        order: "best_candidates_first",
+        isError: false,
+        errorMessage: null,
+      });
+      expect(model.rows.map((row) => row.instrument.symbol)).toEqual([
+        "NORMAL",
+        "UNKNOWN",
+        "NO_VERDICT",
+      ]);
+      expect(model.rows[1].verdict).toEqual({
+        label: "Unknown verdict",
+        tone: "neutral",
+        because: "",
+        cautions: [],
+      });
+      expect(model.hasVerdicts).toBe(true);
+    },
+  );
+
+  it.each(codes)(
+    "orders displayed change inside %s, then symbol and exchange",
+    (code) => {
+      const exchangeTie = { ...withVerdict("AAA", "-8.00", code) };
+      exchangeTie.instrument = { ...exchangeTie.instrument, exchange: "NYSE" };
+      const otherExchange = { ...withVerdict("AAA", "-8.00", code) };
+      otherExchange.instrument = {
+        ...otherExchange.instrument,
+        exchange: "NASDAQ",
+      };
+      const rows = [
+        withVerdict("TINY", "-0.00", code),
+        withVerdict("BBB", "-8.00", code),
+        exchangeTie,
+        withVerdict("BIGGEST", "-10.00", code),
+        otherExchange,
+      ];
+      expect(
+        sortOpportunityRows(rows, "best_candidates_first").map(
+          (row) => `${row.instrument.symbol}/${row.instrument.exchange}`,
+        ),
+      ).toEqual([
+        "BIGGEST/STO",
+        "AAA/NASDAQ",
+        "AAA/NYSE",
+        "BBB/STO",
+        "TINY/STO",
+      ]);
+      expect(symbols(rows)).toEqual(["TINY", "BBB", "AAA", "BIGGEST", "AAA"]);
+    },
+  );
+
+  it("breaks unavailable ties by symbol then exchange", () => {
+    const rows = [
+      opportunityRow("BBB", ["no_price_source"]),
+      opportunityRow("AAA", ["no_price_source"], { exchange: "NYSE" }),
+      opportunityRow("AAA", ["no_price_source"], { exchange: "NASDAQ" }),
+    ];
+    expect(
+      sortOpportunityRows(rows, "best_candidates_first").map(
+        (row) => `${row.instrument.symbol}/${row.instrument.exchange}`,
+      ),
+    ).toEqual(["AAA/NASDAQ", "AAA/NYSE", "BBB/STO"]);
+  });
+
+  it("ignores verdict tiers in the two price-change orders", () => {
+    const rows = [
+      withVerdict("CANDIDATE", "-1.00", codes[0]),
+      withVerdict("NORMAL", "-10.00", codes[4]),
+    ];
+    expect(symbols(sortOpportunityRows(rows, "fallers_first"))).toEqual([
+      "NORMAL",
+      "CANDIDATE",
+    ]);
+    expect(symbols(sortOpportunityRows(rows, "risers_first"))).toEqual([
+      "CANDIDATE",
+      "NORMAL",
+    ]);
+  });
+
+  it("does not let cautions change ordering", () => {
+    const cautioned = withVerdict("CAUTIONED", "-10.00", codes[0]);
+    if (cautioned.evidence)
+      cautioned.evidence.verdict.cautions = [
+        "loss_making",
+        "report_coming_soon",
+        "no_target",
+      ];
+    expect(
+      symbols(
+        sortOpportunityRows(
+          [withVerdict("CLEAR", "-1.00", codes[0]), cautioned],
+          "best_candidates_first",
+        ),
+      ),
+    ).toEqual(["CAUTIONED", "CLEAR"]);
+  });
+
+  it("exposes verdict text and note visibility only when evidence is supplied", () => {
+    const model = buildOpportunitiesViewModel({
+      response: response([
+        opportunityRow("RISER", "1.00"),
+        withVerdict("CANDIDATE", "-1.00", codes[0]),
+      ]),
+      requestedWindow: "7d",
+      order: "best_candidates_first",
+      isError: false,
+      errorMessage: null,
+    });
+    expect(model.hasVerdicts).toBe(true);
+    expect(model.rows[0].verdict?.label).toBe("Sentiment-dip candidate");
+    expect(model.rows[1].verdict).toBeNull();
+    const noVerdicts = buildOpportunitiesViewModel({
+      response: response([opportunityRow("RISER", "1.00")]),
+      requestedWindow: "7d",
+      order: "best_candidates_first",
+      isError: false,
+      errorMessage: null,
+    });
+    expect(noVerdicts.hasVerdicts).toBe(false);
   });
 });

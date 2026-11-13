@@ -236,7 +236,8 @@ controls.
 
 **Opportunities table** — the density spec above, read-only, no column-header
 sorting. The panel header carries two segmented controls: the window ("1 week",
-"2 weeks", "30 days") and the order ("Biggest fallers", "Biggest risers"); the
+"2 weeks", "30 days") and the order ("Best candidates first", the default,
+"Biggest fallers", "Biggest risers"); the
 period subtitle under the title is `--text-muted`, replaced by a neutral
 "Updating…" chip while the rows shown belong to another window. Percent columns
 use plain-sign colouring; an unavailable value is a neutral chip with its
@@ -245,9 +246,15 @@ vs-average percent, not a semantic soft chip (the number already carries the
 sign colour). Stale signals use the minor clock icon or the `--warning-soft`
 chip: on the latest price from its own freshness, and separately beside the SEK
 gain when its price or exchange rate is stale. "Vs target" reuses the Holdings
-diverging target-gap bar and tooltip, blank without a target. A muted 12px
-footnote under the table explains that changes are native-currency closes
-without dividends added back.
+diverging target-gap bar and tooltip, blank without a target. The Verdict column
+shows a verdict chip whose text carries the meaning, a one-sentence plain-language
+explanation, and neutral caution chips. When verdicts are present, a 13px
+`--text-secondary` note below the table reads: "A verdict describes the dip: how
+unusual the fall is and what is known about the company. It does not predict the
+price. A replay of stored price history found no measurable difference in the
+following month between dips the price checks flagged and other dips; the company
+checks could not be replayed." The separate muted 12px footnote below explains
+that changes are native-currency closes without dividends added back.
 
 **Transaction form** — inputs on `--surface-2`, `--radius-md`, 1px `--hairline`;
 labels in Label-strong/`--text-muted`; focus = 1.5px `--accent` border + soft
