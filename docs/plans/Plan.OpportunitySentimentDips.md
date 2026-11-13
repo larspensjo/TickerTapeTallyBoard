@@ -804,6 +804,15 @@ his usual window width and at a narrow width.
 
 Run by the session lead, not the implementation pipeline. No application code.
 
+**Run 2026-11-13** (10 requests, all answered; independent review applied). Findings and
+the recommended market-to-index mapping are in `docs/spikes/MarketIndexSpike.md`; where it
+is more specific than this plan it wins: an index is used only for listings quoted in the
+index's currency (so `^STOXX` covers euro-quoted listings only, not every "other European
+suffix"), Amsterdam gets `^AEX`, the app sends `^` unencoded and that works, index closes
+are paired on or before the holding's dates on both the start and the end side, and the
+index store overwrites per date. The owner confirms the index choices with decision-log
+entry E.
+
 1. `scripts/probe-market-index.ps1` requests the Yahoo chart endpoint exactly as the app
    does (symbol as a percent-encoded path segment, `period1`/`period2`, `interval=1d`,
    `events=div,splits`) for candidate symbols per listing market present in R1: Stockholm
